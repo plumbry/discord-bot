@@ -84,14 +84,21 @@ const dmCommand = new SlashCommandBuilder()
     sub
       .setName("preview")
       .setDescription("Preview a DM before sending or scheduling")
+
+      // ✅ REQUIRED OPTIONS FIRST
+      .addStringOption(opt =>
+        opt
+          .setName("message")
+          .setDescription("Message content")
+          .setRequired(true)
+      )
+
+      // ✅ OPTIONAL OPTIONS AFTER
       .addUserOption(opt =>
         opt.setName("user").setDescription("Target user")
       )
       .addRoleOption(opt =>
         opt.setName("role").setDescription("Target role")
-      )
-      .addStringOption(opt =>
-        opt.setName("message").setDescription("Message content").setRequired(true)
       )
       .addStringOption(opt =>
         opt.setName("date").setDescription("Send date (UTC)")
@@ -219,7 +226,6 @@ async function handleDMButton(interaction) {
       return;
     }
 
-    // Immediate send ONLY for user (unchanged behavior)
     if (row[1] === "user") {
       try {
         const user = await interaction.client.users.fetch(row[2]);
@@ -236,7 +242,6 @@ async function handleDMButton(interaction) {
         await updateRow(rowNumber, row);
       }
     } else {
-      // Role immediate sends are handled by scheduler (intentional)
       await interaction.message.edit({ components: [] });
     }
   }
@@ -285,7 +290,7 @@ function startDMScheduler(client) {
           }
         }
 
-        row[5] = failedUsers.length === 0 ? "sent" : "sent";
+        row[5] = "sent";
         row[8] = nowISO();
       } catch (err) {
         row[5] = "failed";
