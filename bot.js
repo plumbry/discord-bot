@@ -43,7 +43,7 @@ client.once("ready", async () => {
   const rest = new REST({ version: "10" })
     .setToken(process.env.DISCORD_TOKEN);
 
-  // ✅ STEP 5: REGISTER ALL COMMANDS (CLEAN)
+  // REGISTER ALL COMMANDS
   await rest.put(
     Routes.applicationGuildCommands(client.user.id, GUILD_ID),
     {
@@ -57,10 +57,9 @@ client.once("ready", async () => {
     }
   );
 
-  console.log("✅ Guild commands registered cleanly");
+  console.log("✅ Guild commands registered");
   console.log(`🤖 Logged in as ${client.user.tag}`);
 
-  // ===== DAILY PROBATION CHECK @ 00:01 =====
   scheduleDailyProbationCheck(client);
 });
 
@@ -71,7 +70,6 @@ client.on("guildMemberAdd", handleWelcome);
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  // Only /myban is deferred + ephemeral
   if (interaction.commandName === "myban") {
     await interaction.deferReply({ ephemeral: true });
   }
@@ -105,9 +103,7 @@ function scheduleDailyProbationCheck(client) {
   const next = new Date();
 
   next.setHours(0, 1, 0, 0);
-  if (now >= next) {
-    next.setDate(next.getDate() + 1);
-  }
+  if (now >= next) next.setDate(next.getDate() + 1);
 
   const delay = next.getTime() - now.getTime();
 

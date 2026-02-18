@@ -11,7 +11,7 @@ const DM_DELAY_MS = 900;
 
 const dmCommand = new SlashCommandBuilder()
   .setName("dm")
-  .setDescription("Send DMs via the bot (mod only)")
+  .setDescription("Send DMs via the bot (Manage Roles only)")
 
   // ===== USER SUBCOMMAND =====
   .addSubcommand(sub =>
@@ -51,12 +51,13 @@ const dmCommand = new SlashCommandBuilder()
       )
   )
 
+  // 🔒 VISIBILITY PERMISSION
   .setDefaultMemberPermissions(
-    PermissionFlagsBits.ModerateMembers |
-    PermissionFlagsBits.Administrator
+    PermissionFlagsBits.ManageRoles
   );
 
 async function handleDM(interaction) {
+  // Channel lock
   if (interaction.channelId !== ALLOWED_CHANNEL_ID) {
     return interaction.reply({
       content: "❌ This command can only be used in the moderator channel."
@@ -90,8 +91,7 @@ async function handleDM(interaction) {
       content:
         `📤 **DM Result**\n` +
         `**Moderator:** ${interaction.user.tag}\n` +
-        `**Target:** ${user.tag}\n` +
-        `**Message:**\n${message}\n\n` +
+        `**Target:** ${user.tag}\n\n` +
         `✅ Sent: ${sent}\n` +
         `❌ Failed: ${failed}` +
         (failedUsers.length
@@ -124,8 +124,7 @@ async function handleDM(interaction) {
       content:
         `📤 **Role DM Result**\n` +
         `**Moderator:** ${interaction.user.tag}\n` +
-        `**Role:** ${role.name}\n` +
-        `**Message:**\n${message}\n\n` +
+        `**Role:** ${role.name}\n\n` +
         `✅ Sent: ${sent}\n` +
         `❌ Failed: ${failed}` +
         (failedUsers.length
