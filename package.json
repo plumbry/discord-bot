@@ -1,6 +1,16 @@
 {
+  "name": "in-server-bot",
+  "version": "1.0.0",
+  "description": "Discord in-server bot with welcome and event ban systems",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
+  },
+  "engines": {
+    "node": ">=18 <=20"
+  },
+  "dependencies": {
+    "discord.js": "^14.15.3",
+    "googleapis": "^140.0.0"
   }
 }

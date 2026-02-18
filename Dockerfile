@@ -1,39 +1,17 @@
-# syntax = docker/dockerfile:1
+# Use a stable, supported Node version for discord.js
+FROM node:20-slim
 
-# Adjust NODE_VERSION as desired
-ARG NODE_VERSION=24.11.0
-FROM node:${NODE_VERSION}-slim AS base
-
-LABEL fly_launch_runtime="Node.js"
-
-# Node.js app lives here
+# Set working directory
 WORKDIR /app
 
-# Set production environment
-ENV NODE_ENV="production"
+# Copy dependency manifests first (better caching)
+COPY package.json package-lock.json ./
 
+# Install production dependencies
+RUN npm install --omit=dev
 
-# Throw-away build stage to reduce size of final image
-FROM base AS build
-
-# Install packages needed to build node modules
-RUN apt-get update -qq && \
-    apt-get install --no-install-recommends -y build-essential node-gyp pkg-config python-is-python3
-
-# Install node modules
-COPY package.json ./
-RUN npm install
-
-# Copy application code
+# Copy the rest of the project
 COPY . .
 
-
-# Final stage for app image
-FROM base
-
-# Copy built application
-COPY --from=build /app /app
-
-# Start the server by default, this can be overwritten at runtime
-EXPOSE 3000
-CMD [ "npm", "run", "start" ]
+# Start the bot
+CMD ["node", "bot.js"]
