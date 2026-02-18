@@ -23,6 +23,12 @@ const {
   checkProbationExpiry
 } = require("./event bans/eventBans");
 
+// DM system
+const {
+  dmCommand,
+  handleDM
+} = require("./dm/dm");
+
 const GUILD_ID = "1371615693392576580";
 
 const client = new Client({
@@ -45,7 +51,8 @@ client.once("ready", async () => {
         verifyCommand.toJSON(),
         eventBanCommand.toJSON(),
         recentBanCommand.toJSON(),
-        myBanCommand.toJSON()
+        myBanCommand.toJSON(),
+        dmCommand.toJSON()
       ]
     }
   );
@@ -63,10 +70,10 @@ client.on("guildMemberAdd", handleWelcome);
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  // ✅ Only /myban is ephemeral
-  await interaction.deferReply({
-    ephemeral: interaction.commandName === "myban"
-  });
+  // Only /myban is deferred + ephemeral
+  if (interaction.commandName === "myban") {
+    await interaction.deferReply({ ephemeral: true });
+  }
 
   if (interaction.commandName === "verify") {
     return handleVerify(interaction);
@@ -84,7 +91,11 @@ client.on("interactionCreate", async interaction => {
     return handleMyBan(interaction);
   }
 
-  return interaction.editReply("Unknown command.");
+  if (interaction.commandName === "dm") {
+    return handleDM(interaction);
+  }
+
+  return interaction.reply("Unknown command.");
 });
 
 // ================= DAILY SCHEDULER =================
