@@ -196,13 +196,8 @@ async function handleDMButton(interaction) {
   if (action === "dm_cancel") {
     row[5] = "cancelled";
     await updateRow(rowNumber, row);
-
-    const channel = interaction.channel;
-    const cancelledMessage = "❌ DM cancelled";
-
     await interaction.message.delete().catch(() => {});
-    await channel.send(cancelledMessage);
-
+    await interaction.channel.send("❌ DM cancelled");
     return;
   }
 
@@ -251,20 +246,27 @@ function startDMScheduler(client) {
       if (new Date(row[4]) > now) continue;
 
       let failedUsers = [];
+      let totalTargets = 0;
+      let successCount = 0;
       let error = "";
 
       try {
         if (row[1] === "user") {
+          totalTargets = 1;
           const user = await client.users.fetch(row[2]);
           await user.send(row[3]);
+          successCount = 1;
         } else {
           const guild = client.guilds.cache.first();
           const role = await guild.roles.fetch(row[2]);
           if (!role) throw new Error("Role not found");
 
+          totalTargets = role.members.size;
+
           for (const member of role.members.values()) {
             try {
               await member.send(row[3]);
+              successCount++;
             } catch {
               failedUsers.push(member.id);
             }
@@ -272,7 +274,14 @@ function startDMScheduler(client) {
           }
         }
 
-        row[5] = "sent";
+        if (successCount === 0) {
+          row[5] = "failed";
+        } else if (successCount < totalTargets) {
+          row[5] = "partially_sent";
+        } else {
+          row[5] = "sent";
+        }
+
         row[8] = nowISO();
       } catch (err) {
         row[5] = "failed";
@@ -287,9 +296,20 @@ function startDMScheduler(client) {
         const channel = await client.channels.fetch(MOD_CHANNEL_ID);
         const msg = await channel.messages.fetch(row[row.length - 1]);
 
+        const title =
+          row[5] === "partially_sent"
+            ? "📨 DM PARTIALLY SENT"
+            : `📨 DM ${row[5].toUpperCase()}`;
+
         const embed = new EmbedBuilder()
-          .setTitle(`📨 DM ${row[5].toUpperCase()}`)
-          .setColor(row[5] === "sent" ? 0x57f287 : 0xed4245)
+          .setTitle(title)
+          .setColor(
+            row[5] === "sent"
+              ? 0x57f287
+              : row[5] === "partially_sent"
+              ? 0xfaa61a
+              : 0xed4245
+          )
           .addFields(
             { name: "Moderator", value: `<@${row[6]}>` },
             {
@@ -297,7 +317,14 @@ function startDMScheduler(client) {
               value: row[1] === "user" ? `<@${row[2]}>` : `<@&${row[2]}>`
             },
             { name: "Message", value: row[3] },
-            { name: "Message Sent at", value: row[8] }
+            { name: "Total Targets", value: String(totalTargets), inline: true },
+            { name: "Sent", value: String(successCount), inline: true },
+            {
+              name: "Failed",
+              value: String(totalTargets - successCount),
+              inline: true
+            },
+            { name: "Sent at (UTC)", value: row[8] }
           );
 
         await msg.edit({ embeds: [embed], components: [] });
