@@ -19,16 +19,24 @@ const previewState = new Map();
 
 // ================= GOOGLE SHEETS AUTH =================
 
-if (!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
-  throw new Error("Missing GOOGLE_APPLICATION_CREDENTIALS_JSON secret");
+if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64) {
+  throw new Error("Missing GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 secret");
 }
 
 if (!process.env.SPREADSHEET_ID) {
   throw new Error("Missing SPREADSHEET_ID secret");
 }
 
+// Decode base64 → JSON
+const serviceAccount = JSON.parse(
+  Buffer.from(
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
+    "base64"
+  ).toString("utf8")
+);
+
 const auth = new google.auth.GoogleAuth({
-  credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON),
+  credentials: serviceAccount,
   scopes: ["https://www.googleapis.com/auth/spreadsheets"]
 });
 
@@ -84,8 +92,11 @@ const dmCommand = new SlashCommandBuilder()
 // ================= SLASH HANDLER =================
 
 async function handleDM(interaction) {
+  // Prevent Discord 3s timeout
+  await interaction.deferReply({ ephemeral: false });
+
   if (interaction.channelId !== ALLOWED_CHANNEL_ID) {
-    return interaction.reply({
+    return interaction.editReply({
       content: "❌ This command can only be used in the moderator channel."
     });
   }
@@ -109,19 +120,21 @@ async function handleDM(interaction) {
       .setStyle(ButtonStyle.Danger)
   );
 
-  const preview = await interaction.reply({
-    content:
-      `📨 **DM PREVIEW**\n\n` +
-      `**Moderator:** ${interaction.user.tag} (${interaction.user.id})\n` +
-      `**Target:** ${target.tag} (${target.id})\n\n` +
-      `**Message:**\n${message}\n\n` +
-      `${deliveryLine}\n\n` +
-      `⚠️ Nothing has been sent yet.`,
+  const previewContent =
+    `📨 **DM PREVIEW**\n\n` +
+    `**Moderator:** ${interaction.user.tag} (${interaction.user.id})\n` +
+    `**Target:** ${target.tag} (${target.id})\n\n` +
+    `**Message:**\n${message}\n\n` +
+    `${deliveryLine}\n\n` +
+    `⚠️ Nothing has been sent yet.`;
+
+  const previewMessage = await interaction.editReply({
+    content: previewContent,
     components: [row],
     fetchReply: true
   });
 
-  previewState.set(preview.id, {
+  previewState.set(previewMessage.id, {
     moderatorId: interaction.user.id,
     targetUserId: target.id,
     message,
@@ -135,7 +148,6 @@ async function handleDMButton(interaction) {
   if (!["dm_confirm", "dm_cancel"].includes(interaction.customId)) return;
 
   const state = previewState.get(interaction.message.id);
-
   if (!state) {
     return interaction.update({
       content:
@@ -154,7 +166,7 @@ async function handleDMButton(interaction) {
 
   previewState.delete(interaction.message.id);
 
-  // ---------- CANCEL ----------
+  // CANCEL
   if (interaction.customId === "dm_cancel") {
     return interaction.update({
       content:
@@ -164,22 +176,22 @@ async function handleDMButton(interaction) {
     });
   }
 
-  // ---------- CONFIRM (SCHEDULE HAS PRIORITY) ----------
+  // CONFIRM — SCHEDULED
   if (state.sendAt) {
     const jobId = crypto.randomUUID();
     const now = new Date().toISOString();
 
     await appendScheduledDM([
-      jobId,                // jobId
-      "user",               // targetType
-      state.targetUserId,   // targetId
-      state.message,        // message
-      new Date(state.sendAt).toISOString(), // sendAt
-      "scheduled",          // status
-      state.moderatorId,    // moderatorId
-      now,                  // createdAt
-      "",                   // sentAt
-      ""                    // error
+      jobId,
+      "user",
+      state.targetUserId,
+      state.message,
+      new Date(state.sendAt).toISOString(),
+      "scheduled",
+      state.moderatorId,
+      now,
+      "",
+      ""
     ]);
 
     return interaction.update({
@@ -193,7 +205,7 @@ async function handleDMButton(interaction) {
     });
   }
 
-  // ---------- CONFIRM (IMMEDIATE SEND) ----------
+  // CONFIRM — IMMEDIATE SEND
   try {
     const user = await interaction.client.users.fetch(state.targetUserId);
     await user.send(state.message);
