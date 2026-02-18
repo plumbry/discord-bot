@@ -12,14 +12,15 @@ const {
   handleWelcome
 } = require("./welcome ping");
 
-// Event bans (ALL commands)
+// Event bans system
 const {
   eventBanCommand,
   recentBanCommand,
   myBanCommand,
   handleEventBan,
   handleRecentBan,
-  handleMyBan
+  handleMyBan,
+  checkProbationExpiry
 } = require("./event bans/eventBans");
 
 const GUILD_ID = "1371615693392576580";
@@ -36,7 +37,7 @@ client.once("ready", async () => {
   const rest = new REST({ version: "10" })
     .setToken(process.env.DISCORD_TOKEN);
 
-  // 🔒 SINGLE SOURCE OF TRUTH — ALL COMMANDS
+  // 🔒 REGISTER ALL COMMANDS (PERSISTENT)
   await rest.put(
     Routes.applicationGuildCommands(client.user.id, GUILD_ID),
     {
@@ -50,6 +51,9 @@ client.once("ready", async () => {
   );
 
   console.log(`🤖 Logged in as ${client.user.tag}`);
+
+  // ===== DAILY PROBATION CHECK @ 00:01 =====
+  scheduleDailyProbationCheck(client);
 });
 
 // ================= MEMBER JOIN =================
@@ -59,7 +63,7 @@ client.on("guildMemberAdd", handleWelcome);
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  // ✅ ONLY /myban is ephemeral
+  // ✅ Only /myban is ephemeral
   await interaction.deferReply({
     ephemeral: interaction.commandName === "myban"
   });
@@ -82,5 +86,37 @@ client.on("interactionCreate", async interaction => {
 
   return interaction.editReply("Unknown command.");
 });
+
+// ================= DAILY SCHEDULER =================
+function scheduleDailyProbationCheck(client) {
+  const now = new Date();
+  const next = new Date();
+
+  // Next run at 00:01
+  next.setHours(0, 1, 0, 0);
+  if (now >= next) {
+    next.setDate(next.getDate() + 1);
+  }
+
+  const delay = next.getTime() - now.getTime();
+
+  setTimeout(async () => {
+    try {
+      await checkProbationExpiry(client);
+    } catch (e) {
+      console.error("Probation check failed:", e);
+    }
+
+    // Then every 24h
+    setInterval(async () => {
+      try {
+        await checkProbationExpiry(client);
+      } catch (e) {
+        console.error("Probation check failed:", e);
+      }
+    }, 24 * 60 * 60 * 1000);
+
+  }, delay);
+}
 
 client.login(process.env.DISCORD_TOKEN);

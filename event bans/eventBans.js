@@ -26,12 +26,12 @@ const auth = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: "v4", auth });
 
 // ================= HELPERS =================
-const formatDate = d => d.toLocaleDateString("en-GB");
+const today = () => new Date().toLocaleDateString("en-GB");
 
 const addDays = (start, days) => {
   const d = new Date(start);
   d.setDate(d.getDate() + days);
-  return d;
+  return d.toLocaleDateString("en-GB");
 };
 
 async function logAudit(action, moderator, user = "") {
@@ -41,7 +41,7 @@ async function logAudit(action, moderator, user = "") {
     valueInputOption: "RAW",
     requestBody: {
       values: [[
-        formatDate(new Date()),
+        today(),
         action,
         moderator.tag,
         user?.tag || user
@@ -74,7 +74,7 @@ async function writeRows(rows) {
   }
 }
 
-// ================= MESSAGE FORMATTERS =================
+// ================= FORMATTERS =================
 const formatEventBan = r =>
 `${r[1]} — ${r[3]}-Event ${r[2]} Ban Started ${r[5]}
 ${r[4]} Events Remaining
@@ -144,6 +144,29 @@ const myBanCommand = new SlashCommandBuilder()
   .setName("myban")
   .setDescription("View your current event bans");
 
+// ================= PROBATION EXPIRY CHECK =================
+async function checkProbationExpiry(client) {
+  const rows = await getRows();
+  const channel = await client.channels.fetch(BAN_CHANNEL_ID);
+  let updated = false;
+
+  for (const r of rows) {
+    if (
+      r[2] === "Probation" &&
+      r[6] === today() &&
+      r[9] !== "ENDED"
+    ) {
+      await channel.send(`Probation for ${r[1]} ended`);
+      r[9] = "ENDED";
+      updated = true;
+    }
+  }
+
+  if (updated) {
+    await writeRows(rows);
+  }
+}
+
 // ================= HANDLERS =================
 async function handleEventBan(interaction) {
   try {
@@ -157,7 +180,6 @@ async function handleEventBan(interaction) {
     const rows = await getRows();
     const channel = await interaction.client.channels.fetch(BAN_CHANNEL_ID);
 
-    // APPLY
     if (sub === "apply") {
       const u = interaction.options.getUser("user");
       const type = interaction.options.getString("type");
@@ -167,8 +189,7 @@ async function handleEventBan(interaction) {
       const row = [
         u.id, u.username, type,
         events.toString(), events.toString(),
-        formatDate(new Date()),
-        formatDate(new Date()),
+        today(), today(),
         reason,
         interaction.user.tag,
         ""
@@ -184,27 +205,24 @@ async function handleEventBan(interaction) {
       return interaction.editReply("Event ban applied.");
     }
 
-    // PROBATION
     if (sub === "probation") {
       const u = interaction.options.getUser("user");
       const days = interaction.options.getInteger("days");
       const start = interaction.options.getString("start");
       const reason = interaction.options.getString("reason");
 
-      const end = formatDate(addDays(start, days));
+      const end = addDays(start, days);
 
       const row = [
         u.id, u.username, "Probation",
         days.toString(), "",
-        start,
-        end,
+        start, end,
         reason,
         interaction.user.tag,
         "PROBATION"
       ];
 
-      const msg = await channel.send(formatProbation(row));
-      row[9] = msg.id;
+      await channel.send(formatProbation(row));
 
       rows.push(row);
       await writeRows(rows);
@@ -213,7 +231,6 @@ async function handleEventBan(interaction) {
       return interaction.editReply("Probation applied.");
     }
 
-    // EVENT PASSED
     if (sub === "eventpassed") {
       const type = interaction.options.getString("type");
       const passed = interaction.options.getInteger("events");
@@ -221,9 +238,9 @@ async function handleEventBan(interaction) {
       for (const r of rows) {
         if (r[2] === type && Number(r[4]) > 0) {
           r[4] = Math.max(0, Number(r[4]) - passed).toString();
-          r[6] = formatDate(new Date());
+          r[6] = today();
 
-          if (r[9] && r[9] !== "PROBATION") {
+          if (r[9] && r[9] !== "PROBATION" && r[9] !== "ENDED") {
             const m = await channel.messages.fetch(r[9]);
             await m.edit(formatEventBan(r));
           }
@@ -240,17 +257,11 @@ async function handleEventBan(interaction) {
       return interaction.editReply("Event bans updated.");
     }
 
-    // REMOVE LAST
     if (sub === "removelast") {
       const u = interaction.options.getUser("user");
 
       for (let i = rows.length - 1; i >= 0; i--) {
         if (rows[i][0] === u.id) {
-          if (rows[i][9] && rows[i][9] !== "PROBATION") {
-            await channel.messages.fetch(rows[i][9])
-              .then(m => m.delete())
-              .catch(() => {});
-          }
           rows.splice(i, 1);
           break;
         }
@@ -278,11 +289,7 @@ async function handleRecentBan(interaction) {
 
   if (!r) return interaction.editReply("No bans found.");
 
-  return interaction.editReply(
-`${r[1]} — ${r[3]}-Event ${r[2]} Ban Started ${r[5]}
-${r[4]} Events Remaining
-Reason: ${r[7] || "No reason provided"}`
-  );
+  return interaction.editReply(formatEventBan(r));
 }
 
 async function handleMyBan(interaction) {
@@ -304,5 +311,6 @@ module.exports = {
   myBanCommand,
   handleEventBan,
   handleRecentBan,
-  handleMyBan
+  handleMyBan,
+  checkProbationExpiry
 };
