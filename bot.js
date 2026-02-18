@@ -5,21 +5,18 @@ const {
   Routes
 } = require("discord.js");
 
+// Welcome / Verify system
 const {
   verifyCommand,
   handleVerify,
   handleWelcome
 } = require("./welcome ping");
 
+// Event bans system (IMPORTANT: explicit file path)
 const {
   eventBanCommand,
   handleEventBan
-} = require("./event bans");
-
-const {
-  removeRoleAllCommand,
-  handleRemoveRoleAll
-} = require("./role assign");
+} = require("./event bans/eventBans");
 
 const GUILD_ID = "1371615693392576580";
 
@@ -40,8 +37,7 @@ client.once("ready", async () => {
     {
       body: [
         verifyCommand.toJSON(),
-        eventBanCommand.toJSON(),
-        removeRoleAllCommand.toJSON()
+        eventBanCommand.toJSON()
       ]
     }
   );
@@ -66,10 +62,6 @@ client.on("interactionCreate", async interaction => {
 
   if (interaction.commandName === "eventban") {
     return handleEventBan(interaction);
-  }
-
-  if (interaction.commandName === "removeroleall") {
-    return handleRemoveRoleAll(interaction);
   }
 });
 

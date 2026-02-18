@@ -1,7 +1,6 @@
 {
   "name": "in-server-bot",
   "version": "1.0.0",
-  "description": "Discord in-server bot with welcome and event ban systems",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
