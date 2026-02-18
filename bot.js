@@ -1,4 +1,9 @@
-const { Client, GatewayIntentBits, REST, Routes } = require("discord.js");
+const {
+  Client,
+  GatewayIntentBits,
+  REST,
+  Routes
+} = require("discord.js");
 
 // ================= DM SYSTEM =================
 const dm = require("./commands/dm");
@@ -28,7 +33,8 @@ const GUILD_ID = "1371615693392576580";
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages // ✅ REQUIRED
   ]
 });
 
@@ -101,4 +107,5 @@ client.on("interactionCreate", async interaction => {
 
 client.on("guildMemberAdd", handleWelcome);
 
+// ================= LOGIN =================
 client.login(process.env.DISCORD_TOKEN);
