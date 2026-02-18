@@ -14,10 +14,6 @@ const MOD_CHANNEL_ID = "1471082166535454780";
 const SHEET_NAME = "Scheduled DMs";
 
 /* ===================== ENV GUARANTEES ===================== */
-/**
- * These are NON-NEGOTIABLE.
- * If any are missing, the bot MUST fail immediately.
- */
 
 if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64) {
   throw new Error(
@@ -32,10 +28,6 @@ if (!process.env.SPREADSHEET_ID) {
 }
 
 /* ===================== GOOGLE AUTH ===================== */
-/**
- * GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 is ALWAYS the source of truth.
- * No other secrets are read for Google access.
- */
 
 const credentials = JSON.parse(
   Buffer.from(
@@ -54,6 +46,20 @@ const sheets = google.sheets({ version: "v4", auth });
 /* ===================== HELPERS ===================== */
 
 const nowISO = () => new Date().toISOString();
+
+function parseUTCDateTime(date, time) {
+  if (!date || !time) return "";
+
+  // Expect YYYY-MM-DD and HH:MM
+  const iso = `${date}T${time}:00.000Z`;
+  const parsed = new Date(iso);
+
+  if (isNaN(parsed.getTime())) {
+    throw new Error("Invalid date or time format");
+  }
+
+  return parsed.toISOString();
+}
 
 async function updateRow(rowNumber, row) {
   await sheets.spreadsheets.values.update({
@@ -81,8 +87,14 @@ const dmCommand = new SlashCommandBuilder()
       )
       .addStringOption(opt =>
         opt
-          .setName("send_at")
-          .setDescription("ISO timestamp (UTC). Omit to send immediately.")
+          .setName("date")
+          .setDescription("Send date (UTC) in YYYY-MM-DD")
+          .setRequired(false)
+      )
+      .addStringOption(opt =>
+        opt
+          .setName("time")
+          .setDescription("Send time (UTC) in HH:MM (24h)")
           .setRequired(false)
       )
   );
@@ -94,9 +106,19 @@ async function handleDM(interaction) {
 
   const targetUser = interaction.options.getUser("user");
   const message = interaction.options.getString("message");
-  const sendAtRaw = interaction.options.getString("send_at");
+  const date = interaction.options.getString("date");
+  const time = interaction.options.getString("time");
 
-  const sendAt = sendAtRaw ? new Date(sendAtRaw).toISOString() : "";
+  let sendAt = "";
+
+  try {
+    sendAt = parseUTCDateTime(date, time);
+  } catch (err) {
+    return interaction.editReply(
+      "❌ Invalid date/time. Use YYYY-MM-DD and HH:MM (UTC)."
+    );
+  }
+
   const jobId = crypto.randomUUID();
 
   const embed = new EmbedBuilder()
@@ -180,7 +202,7 @@ async function handleDMButton(interaction) {
 
   if (action === "dm_confirm") {
     if (row[4]) {
-      // scheduled — scheduler will handle
+      // scheduled
       await interaction.message.edit({ components: [] });
       return;
     }
@@ -241,7 +263,6 @@ function startDMScheduler(client) {
         await updateRow(rowNumber, row);
       }
 
-      // Discord rate-limit safety
       await new Promise(r => setTimeout(r, 1200));
     }
   }, 30_000);
