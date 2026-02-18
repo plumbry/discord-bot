@@ -15,11 +15,7 @@ const {
 // Event bans
 const {
   eventBanCommand,
-  handleEventBan,
-  recentBanCommand,
-  handleRecentBan,
-  myBanCommand,
-  handleMyBan
+  handleEventBan
 } = require("./event bans/eventBans");
 
 const GUILD_ID = "1371615693392576580";
@@ -41,9 +37,7 @@ client.once("ready", async () => {
     {
       body: [
         verifyCommand.toJSON(),
-        eventBanCommand.toJSON(),
-        recentBanCommand.toJSON(),
-        myBanCommand.toJSON()
+        eventBanCommand.toJSON()
       ]
     }
   );
@@ -58,7 +52,6 @@ client.on("guildMemberAdd", handleWelcome);
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  // ALWAYS defer so we never time out
   await interaction.deferReply({ ephemeral: false });
 
   if (interaction.commandName === "verify") {
@@ -67,14 +60,6 @@ client.on("interactionCreate", async interaction => {
 
   if (interaction.commandName === "eventban") {
     return handleEventBan(interaction);
-  }
-
-  if (interaction.commandName === "recentban") {
-    return handleRecentBan(interaction);
-  }
-
-  if (interaction.commandName === "myban") {
-    return handleMyBan(interaction);
   }
 
   return interaction.editReply("Unknown command.");
