@@ -43,7 +43,6 @@ client.once("ready", async () => {
   const rest = new REST({ version: "10" })
     .setToken(process.env.DISCORD_TOKEN);
 
-  // REGISTER ALL COMMANDS
   await rest.put(
     Routes.applicationGuildCommands(client.user.id, GUILD_ID),
     {

@@ -51,13 +51,12 @@ const dmCommand = new SlashCommandBuilder()
       )
   )
 
-  // 🔒 VISIBILITY PERMISSION
+  // 🔒 Visibility permission
   .setDefaultMemberPermissions(
     PermissionFlagsBits.ManageRoles
   );
 
 async function handleDM(interaction) {
-  // Channel lock
   if (interaction.channelId !== ALLOWED_CHANNEL_ID) {
     return interaction.reply({
       content: "❌ This command can only be used in the moderator channel."
@@ -66,6 +65,7 @@ async function handleDM(interaction) {
 
   const sub = interaction.options.getSubcommand();
   const message = interaction.options.getString("message");
+  const moderator = `${interaction.user.tag} (${interaction.user.id})`;
 
   await interaction.reply({
     content: "📨 DM process started…"
@@ -89,9 +89,10 @@ async function handleDM(interaction) {
 
     return interaction.channel.send({
       content:
-        `📤 **DM Result**\n` +
-        `**Moderator:** ${interaction.user.tag}\n` +
-        `**Target:** ${user.tag}\n\n` +
+        `📤 **DM RESULT**\n` +
+        `**Moderator:** ${moderator}\n` +
+        `**Target User:** ${user.tag} (${user.id})\n\n` +
+        `**Message Sent:**\n${message}\n\n` +
         `✅ Sent: ${sent}\n` +
         `❌ Failed: ${failed}` +
         (failedUsers.length
@@ -122,9 +123,10 @@ async function handleDM(interaction) {
 
     return interaction.channel.send({
       content:
-        `📤 **Role DM Result**\n` +
-        `**Moderator:** ${interaction.user.tag}\n` +
-        `**Role:** ${role.name}\n\n` +
+        `📤 **ROLE DM RESULT**\n` +
+        `**Moderator:** ${moderator}\n` +
+        `**Role:** ${role.name} (${role.id})\n\n` +
+        `**Message Sent:**\n${message}\n\n` +
         `✅ Sent: ${sent}\n` +
         `❌ Failed: ${failed}` +
         (failedUsers.length
