@@ -1,14 +1,6 @@
 {
-  "name": "welcome-bot",
-  "version": "1.0.0",
-  "private": true,
-  "type": "commonjs",
-  "main": "index.js",
+  "main": "bot.js",
   "scripts": {
-    "start": "node index.js"
-  },
-  "dependencies": {
-    "discord.js": "^14.14.1",
-    "googleapis": "^140.0.0"
+    "start": "node bot.js"
   }
 }
