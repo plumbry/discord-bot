@@ -23,7 +23,7 @@ const {
   checkProbationExpiry
 } = require("./event bans/eventBans");
 
-// DM system (still imported, but NOT registered in this step)
+// DM system
 const {
   dmCommand,
   handleDM
@@ -43,14 +43,21 @@ client.once("ready", async () => {
   const rest = new REST({ version: "10" })
     .setToken(process.env.DISCORD_TOKEN);
 
-  // 🚨 STEP 4: CLEAR ALL GUILD COMMANDS
+  // ✅ STEP 5: REGISTER ALL COMMANDS (CLEAN)
   await rest.put(
     Routes.applicationGuildCommands(client.user.id, GUILD_ID),
-    { body: [] }
+    {
+      body: [
+        verifyCommand.toJSON(),
+        eventBanCommand.toJSON(),
+        recentBanCommand.toJSON(),
+        myBanCommand.toJSON(),
+        dmCommand.toJSON()
+      ]
+    }
   );
 
-  console.log("🧹 Cleared all guild slash commands");
-
+  console.log("✅ Guild commands registered cleanly");
   console.log(`🤖 Logged in as ${client.user.tag}`);
 
   // ===== DAILY PROBATION CHECK @ 00:01 =====
@@ -97,7 +104,6 @@ function scheduleDailyProbationCheck(client) {
   const now = new Date();
   const next = new Date();
 
-  // Next run at 00:01
   next.setHours(0, 1, 0, 0);
   if (now >= next) {
     next.setDate(next.getDate() + 1);
@@ -112,7 +118,6 @@ function scheduleDailyProbationCheck(client) {
       console.error("Probation check failed:", e);
     }
 
-    // Then every 24h
     setInterval(async () => {
       try {
         await checkProbationExpiry(client);
@@ -120,7 +125,6 @@ function scheduleDailyProbationCheck(client) {
         console.error("Probation check failed:", e);
       }
     }, 24 * 60 * 60 * 1000);
-
   }, delay);
 }
 

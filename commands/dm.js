@@ -11,7 +11,7 @@ const DM_DELAY_MS = 900;
 
 const dmCommand = new SlashCommandBuilder()
   .setName("dm")
-  .setDescription("Send DMs via the bot")
+  .setDescription("Send DMs via the bot (mod only)")
 
   // ===== USER SUBCOMMAND =====
   .addSubcommand(sub =>
@@ -57,7 +57,6 @@ const dmCommand = new SlashCommandBuilder()
   );
 
 async function handleDM(interaction) {
-  // Hard channel lock
   if (interaction.channelId !== ALLOWED_CHANNEL_ID) {
     return interaction.reply({
       content: "❌ This command can only be used in the moderator channel."
@@ -75,7 +74,7 @@ async function handleDM(interaction) {
   let failed = 0;
   const failedUsers = [];
 
-  // ===== SINGLE USER =====
+  // ===== USER =====
   if (sub === "user") {
     const user = interaction.options.getUser("target");
 
@@ -104,7 +103,6 @@ async function handleDM(interaction) {
   // ===== ROLE =====
   if (sub === "role") {
     const role = interaction.options.getRole("target");
-
     const members = await interaction.guild.members.fetch();
     const targets = members.filter(
       m => m.roles.cache.has(role.id) && !m.user.bot
@@ -119,7 +117,6 @@ async function handleDM(interaction) {
         failedUsers.push(`${member.user.tag} (${member.user.id})`);
       }
 
-      // Rate-limit delay
       await wait(DM_DELAY_MS);
     }
 
