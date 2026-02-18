@@ -1,0 +1,9 @@
+app = "welcome-ping"
+primary_region = "lhr"
+
+[env]
+  NODE_ENV = "production"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
