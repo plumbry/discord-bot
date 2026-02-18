@@ -23,7 +23,7 @@ const {
   checkProbationExpiry
 } = require("./event bans/eventBans");
 
-// DM system
+// DM system (still imported, but NOT registered in this step)
 const {
   dmCommand,
   handleDM
@@ -43,19 +43,13 @@ client.once("ready", async () => {
   const rest = new REST({ version: "10" })
     .setToken(process.env.DISCORD_TOKEN);
 
-  // 🔒 REGISTER ALL COMMANDS (PERSISTENT)
+  // 🚨 STEP 4: CLEAR ALL GUILD COMMANDS
   await rest.put(
     Routes.applicationGuildCommands(client.user.id, GUILD_ID),
-    {
-      body: [
-        verifyCommand.toJSON(),
-        eventBanCommand.toJSON(),
-        recentBanCommand.toJSON(),
-        myBanCommand.toJSON(),
-        dmCommand.toJSON()
-      ]
-    }
+    { body: [] }
   );
+
+  console.log("🧹 Cleared all guild slash commands");
 
   console.log(`🤖 Logged in as ${client.user.tag}`);
 
