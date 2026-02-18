@@ -78,12 +78,12 @@ async function writeRows(rows) {
 const formatEventBan = r =>
 `${r[1]} — ${r[3]}-Event ${r[2]} Ban Started ${r[5]}
 ${r[4]} Events Remaining
-Reason: ${r[8] || "No reason provided"}`;
+Reason: ${r[7] || "No reason provided"}`;
 
 const formatProbation = r =>
 `${r[1]} — Probation Started ${r[5]}
 Ends: ${r[6]} (${r[3]} days)
-Reason: ${r[8] || "No reason provided"}`;
+Reason: ${r[7] || "No reason provided"}`;
 
 // ================= COMMAND BUILDERS =================
 const eventBanCommand = new SlashCommandBuilder()
@@ -167,8 +167,11 @@ async function handleEventBan(interaction) {
       const row = [
         u.id, u.username, type,
         events.toString(), events.toString(),
-        formatDate(new Date()), "",
-        interaction.user.tag, reason, ""
+        formatDate(new Date()),
+        formatDate(new Date()),
+        reason,
+        interaction.user.tag,
+        ""
       ];
 
       const msg = await channel.send(formatEventBan(row));
@@ -193,8 +196,11 @@ async function handleEventBan(interaction) {
       const row = [
         u.id, u.username, "Probation",
         days.toString(), "",
-        start, end,
-        interaction.user.tag, reason, ""
+        start,
+        end,
+        reason,
+        interaction.user.tag,
+        "PROBATION"
       ];
 
       const msg = await channel.send(formatProbation(row));
@@ -215,7 +221,9 @@ async function handleEventBan(interaction) {
       for (const r of rows) {
         if (r[2] === type && Number(r[4]) > 0) {
           r[4] = Math.max(0, Number(r[4]) - passed).toString();
-          if (r[9]) {
+          r[6] = formatDate(new Date());
+
+          if (r[9] && r[9] !== "PROBATION") {
             const m = await channel.messages.fetch(r[9]);
             await m.edit(formatEventBan(r));
           }
@@ -238,7 +246,7 @@ async function handleEventBan(interaction) {
 
       for (let i = rows.length - 1; i >= 0; i--) {
         if (rows[i][0] === u.id) {
-          if (rows[i][9]) {
+          if (rows[i][9] && rows[i][9] !== "PROBATION") {
             await channel.messages.fetch(rows[i][9])
               .then(m => m.delete())
               .catch(() => {});
@@ -268,17 +276,13 @@ async function handleRecentBan(interaction) {
   const rows = await getRows();
   const r = [...rows].reverse().find(x => x[0] === u.id);
 
-  if (!r) {
-    return interaction.editReply("No bans found.");
-  }
+  if (!r) return interaction.editReply("No bans found.");
 
-  // 🔒 EXPLICIT COLUMN USAGE — reason is ALWAYS column 8
-  const message =
+  return interaction.editReply(
 `${r[1]} — ${r[3]}-Event ${r[2]} Ban Started ${r[5]}
 ${r[4]} Events Remaining
-Reason: ${r[8] || "No reason provided"}`;
-
-  return interaction.editReply(message);
+Reason: ${r[7] || "No reason provided"}`
+  );
 }
 
 async function handleMyBan(interaction) {
