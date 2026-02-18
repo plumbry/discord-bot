@@ -11,16 +11,18 @@ const DM_DELAY_MS = 900;
 
 const dmCommand = new SlashCommandBuilder()
   .setName("dm")
-  .setDescription("Send a DM to a user or a role")
+  .setDescription("Send DMs via the bot")
+
+  // ===== USER SUBCOMMAND =====
   .addSubcommand(sub =>
     sub
-      .setName("send")
-      .setDescription("Send a DM")
+      .setName("user")
+      .setDescription("Send a DM to a single user")
       .addUserOption(opt =>
-        opt.setName("user").setDescription("User to DM")
-      )
-      .addRoleOption(opt =>
-        opt.setName("role").setDescription("Role to DM")
+        opt
+          .setName("target")
+          .setDescription("User to DM")
+          .setRequired(true)
       )
       .addStringOption(opt =>
         opt
@@ -29,6 +31,26 @@ const dmCommand = new SlashCommandBuilder()
           .setRequired(true)
       )
   )
+
+  // ===== ROLE SUBCOMMAND =====
+  .addSubcommand(sub =>
+    sub
+      .setName("role")
+      .setDescription("Send a DM to all users with a role")
+      .addRoleOption(opt =>
+        opt
+          .setName("target")
+          .setDescription("Role to DM")
+          .setRequired(true)
+      )
+      .addStringOption(opt =>
+        opt
+          .setName("message")
+          .setDescription("Message to send")
+          .setRequired(true)
+      )
+  )
+
   .setDefaultMemberPermissions(
     PermissionFlagsBits.ModerateMembers |
     PermissionFlagsBits.Administrator
@@ -42,21 +64,8 @@ async function handleDM(interaction) {
     });
   }
 
-  const user = interaction.options.getUser("user");
-  const role = interaction.options.getRole("role");
+  const sub = interaction.options.getSubcommand();
   const message = interaction.options.getString("message");
-
-  if (!user && !role) {
-    return interaction.reply({
-      content: "❌ You must specify either a user or a role."
-    });
-  }
-
-  if (user && role) {
-    return interaction.reply({
-      content: "❌ Choose either a user or a role, not both."
-    });
-  }
 
   await interaction.reply({
     content: "📨 DM process started…"
@@ -67,7 +76,9 @@ async function handleDM(interaction) {
   const failedUsers = [];
 
   // ===== SINGLE USER =====
-  if (user) {
+  if (sub === "user") {
+    const user = interaction.options.getUser("target");
+
     try {
       await user.send(message);
       sent++;
@@ -90,37 +101,41 @@ async function handleDM(interaction) {
     });
   }
 
-  // ===== ROLE (rate-limited) =====
-  const members = await interaction.guild.members.fetch();
-  const targets = members.filter(
-    m => m.roles.cache.has(role.id) && !m.user.bot
-  );
+  // ===== ROLE =====
+  if (sub === "role") {
+    const role = interaction.options.getRole("target");
 
-  for (const [, member] of targets) {
-    try {
-      await member.send(message);
-      sent++;
-    } catch {
-      failed++;
-      failedUsers.push(`${member.user.tag} (${member.user.id})`);
+    const members = await interaction.guild.members.fetch();
+    const targets = members.filter(
+      m => m.roles.cache.has(role.id) && !m.user.bot
+    );
+
+    for (const [, member] of targets) {
+      try {
+        await member.send(message);
+        sent++;
+      } catch {
+        failed++;
+        failedUsers.push(`${member.user.tag} (${member.user.id})`);
+      }
+
+      // Rate-limit delay
+      await wait(DM_DELAY_MS);
     }
 
-    // Rate limit delay
-    await wait(DM_DELAY_MS);
+    return interaction.channel.send({
+      content:
+        `📤 **Role DM Result**\n` +
+        `**Moderator:** ${interaction.user.tag}\n` +
+        `**Role:** ${role.name}\n` +
+        `**Message:**\n${message}\n\n` +
+        `✅ Sent: ${sent}\n` +
+        `❌ Failed: ${failed}` +
+        (failedUsers.length
+          ? `\n\n⚠️ **Could not DM:**\n${failedUsers.join("\n")}`
+          : "")
+    });
   }
-
-  return interaction.channel.send({
-    content:
-      `📤 **Role DM Result**\n` +
-      `**Moderator:** ${interaction.user.tag}\n` +
-      `**Role:** ${role.name}\n` +
-      `**Message:**\n${message}\n\n` +
-      `✅ Sent: ${sent}\n` +
-      `❌ Failed: ${failed}` +
-      (failedUsers.length
-        ? `\n\n⚠️ **Could not DM:**\n${failedUsers.join("\n")}`
-        : "")
-  });
 }
 
 module.exports = {
