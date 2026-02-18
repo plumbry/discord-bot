@@ -16,16 +16,18 @@ const SCHEDULED_DMS_SHEET = "Scheduled DMs";
 const previewState = new Map();
 
 // ================= GOOGLE AUTH =================
-
 if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64) {
-  throw new Error("Missing GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 secret");
+  throw new Error("Missing GOOGLE_SERVICE_ACCOUNT_JSON_BASE64");
 }
 if (!process.env.SPREADSHEET_ID) {
-  throw new Error("Missing SPREADSHEET_ID secret");
+  throw new Error("Missing SPREADSHEET_ID");
 }
 
 const serviceAccount = JSON.parse(
-  Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, "base64").toString("utf8")
+  Buffer.from(
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
+    "base64"
+  ).toString("utf8")
 );
 
 const auth = new google.auth.GoogleAuth({
@@ -33,15 +35,13 @@ const auth = new google.auth.GoogleAuth({
   scopes: ["https://www.googleapis.com/auth/spreadsheets"]
 });
 
-function sheetsClient() {
-  return google.sheets({ version: "v4", auth });
-}
+const sheets = google.sheets({ version: "v4", auth });
 
-// ================= COMMAND DEFINITION =================
-
+// ================= COMMAND =================
 const dmCommand = new SlashCommandBuilder()
   .setName("dm")
   .setDescription("Send or schedule DMs")
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
   .addSubcommandGroup(group =>
     group
       .setName("preview")
@@ -50,10 +50,15 @@ const dmCommand = new SlashCommandBuilder()
         sub
           .setName("user")
           .setDescription("Preview a DM to a user")
-          .addUserOption(o => o.setName("target").setDescription("User").setRequired(true))
-          .addStringOption(o => o.setName("message").setDescription("Message").setRequired(true))
+          .addUserOption(o =>
+            o.setName("target").setDescription("User").setRequired(true)
+          )
           .addStringOption(o =>
-            o.setName("send_at").setDescription("Schedule time UTC (YYYY-MM-DD HH:MM)")
+            o.setName("message").setDescription("Message").setRequired(true)
+          )
+          .addStringOption(o =>
+            o.setName("send_at")
+              .setDescription("UTC time YYYY-MM-DD HH:MM")
           )
       )
   )
@@ -64,11 +69,9 @@ const dmCommand = new SlashCommandBuilder()
       .addStringOption(o =>
         o.setName("job_id").setDescription("Job ID").setRequired(true)
       )
-  )
-  .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles);
+  );
 
 // ================= SLASH HANDLER =================
-
 async function handleDM(interaction) {
   await interaction.deferReply({ ephemeral: false });
 
@@ -79,7 +82,6 @@ async function handleDM(interaction) {
   // ---------- CANCEL ----------
   if (interaction.options.getSubcommand() === "cancel") {
     const jobId = interaction.options.getString("job_id");
-    const sheets = sheetsClient();
 
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.SPREADSHEET_ID,
@@ -87,21 +89,21 @@ async function handleDM(interaction) {
     });
 
     const rows = res.data.values || [];
-    const rowIndex = rows.findIndex(r => r[0] === jobId);
+    const index = rows.findIndex(r => r[0] === jobId);
 
-    if (rowIndex === -1) {
+    if (index === -1) {
       return interaction.editReply("❌ Job ID not found.");
     }
 
-    const status = rows[rowIndex][5];
-    if (status !== "scheduled") {
+    if (rows[index][5] !== "scheduled") {
       return interaction.editReply("❌ That DM is no longer scheduled.");
     }
 
-    const updateRow = rowIndex + 2;
+    const rowNum = index + 2;
+
     await sheets.spreadsheets.values.update({
       spreadsheetId: process.env.SPREADSHEET_ID,
-      range: `${SCHEDULED_DMS_SHEET}!F${updateRow}:J${updateRow}`,
+      range: `${SCHEDULED_DMS_SHEET}!F${rowNum}:J${rowNum}`,
       valueInputOption: "RAW",
       requestBody: {
         values: [[
@@ -114,7 +116,7 @@ async function handleDM(interaction) {
       }
     });
 
-    const previewMessageId = rows[rowIndex][10];
+    const previewMessageId = rows[index][10];
     try {
       const channel = await interaction.client.channels.fetch(ALLOWED_CHANNEL_ID);
       const msg = await channel.messages.fetch(previewMessageId);
@@ -132,35 +134,40 @@ async function handleDM(interaction) {
   const message = interaction.options.getString("message");
   const sendAt = interaction.options.getString("send_at");
 
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("dm_confirm").setLabel("Confirm").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId("dm_cancel").setLabel("Cancel").setStyle(ButtonStyle.Danger)
+  const buttons = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("dm_confirm")
+      .setLabel("Confirm")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId("dm_cancel")
+      .setLabel("Cancel")
+      .setStyle(ButtonStyle.Danger)
   );
 
   const previewMsg = await interaction.editReply({
     content:
       `📨 **DM PREVIEW**\n\n` +
-      `**Moderator:** ${interaction.user.tag} (${interaction.user.id})\n` +
-      `**Target:** ${target.tag} (${target.id})\n\n` +
+      `**Moderator:** <@${interaction.user.id}>\n` +
+      `**Target:** <@${target.id}>\n\n` +
       `**Message:**\n${message}\n\n` +
       (sendAt
         ? `🕒 **Scheduled for:** ${sendAt} UTC\n`
         : `🚀 **Send immediately on confirmation**\n`) +
       `⚠️ Nothing has been sent yet.`,
-    components: [row],
+    components: [buttons],
     fetchReply: true
   });
 
   previewState.set(previewMsg.id, {
     moderatorId: interaction.user.id,
-    targetUserId: target.id,
+    targetId: target.id,
     message,
     sendAt
   });
 }
 
 // ================= BUTTON HANDLER =================
-
 async function handleDMButton(interaction) {
   if (!["dm_confirm", "dm_cancel"].includes(interaction.customId)) return;
 
@@ -183,7 +190,6 @@ async function handleDMButton(interaction) {
   // ---------- SCHEDULE ----------
   if (state.sendAt) {
     const jobId = crypto.randomUUID();
-    const sheets = sheetsClient();
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.SPREADSHEET_ID,
@@ -193,7 +199,7 @@ async function handleDMButton(interaction) {
         values: [[
           jobId,
           "user",
-          state.targetUserId,
+          state.targetId,
           state.message,
           new Date(state.sendAt).toISOString(),
           "scheduled",
@@ -216,8 +222,9 @@ async function handleDMButton(interaction) {
 
   // ---------- IMMEDIATE SEND ----------
   try {
-    const user = await interaction.client.users.fetch(state.targetUserId);
+    const user = await interaction.client.users.fetch(state.targetId);
     await user.send(state.message);
+
     return interaction.update({
       content: interaction.message.content + "\n\n✅ **DM SENT**",
       components: []
@@ -232,4 +239,8 @@ async function handleDMButton(interaction) {
   }
 }
 
-module.exports = { dmCommand, handleDM, handleDMButton };
+module.exports = {
+  dmCommand,
+  handleDM,
+  handleDMButton
+};
