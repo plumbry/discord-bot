@@ -62,7 +62,6 @@ const dmCommand = new SlashCommandBuilder()
   .setName("dm")
   .setDescription("Send or schedule DMs")
 
-  // -------- USER --------
   .addSubcommand(sub =>
     sub
       .setName("preview-user")
@@ -81,7 +80,6 @@ const dmCommand = new SlashCommandBuilder()
       )
   )
 
-  // -------- ROLE --------
   .addSubcommand(sub =>
     sub
       .setName("preview-role")
@@ -118,8 +116,8 @@ async function handleDM(interaction) {
   }
 
   const jobId = crypto.randomUUID();
-
   const isUser = sub === "preview-user";
+
   const targetId = isUser
     ? interaction.options.getUser("user").id
     : interaction.options.getRole("role").id;
@@ -179,8 +177,133 @@ async function handleDM(interaction) {
   await interaction.editReply("✅ Preview posted.");
 }
 
-/* ===================== BUTTON HANDLER + SCHEDULER ===================== */
-/* (UNCHANGED — omitted here for brevity, keep exactly as you have it) */
+/* ===================== BUTTON HANDLER ===================== */
+
+async function handleDMButton(interaction) {
+  const [action, jobId] = interaction.customId.split(":");
+  await interaction.deferUpdate();
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: process.env.SPREADSHEET_ID,
+    range: `${SHEET_NAME}!A2:Z`
+  });
+
+  const rows = res.data.values || [];
+  const index = rows.findIndex(r => r[0] === jobId);
+  if (index === -1) return;
+
+  const rowNumber = index + 2;
+  const row = rows[index];
+
+  if (action === "dm_cancel") {
+    row[5] = "cancelled";
+    await updateRow(rowNumber, row);
+    await interaction.message.edit({ components: [] });
+    return;
+  }
+
+  if (action === "dm_confirm") {
+    if (row[4]) {
+      await interaction.message.edit({ components: [] });
+      return;
+    }
+
+    if (row[1] === "user") {
+      try {
+        const user = await interaction.client.users.fetch(row[2]);
+        await user.send(row[3]);
+
+        row[5] = "sent";
+        row[8] = nowISO();
+
+        await updateRow(rowNumber, row);
+      } catch (err) {
+        row[5] = "failed";
+        row[10] = err.message;
+        await updateRow(rowNumber, row);
+      }
+    }
+
+    await interaction.message.edit({ components: [] });
+  }
+}
+
+/* ===================== SCHEDULER ===================== */
+
+function startDMScheduler(client) {
+  setInterval(async () => {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.SPREADSHEET_ID,
+      range: `${SHEET_NAME}!A2:Z`
+    });
+
+    const rows = res.data.values || [];
+    const now = new Date();
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNumber = i + 2;
+
+      if (row[5] !== "scheduled") continue;
+      if (new Date(row[4]) > now) continue;
+
+      let failedUsers = [];
+      let error = "";
+
+      try {
+        if (row[1] === "user") {
+          const user = await client.users.fetch(row[2]);
+          await user.send(row[3]);
+        } else {
+          const guild = client.guilds.cache.first();
+          const role = await guild.roles.fetch(row[2]);
+          if (!role) throw new Error("Role not found");
+
+          for (const member of role.members.values()) {
+            try {
+              await member.send(row[3]);
+            } catch {
+              failedUsers.push(member.id);
+            }
+            await new Promise(r => setTimeout(r, 1200));
+          }
+        }
+
+        row[5] = "sent";
+        row[8] = nowISO();
+      } catch (err) {
+        row[5] = "failed";
+        error = err.message;
+      }
+
+      row[9] = failedUsers.join(",");
+      row[10] = error;
+      await updateRow(rowNumber, row);
+
+      try {
+        const channel = await client.channels.fetch(MOD_CHANNEL_ID);
+        const msg = await channel.messages.fetch(row[row.length - 1]);
+
+        const embed = new EmbedBuilder()
+          .setTitle(`📨 DM ${row[5].toUpperCase()}`)
+          .setColor(row[5] === "sent" ? 0x57f287 : 0xed4245)
+          .addFields(
+            { name: "Moderator", value: `<@${row[6]}>` },
+            {
+              name: "Target",
+              value: row[1] === "user" ? `<@${row[2]}>` : `<@&${row[2]}>`
+            },
+            { name: "Message", value: row[3] },
+            { name: "Message Sent at", value: row[8] }
+          );
+
+        await msg.edit({ embeds: [embed], components: [] });
+      } catch {}
+    }
+  }, 30_000);
+}
+
+/* ===================== EXPORTS ===================== */
 
 module.exports = {
   dmCommand,
