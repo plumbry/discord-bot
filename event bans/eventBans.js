@@ -8,7 +8,7 @@ const { google } = require("googleapis");
 const SHEET_ID = "YOUR_SHEET_ID";
 const EVENT_SHEET = "Event Bans";
 const AUDIT_SHEET = "Audit Log";
-const BAN_CHANNEL_ID = "YOUR_BAN_CHANNEL_ID";
+const BAN_CHANNEL_ID = "1472795189515915466";
 
 // ================= GOOGLE AUTH =================
 const credentials = JSON.parse(
@@ -68,7 +68,7 @@ async function writeRows(rows) {
   }
 }
 
-// ================= COMMANDS =================
+// ================= COMMAND BUILDERS =================
 const eventBanCommand = new SlashCommandBuilder()
   .setName("eventban")
   .setDescription("Event ban management")
@@ -96,7 +96,7 @@ const eventBanCommand = new SlashCommandBuilder()
     sub.setName("probation")
       .setDescription("Apply a probation ban")
       .addUserOption(o =>
-        o.setName("user").setDescription("User to probation").setRequired(true)
+        o.setName("user").setDescription("User").setRequired(true)
       )
       .addIntegerOption(o =>
         o.setName("days").setDescription("Number of days").setRequired(true)
@@ -129,7 +129,18 @@ const eventBanCommand = new SlashCommandBuilder()
       )
   );
 
-// ================= HANDLER =================
+const recentBanCommand = new SlashCommandBuilder()
+  .setName("recentban")
+  .setDescription("View a user's most recent event ban")
+  .addUserOption(o =>
+    o.setName("user").setDescription("User").setRequired(true)
+  );
+
+const myBanCommand = new SlashCommandBuilder()
+  .setName("myban")
+  .setDescription("View your current event ban");
+
+// ================= HANDLERS =================
 async function handleEventBan(interaction) {
   if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
     return interaction.editReply("No permission.");
@@ -241,8 +252,43 @@ async function handleEventBan(interaction) {
   }
 }
 
+async function handleRecentBan(interaction) {
+  if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+    return interaction.editReply("No permission.");
+  }
+
+  const user = interaction.options.getUser("user");
+  const rows = await getRows();
+  const ban = [...rows].reverse().find(r => r[0] === user.id);
+
+  return interaction.editReply(
+    ban
+      ? `Most recent ban for ${user}: **${ban[2]}**`
+      : "No bans found."
+  );
+}
+
+async function handleMyBan(interaction) {
+  const rows = await getRows();
+  const bans = rows.filter(r =>
+    r[0] === interaction.user.id && r[4] !== "0"
+  );
+
+  if (!bans.length) {
+    return interaction.editReply("You have no active event bans.");
+  }
+
+  return interaction.editReply(
+    bans.map(b => `${b[2]} — ${b[4]} remaining`).join("\n")
+  );
+}
+
 // ================= EXPORTS =================
 module.exports = {
   eventBanCommand,
-  handleEventBan
+  handleEventBan,
+  recentBanCommand,
+  handleRecentBan,
+  myBanCommand,
+  handleMyBan
 };

@@ -5,17 +5,21 @@ const {
   Routes
 } = require("discord.js");
 
-// Welcome / Verify system
+// Welcome / Verify
 const {
   verifyCommand,
   handleVerify,
   handleWelcome
 } = require("./welcome ping");
 
-// Event bans system (IMPORTANT: explicit file path)
+// Event bans
 const {
   eventBanCommand,
-  handleEventBan
+  handleEventBan,
+  recentBanCommand,
+  handleRecentBan,
+  myBanCommand,
+  handleMyBan
 } = require("./event bans/eventBans");
 
 const GUILD_ID = "1371615693392576580";
@@ -37,12 +41,14 @@ client.once("ready", async () => {
     {
       body: [
         verifyCommand.toJSON(),
-        eventBanCommand.toJSON()
+        eventBanCommand.toJSON(),
+        recentBanCommand.toJSON(),
+        myBanCommand.toJSON()
       ]
     }
   );
 
-  console.log(`🤖 In-server bot logged in as ${client.user.tag}`);
+  console.log(`🤖 Logged in as ${client.user.tag}`);
 });
 
 // ================= MEMBER JOIN =================
@@ -53,7 +59,9 @@ client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
   await interaction.deferReply({
-    ephemeral: interaction.commandName !== "verify"
+    ephemeral: ["verify", "eventban"].includes(interaction.commandName)
+      ? false
+      : true
   });
 
   if (interaction.commandName === "verify") {
@@ -62,6 +70,14 @@ client.on("interactionCreate", async interaction => {
 
   if (interaction.commandName === "eventban") {
     return handleEventBan(interaction);
+  }
+
+  if (interaction.commandName === "recentban") {
+    return handleRecentBan(interaction);
+  }
+
+  if (interaction.commandName === "myban") {
+    return handleMyBan(interaction);
   }
 });
 
