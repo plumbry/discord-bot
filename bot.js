@@ -27,7 +27,7 @@ const {
 const {
   dmCommand,
   handleDM
-} = require("./dm/dm");
+} = require("./commands/dm");
 
 const GUILD_ID = "1371615693392576580";
 
