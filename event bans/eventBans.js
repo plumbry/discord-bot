@@ -5,7 +5,7 @@ const {
 const { google } = require("googleapis");
 
 // ================= CONFIG =================
-const SHEET_ID = "YOUR_SHEET_ID";
+const SHEET_ID = "1K5BcAIM-Of9buZVmBzdtGRvjJO2XP9ZAPbFIzE5j1ZM";
 const EVENT_SHEET = "Event Bans";
 const AUDIT_SHEET = "Audit Log";
 const BAN_CHANNEL_ID = "1472795189515915466";
