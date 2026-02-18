@@ -12,12 +12,23 @@ const crypto = require("crypto");
 const ALLOWED_CHANNEL_ID = "1471082166535454780";
 const SCHEDULED_DMS_SHEET = "Scheduled DMs";
 
-// In-memory preview state
+// ================= PREVIEW STATE =================
+// key: previewMessageId
+// value: { moderatorId, targetUserId, message, sendAt }
 const previewState = new Map();
 
-/* ================= GOOGLE SHEETS ================= */
+// ================= GOOGLE SHEETS AUTH =================
+
+if (!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+  throw new Error("Missing GOOGLE_APPLICATION_CREDENTIALS_JSON secret");
+}
+
+if (!process.env.SPREADSHEET_ID) {
+  throw new Error("Missing SPREADSHEET_ID secret");
+}
 
 const auth = new google.auth.GoogleAuth({
+  credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON),
   scopes: ["https://www.googleapis.com/auth/spreadsheets"]
 });
 
@@ -29,11 +40,13 @@ async function appendScheduledDM(row) {
     spreadsheetId: process.env.SPREADSHEET_ID,
     range: `${SCHEDULED_DMS_SHEET}!A:J`,
     valueInputOption: "RAW",
-    requestBody: { values: [row] }
+    requestBody: {
+      values: [row]
+    }
   });
 }
 
-/* ================= SLASH COMMAND ================= */
+// ================= SLASH COMMAND =================
 
 const dmCommand = new SlashCommandBuilder()
   .setName("dm")
@@ -41,27 +54,34 @@ const dmCommand = new SlashCommandBuilder()
   .addSubcommandGroup(group =>
     group
       .setName("preview")
-      .setDescription("Preview a DM")
+      .setDescription("Preview a DM before sending or scheduling")
       .addSubcommand(sub =>
         sub
           .setName("user")
-          .setDescription("Preview a DM to a user")
+          .setDescription("Preview a DM to a single user")
           .addUserOption(opt =>
-            opt.setName("target").setDescription("User").setRequired(true)
+            opt
+              .setName("target")
+              .setDescription("User to DM")
+              .setRequired(true)
           )
           .addStringOption(opt =>
-            opt.setName("message").setDescription("Message").setRequired(true)
+            opt
+              .setName("message")
+              .setDescription("Message to send")
+              .setRequired(true)
           )
           .addStringOption(opt =>
             opt
               .setName("send_at")
               .setDescription("Optional schedule time (YYYY-MM-DD HH:MM)")
+              .setRequired(false)
           )
       )
   )
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles);
 
-/* ================= SLASH HANDLER ================= */
+// ================= SLASH HANDLER =================
 
 async function handleDM(interaction) {
   if (interaction.channelId !== ALLOWED_CHANNEL_ID) {
@@ -109,29 +129,32 @@ async function handleDM(interaction) {
   });
 }
 
-/* ================= BUTTON HANDLER ================= */
+// ================= BUTTON HANDLER =================
 
 async function handleDMButton(interaction) {
   if (!["dm_confirm", "dm_cancel"].includes(interaction.customId)) return;
 
   const state = previewState.get(interaction.message.id);
+
   if (!state) {
     return interaction.update({
-      content: interaction.message.content + `\n\n❌ **Preview expired.**`,
+      content:
+        interaction.message.content +
+        `\n\n❌ **This DM preview is no longer valid.**`,
       components: []
     });
   }
 
   if (interaction.user.id !== state.moderatorId) {
     return interaction.reply({
-      content: "❌ Only the original moderator can confirm this DM.",
+      content: "❌ Only the moderator who created this preview can use these buttons.",
       ephemeral: true
     });
   }
 
   previewState.delete(interaction.message.id);
 
-  // CANCEL
+  // ---------- CANCEL ----------
   if (interaction.customId === "dm_cancel") {
     return interaction.update({
       content:
@@ -141,22 +164,22 @@ async function handleDMButton(interaction) {
     });
   }
 
-  // CONFIRM — SCHEDULE TAKES ABSOLUTE PRIORITY
+  // ---------- CONFIRM (SCHEDULE HAS PRIORITY) ----------
   if (state.sendAt) {
     const jobId = crypto.randomUUID();
     const now = new Date().toISOString();
 
     await appendScheduledDM([
-      jobId,
-      "user",
-      state.targetUserId,
-      state.message,
-      new Date(state.sendAt).toISOString(),
-      "scheduled",
-      state.moderatorId,
-      now,
-      "",
-      ""
+      jobId,                // jobId
+      "user",               // targetType
+      state.targetUserId,   // targetId
+      state.message,        // message
+      new Date(state.sendAt).toISOString(), // sendAt
+      "scheduled",          // status
+      state.moderatorId,    // moderatorId
+      now,                  // createdAt
+      "",                   // sentAt
+      ""                    // error
     ]);
 
     return interaction.update({
@@ -170,7 +193,7 @@ async function handleDMButton(interaction) {
     });
   }
 
-  // CONFIRM — IMMEDIATE SEND (ONLY IF NOT SCHEDULED)
+  // ---------- CONFIRM (IMMEDIATE SEND) ----------
   try {
     const user = await interaction.client.users.fetch(state.targetUserId);
     await user.send(state.message);
