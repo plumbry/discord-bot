@@ -28,7 +28,7 @@ function today() {
   return new Date().toLocaleDateString("en-GB");
 }
 
-async function logAudit(action, moderator, user) {
+async function logAudit(action, moderator, user, details = "") {
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
     range: `${AUDIT_SHEET}!A2:D`,
@@ -38,7 +38,7 @@ async function logAudit(action, moderator, user) {
         today(),
         action,
         moderator.tag,
-        user?.tag || ""
+        user ? `${user.tag} — ${details}` : details
       ]]
     }
   });
@@ -73,27 +73,43 @@ const eventBanCommand = new SlashCommandBuilder()
   .setName("eventban")
   .setDescription("Event ban management")
 
+  // APPLY
   .addSubcommand(sub =>
-    sub.setName("apply")
+    sub
+      .setName("apply")
       .setDescription("Apply an event ban")
       .addUserOption(o =>
-        o.setName("user").setDescription("User to ban").setRequired(true)
+        o.setName("user")
+          .setDescription("User to ban")
+          .setRequired(true)
       )
       .addStringOption(o =>
-        o.setName("type").setDescription("Ban type").setRequired(true)
+        o.setName("type")
+          .setDescription("Ban type")
+          .setRequired(true)
           .addChoices(
             { name: "Money", value: "Money" },
             { name: "No Money", value: "No Money" }
           )
       )
       .addIntegerOption(o =>
-        o.setName("events").setDescription("Number of events").setRequired(true)
-          .setMinValue(1).setMaxValue(5)
+        o.setName("events")
+          .setDescription("Number of events (1–5)")
+          .setRequired(true)
+          .setMinValue(1)
+          .setMaxValue(5)
+      )
+      .addStringOption(o =>
+        o.setName("reason")
+          .setDescription("Reason for the ban")
+          .setRequired(true)
       )
   )
 
+  // PROBATION
   .addSubcommand(sub =>
-    sub.setName("probation")
+    sub
+      .setName("probation")
       .setDescription("Apply a probation ban")
       .addUserOption(o =>
         o.setName("user").setDescription("User").setRequired(true)
@@ -102,27 +118,37 @@ const eventBanCommand = new SlashCommandBuilder()
         o.setName("days").setDescription("Number of days").setRequired(true)
       )
       .addStringOption(o =>
-        o.setName("start").setDescription("Start date YYYY-MM-DD").setRequired(true)
+        o.setName("start")
+          .setDescription("Start date YYYY-MM-DD")
+          .setRequired(true)
       )
   )
 
+  // EVENT PASSED
   .addSubcommand(sub =>
-    sub.setName("eventpassed")
+    sub
+      .setName("eventpassed")
       .setDescription("Reduce remaining bans")
       .addStringOption(o =>
-        o.setName("type").setDescription("Ban type").setRequired(true)
+        o.setName("type")
+          .setDescription("Ban type")
+          .setRequired(true)
           .addChoices(
             { name: "Money", value: "Money" },
             { name: "No Money", value: "No Money" }
           )
       )
       .addIntegerOption(o =>
-        o.setName("events").setDescription("Events passed").setRequired(true)
+        o.setName("events")
+          .setDescription("Events passed")
+          .setRequired(true)
       )
   )
 
+  // REMOVE LAST
   .addSubcommand(sub =>
-    sub.setName("removelast")
+    sub
+      .setName("removelast")
       .setDescription("Remove last ban")
       .addUserOption(o =>
         o.setName("user").setDescription("User").setRequired(true)
@@ -153,10 +179,12 @@ async function handleEventBan(interaction) {
   const sub = interaction.options.getSubcommand();
   const rows = await getRows();
 
+  // APPLY
   if (sub === "apply") {
     const user = interaction.options.getUser("user");
     const type = interaction.options.getString("type");
     const events = interaction.options.getInteger("events");
+    const reason = interaction.options.getString("reason");
 
     rows.push([
       user.id,
@@ -167,20 +195,26 @@ async function handleEventBan(interaction) {
       today(),
       "",
       interaction.user.tag,
-      ""
+      reason
     ]);
 
     await writeRows(rows);
-    await logAudit("EVENT_BAN_APPLY", interaction.user, user);
+    await logAudit(
+      "EVENT_BAN_APPLY",
+      interaction.user,
+      user,
+      `${events} ${type} — ${reason}`
+    );
 
     await interaction.client.channels.fetch(BAN_CHANNEL_ID)
       .then(c => c.send(
-        `${user} received a **${events}-event ${type} ban** — actioned by ${interaction.user.tag}`
+        `${user} received a **${events}-event ${type} ban**\n**Reason:** ${reason}\n— actioned by ${interaction.user.tag}`
       ));
 
     return interaction.editReply("Ban applied.");
   }
 
+  // PROBATION
   if (sub === "probation") {
     const user = interaction.options.getUser("user");
     const days = interaction.options.getInteger("days");
@@ -209,6 +243,7 @@ async function handleEventBan(interaction) {
     return interaction.editReply("Probation applied.");
   }
 
+  // EVENT PASSED
   if (sub === "eventpassed") {
     const type = interaction.options.getString("type");
     const passed = interaction.options.getInteger("events");
@@ -220,7 +255,12 @@ async function handleEventBan(interaction) {
     }
 
     await writeRows(rows);
-    await logAudit("EVENT_PASSED", interaction.user, null);
+    await logAudit(
+      "EVENT_PASSED",
+      interaction.user,
+      null,
+      `${type} reduced by ${passed}`
+    );
 
     await interaction.client.channels.fetch(BAN_CHANNEL_ID)
       .then(c => c.send(
@@ -230,6 +270,7 @@ async function handleEventBan(interaction) {
     return interaction.editReply("Events applied.");
   }
 
+  // REMOVE LAST
   if (sub === "removelast") {
     const user = interaction.options.getUser("user");
 
@@ -263,7 +304,7 @@ async function handleRecentBan(interaction) {
 
   return interaction.editReply(
     ban
-      ? `Most recent ban for ${user}: **${ban[2]}**`
+      ? `Most recent ban for ${user}: **${ban[2]}** — ${ban[8] || "No reason"}`
       : "No bans found."
   );
 }
@@ -279,7 +320,9 @@ async function handleMyBan(interaction) {
   }
 
   return interaction.editReply(
-    bans.map(b => `${b[2]} — ${b[4]} remaining`).join("\n")
+    bans.map(b =>
+      `${b[2]} — ${b[4]} remaining\nReason: ${b[8] || "N/A"}`
+    ).join("\n\n")
   );
 }
 
