@@ -1,14 +1,21 @@
 const { Client, GatewayIntentBits, REST, Routes } = require("discord.js");
 const { google } = require("googleapis");
 
+// ================= DM SYSTEM =================
 const {
   dmCommand,
   handleDM,
   handleDMButton
 } = require("./commands/dm");
 
-// ===== EXISTING MODULES (UNCHANGED) =====
-const { verifyCommand, handleVerify, handleWelcome } = require("./welcome ping");
+// ================= VERIFY / WELCOME (UNCHANGED) =================
+const {
+  verifyCommand,
+  handleVerify,
+  handleWelcome
+} = require("./welcome ping");
+
+// ================= EVENT BANS (UNCHANGED) =================
 const {
   eventBanCommand,
   recentBanCommand,
@@ -19,12 +26,17 @@ const {
   checkProbationExpiry
 } = require("./event bans/eventBans");
 
+// ================= CONSTANTS =================
 const GUILD_ID = "1371615693392576580";
 const MOD_CHANNEL_ID = "1471082166535454780";
 const SCHEDULED_DMS_SHEET = "Scheduled DMs";
 
+// ================= GOOGLE AUTH =================
 const serviceAccount = JSON.parse(
-  Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, "base64").toString("utf8")
+  Buffer.from(
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
+    "base64"
+  ).toString("utf8")
 );
 
 const auth = new google.auth.GoogleAuth({
@@ -34,12 +46,18 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: "v4", auth });
 
+// ================= DISCORD CLIENT =================
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers
+  ]
 });
 
+// ================= READY =================
 client.once("ready", async () => {
-  const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
+  const rest = new REST({ version: "10" })
+    .setToken(process.env.DISCORD_TOKEN);
 
   await rest.put(
     Routes.applicationGuildCommands(client.user.id, GUILD_ID),
@@ -55,13 +73,13 @@ client.once("ready", async () => {
   );
 
   console.log(`🤖 Logged in as ${client.user.tag}`);
-  startScheduler();
+
+  startScheduledDMScheduler();
   scheduleDailyProbationCheck(client);
 });
 
-// ================= SCHEDULER =================
-
-function startScheduler() {
+// ================= DM SCHEDULER =================
+function startScheduledDMScheduler() {
   setInterval(async () => {
     const now = new Date();
 
@@ -82,8 +100,8 @@ function startScheduler() {
         status,
         ,
         ,
-        sentAt,
         ,
+        error,
         previewMessageId
       ] = rows[i];
 
@@ -122,13 +140,33 @@ function startScheduler() {
         });
       }
 
-      await new Promise(r => setTimeout(r, 1200)); // rate limit safety
+      // Rate-limit safety
+      await new Promise(r => setTimeout(r, 1200));
     }
   }, 30_000);
 }
 
-// ================= INTERACTIONS =================
+// ================= DAILY PROBATION CHECK =================
+function scheduleDailyProbationCheck(client) {
+  const now = new Date();
+  const next = new Date();
+  next.setHours(0, 1, 0, 0);
 
+  if (now >= next) {
+    next.setDate(next.getDate() + 1);
+  }
+
+  const delay = next.getTime() - now.getTime();
+
+  setTimeout(() => {
+    checkProbationExpiry(client);
+    setInterval(() => {
+      checkProbationExpiry(client);
+    }, 24 * 60 * 60 * 1000);
+  }, delay);
+}
+
+// ================= INTERACTIONS =================
 client.on("interactionCreate", async interaction => {
   if (interaction.isChatInputCommand()) {
     if (interaction.commandName === "verify") return handleVerify(interaction);
@@ -141,7 +179,9 @@ client.on("interactionCreate", async interaction => {
     if (interaction.commandName === "dm") return handleDM(interaction);
   }
 
-  if (interaction.isButton()) return handleDMButton(interaction);
+  if (interaction.isButton()) {
+    return handleDMButton(interaction);
+  }
 });
 
 client.on("guildMemberAdd", handleWelcome);
