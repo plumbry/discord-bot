@@ -14,7 +14,7 @@ const MOD_CHANNEL_ID = "1471082166535454780";
 const SHEET_NAME = "Scheduled DMs";
 
 /*
-Sheet columns (historical + current, variable length):
+Columns (flexible):
 A jobId
 B targetType
 C targetId
@@ -34,7 +34,6 @@ L preview_message_id
 if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64) {
   throw new Error("Missing GOOGLE_SERVICE_ACCOUNT_JSON_BASE64");
 }
-
 if (!process.env.SPREADSHEET_ID) {
   throw new Error("Missing SPREADSHEET_ID");
 }
@@ -126,7 +125,7 @@ async function handleDM(interaction) {
       { name: "Target", value: `<@${targetUser.id}>` },
       { name: "Message", value: message },
       {
-        name: sendAt ? "Scheduled For (UTC)" : "Send",
+        name: sendAt ? "Message Scheduled for" : "Send",
         value: sendAt || "Immediately"
       }
     );
@@ -240,7 +239,6 @@ function startDMScheduler(client) {
       if (row[5] !== "scheduled") continue;
       if (new Date(row[4]) > now) continue;
 
-      let failedUsers = [];
       let error = "";
 
       try {
@@ -251,19 +249,15 @@ function startDMScheduler(client) {
         row[8] = nowISO();
       } catch (err) {
         row[5] = "failed";
-        failedUsers.push(row[2]);
         error = err.message;
       }
 
-      row[9] = failedUsers.join(",");
       row[10] = error;
-
       await updateRow(rowNumber, row);
 
-      // ===== PREVIEW MESSAGE UPDATE (FIXED) =====
+      // ===== PREVIEW MESSAGE UPDATE =====
       try {
         const channel = await client.channels.fetch(MOD_CHANNEL_ID);
-
         const previewMessageId = row[row.length - 1];
         if (!previewMessageId) throw new Error("Missing preview_message_id");
 
@@ -276,7 +270,12 @@ function startDMScheduler(client) {
             { name: "Moderator", value: `<@${row[6]}>` },
             { name: "Target", value: `<@${row[2]}>` },
             { name: "Message", value: row[3] },
-            { name: "Timestamp (UTC)", value: row[8] || nowISO() }
+            {
+              name: row[5] === "sent"
+                ? "Message Sent at"
+                : "Message Failed at",
+              value: row[8] || nowISO()
+            }
           );
 
         await msg.edit({
