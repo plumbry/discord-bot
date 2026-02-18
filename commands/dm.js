@@ -13,18 +13,30 @@ const crypto = require("crypto");
 const MOD_CHANNEL_ID = "1471082166535454780";
 const SHEET_NAME = "Scheduled DMs";
 
+/*
+Sheet columns (A → L):
+A jobId
+B targetType
+C targetId
+D message
+E send_at
+F status
+G moderatorId
+H created_at
+I sent_at
+J failed_users
+K error
+L preview_message_id
+*/
+
 /* ===================== ENV GUARANTEES ===================== */
 
 if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64) {
-  throw new Error(
-    "Missing GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 (required for Google Sheets auth)"
-  );
+  throw new Error("Missing GOOGLE_SERVICE_ACCOUNT_JSON_BASE64");
 }
 
 if (!process.env.SPREADSHEET_ID) {
-  throw new Error(
-    "Missing SPREADSHEET_ID (required to locate Scheduled DMs sheet)"
-  );
+  throw new Error("Missing SPREADSHEET_ID");
 }
 
 /* ===================== GOOGLE AUTH ===================== */
@@ -49,22 +61,16 @@ const nowISO = () => new Date().toISOString();
 
 function parseUTCDateTime(date, time) {
   if (!date || !time) return "";
-
-  // Expect YYYY-MM-DD and HH:MM
   const iso = `${date}T${time}:00.000Z`;
   const parsed = new Date(iso);
-
-  if (isNaN(parsed.getTime())) {
-    throw new Error("Invalid date or time format");
-  }
-
+  if (isNaN(parsed.getTime())) throw new Error("Invalid date/time");
   return parsed.toISOString();
 }
 
 async function updateRow(rowNumber, row) {
   await sheets.spreadsheets.values.update({
     spreadsheetId: process.env.SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A${rowNumber}:K${rowNumber}`,
+    range: `${SHEET_NAME}!A${rowNumber}:L${rowNumber}`,
     valueInputOption: "RAW",
     requestBody: { values: [row] }
   });
@@ -86,16 +92,10 @@ const dmCommand = new SlashCommandBuilder()
         opt.setName("message").setDescription("Message content").setRequired(true)
       )
       .addStringOption(opt =>
-        opt
-          .setName("date")
-          .setDescription("Send date (UTC) in YYYY-MM-DD")
-          .setRequired(false)
+        opt.setName("date").setDescription("Send date (UTC)").setRequired(false)
       )
       .addStringOption(opt =>
-        opt
-          .setName("time")
-          .setDescription("Send time (UTC) in HH:MM (24h)")
-          .setRequired(false)
+        opt.setName("time").setDescription("Send time (UTC)").setRequired(false)
       )
   );
 
@@ -110,13 +110,10 @@ async function handleDM(interaction) {
   const time = interaction.options.getString("time");
 
   let sendAt = "";
-
   try {
     sendAt = parseUTCDateTime(date, time);
-  } catch (err) {
-    return interaction.editReply(
-      "❌ Invalid date/time. Use YYYY-MM-DD and HH:MM (UTC)."
-    );
+  } catch {
+    return interaction.editReply("❌ Invalid date/time (UTC).");
   }
 
   const jobId = crypto.randomUUID();
@@ -153,21 +150,22 @@ async function handleDM(interaction) {
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: process.env.SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A:K`,
+    range: `${SHEET_NAME}!A:L`,
     valueInputOption: "RAW",
     requestBody: {
       values: [[
-        jobId,                     // A jobId
-        "user",                    // B targetType
-        targetUser.id,             // C targetId
-        message,                   // D message
-        sendAt,                    // E sendAt
-        sendAt ? "scheduled" : "pending", // F status
-        interaction.user.id,       // G moderatorId
-        nowISO(),                  // H createdAt
-        "",                         // I sentAt
-        "",                         // J error
-        previewMessage.id          // K previewMessageId
+        jobId,
+        "user",
+        targetUser.id,
+        message,
+        sendAt,
+        sendAt ? "scheduled" : "pending",
+        interaction.user.id,
+        nowISO(),
+        "",
+        "",
+        "",
+        previewMessage.id
       ]]
     }
   });
@@ -183,7 +181,7 @@ async function handleDMButton(interaction) {
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A2:K`
+    range: `${SHEET_NAME}!A2:L`
   });
 
   const rows = res.data.values || [];
@@ -202,7 +200,6 @@ async function handleDMButton(interaction) {
 
   if (action === "dm_confirm") {
     if (row[4]) {
-      // scheduled
       await interaction.message.edit({ components: [] });
       return;
     }
@@ -213,13 +210,12 @@ async function handleDMButton(interaction) {
 
       row[5] = "sent";
       row[8] = nowISO();
-      row[9] = "";
 
       await updateRow(rowNumber, row);
       await interaction.message.edit({ components: [] });
     } catch (err) {
       row[5] = "failed";
-      row[9] = err.message;
+      row[10] = err.message;
       await updateRow(rowNumber, row);
     }
   }
@@ -231,7 +227,7 @@ function startDMScheduler(client) {
   setInterval(async () => {
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.SPREADSHEET_ID,
-      range: `${SHEET_NAME}!A2:K`
+      range: `${SHEET_NAME}!A2:L`
     });
 
     const rows = res.data.values || [];
@@ -244,23 +240,46 @@ function startDMScheduler(client) {
       if (row[5] !== "scheduled") continue;
       if (new Date(row[4]) > now) continue;
 
+      let failedUsers = [];
+      let error = "";
+
       try {
         const user = await client.users.fetch(row[2]);
         await user.send(row[3]);
 
         row[5] = "sent";
         row[8] = nowISO();
-        row[9] = "";
-
-        await updateRow(rowNumber, row);
-
-        const channel = await client.channels.fetch(MOD_CHANNEL_ID);
-        const msg = await channel.messages.fetch(row[10]);
-        await msg.edit({ components: [] });
       } catch (err) {
         row[5] = "failed";
-        row[9] = err.message;
-        await updateRow(rowNumber, row);
+        failedUsers.push(row[2]);
+        error = err.message;
+      }
+
+      row[9] = failedUsers.join(",");
+      row[10] = error;
+
+      await updateRow(rowNumber, row);
+
+      try {
+        const channel = await client.channels.fetch(MOD_CHANNEL_ID);
+        const msg = await channel.messages.fetch(row[11]);
+
+        const resultEmbed = new EmbedBuilder()
+          .setTitle(`📨 DM ${row[5].toUpperCase()}`)
+          .setColor(row[5] === "sent" ? 0x57f287 : 0xed4245)
+          .addFields(
+            { name: "Moderator", value: `<@${row[6]}>` },
+            { name: "Target", value: `<@${row[2]}>` },
+            { name: "Message", value: row[3] },
+            { name: "Timestamp (UTC)", value: row[8] || nowISO() }
+          );
+
+        await msg.edit({
+          embeds: [resultEmbed],
+          components: []
+        });
+      } catch {
+        // preview update failure should not block scheduler
       }
 
       await new Promise(r => setTimeout(r, 1200));
