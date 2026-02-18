@@ -1,3 +1,29 @@
+const {
+  SlashCommandBuilder,
+  PermissionFlagsBits
+} = require("discord.js");
+
+const { google } = require("googleapis");
+
+// ================= CONFIG =================
+const SHEET_ID = "YOUR_SHEET_ID";
+const EVENT_SHEET = "Event Bans";
+const BAN_CHANNEL_ID = "YOUR_BAN_CHANNEL_ID";
+
+// ================= GOOGLE AUTH =================
+const credentials = JSON.parse(
+  Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, "base64")
+    .toString("utf8")
+);
+
+const auth = new google.auth.GoogleAuth({
+  credentials,
+  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+});
+
+const sheets = google.sheets({ version: "v4", auth });
+
+// ================= COMMAND =================
 const eventBanCommand = new SlashCommandBuilder()
   .setName("eventban")
   .setDescription("Event ban management")
@@ -47,7 +73,7 @@ const eventBanCommand = new SlashCommandBuilder()
       .addIntegerOption(o =>
         o
           .setName("days")
-          .setDescription("Number of days")
+          .setDescription("Number of probation days")
           .setRequired(true)
           .setMinValue(1)
       )
@@ -95,3 +121,15 @@ const eventBanCommand = new SlashCommandBuilder()
           .setRequired(true)
       )
   );
+
+// ================= HANDLER (unchanged below this) =================
+// (keep your existing handler logic here)
+
+module.exports = {
+  eventBanCommand,
+  handleEventBan,
+  recentBanCommand,
+  handleRecentBan,
+  myBanCommand,
+  handleMyBan
+};
