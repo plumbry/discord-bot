@@ -1,12 +1,7 @@
 const { Client, GatewayIntentBits, REST, Routes } = require("discord.js");
 
 // ================= DM SYSTEM =================
-const {
-  dmCommand,
-  handleDM,
-  handleDMButton,
-  startDMScheduler
-} = require("./commands/dm");
+const dm = require("./commands/dm");
 
 // ================= VERIFY / WELCOME =================
 const {
@@ -42,23 +37,32 @@ client.once("ready", async () => {
   const rest = new REST({ version: "10" })
     .setToken(process.env.DISCORD_TOKEN);
 
+  const commands = [
+    verifyCommand,
+    eventBanCommand,
+    recentBanCommand,
+    myBanCommand
+  ];
+
+  // Only register DM command if it exists
+  if (dm.dmCommand) {
+    commands.push(dm.dmCommand);
+  }
+
   await rest.put(
     Routes.applicationGuildCommands(client.user.id, GUILD_ID),
     {
-      body: [
-        verifyCommand.toJSON(),
-        eventBanCommand.toJSON(),
-        recentBanCommand.toJSON(),
-        myBanCommand.toJSON(),
-        dmCommand.toJSON()
-      ]
+      body: commands.map(c => c.toJSON())
     }
   );
 
   console.log(`🤖 Logged in as ${client.user.tag}`);
 
-  // ✅ Start schedulers (ONLY here)
-  startDMScheduler(client);
+  // Start schedulers safely
+  if (dm.startDMScheduler) {
+    dm.startDMScheduler(client);
+  }
+
   scheduleDailyProbationCheck(client);
 });
 
@@ -89,11 +93,13 @@ client.on("interactionCreate", async interaction => {
       await interaction.deferReply({ ephemeral: true });
       return handleMyBan(interaction);
     }
-    if (interaction.commandName === "dm") return handleDM(interaction);
+    if (interaction.commandName === "dm" && dm.handleDM) {
+      return dm.handleDM(interaction);
+    }
   }
 
-  if (interaction.isButton()) {
-    return handleDMButton(interaction);
+  if (interaction.isButton() && dm.handleDMButton) {
+    return dm.handleDMButton(interaction);
   }
 });
 
