@@ -1,246 +1,237 @@
 const {
   SlashCommandBuilder,
-  PermissionFlagsBits,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle
+  ButtonStyle,
+  EmbedBuilder
 } = require("discord.js");
-
 const { google } = require("googleapis");
 const crypto = require("crypto");
 
-const ALLOWED_CHANNEL_ID = "1471082166535454780";
-const SCHEDULED_DMS_SHEET = "Scheduled DMs";
+const MOD_CHANNEL_ID = "1471082166535454780";
+const SHEET_NAME = "Scheduled DMs";
 
-// ================= PREVIEW STATE =================
-const previewState = new Map();
+/* ===================== ENV GUARDS ===================== */
 
-// ================= GOOGLE AUTH =================
 if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64) {
-  throw new Error("Missing GOOGLE_SERVICE_ACCOUNT_JSON_BASE64");
-}
-if (!process.env.SPREADSHEET_ID) {
-  throw new Error("Missing SPREADSHEET_ID");
+  throw new Error("Missing GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 secret");
 }
 
-const serviceAccount = JSON.parse(
-  Buffer.from(
-    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
-    "base64"
-  ).toString("utf8")
-);
+if (!process.env.SPREADSHEET_ID) {
+  throw new Error("Missing SPREADSHEET_ID secret");
+}
+
+/* ===================== GOOGLE AUTH ===================== */
 
 const auth = new google.auth.GoogleAuth({
-  credentials: serviceAccount,
+  credentials: JSON.parse(
+    Buffer.from(
+      process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
+      "base64"
+    ).toString("utf8")
+  ),
   scopes: ["https://www.googleapis.com/auth/spreadsheets"]
 });
 
 const sheets = google.sheets({ version: "v4", auth });
 
-// ================= COMMAND =================
+/* ===================== UTIL ===================== */
+
+const nowISO = () => new Date().toISOString();
+
+/* ===================== SLASH COMMAND ===================== */
+
 const dmCommand = new SlashCommandBuilder()
   .setName("dm")
   .setDescription("Send or schedule DMs")
-  .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
-  .addSubcommandGroup(group =>
-    group
-      .setName("preview")
-      .setDescription("Preview a DM")
-      .addSubcommand(sub =>
-        sub
-          .setName("user")
-          .setDescription("Preview a DM to a user")
-          .addUserOption(o =>
-            o.setName("target").setDescription("User").setRequired(true)
-          )
-          .addStringOption(o =>
-            o.setName("message").setDescription("Message").setRequired(true)
-          )
-          .addStringOption(o =>
-            o.setName("send_at")
-              .setDescription("UTC time YYYY-MM-DD HH:MM")
-          )
-      )
-  )
   .addSubcommand(sub =>
     sub
-      .setName("cancel")
-      .setDescription("Cancel a scheduled DM")
-      .addStringOption(o =>
-        o.setName("job_id").setDescription("Job ID").setRequired(true)
+      .setName("preview")
+      .setDescription("Preview a DM before sending or scheduling")
+      .addUserOption(opt =>
+        opt.setName("user").setDescription("Target user").setRequired(true)
+      )
+      .addStringOption(opt =>
+        opt.setName("message").setDescription("Message content").setRequired(true)
+      )
+      .addStringOption(opt =>
+        opt.setName("send_at")
+          .setDescription("ISO time (UTC) to schedule, or omit to send now")
+          .setRequired(false)
       )
   );
 
-// ================= SLASH HANDLER =================
+/* ===================== HANDLERS ===================== */
+
 async function handleDM(interaction) {
-  await interaction.deferReply({ ephemeral: false });
+  await interaction.deferReply({ ephemeral: true });
 
-  if (interaction.channelId !== ALLOWED_CHANNEL_ID) {
-    return interaction.editReply("❌ This command can only be used in the mod channel.");
-  }
-
-  // ---------- CANCEL ----------
-  if (interaction.options.getSubcommand() === "cancel") {
-    const jobId = interaction.options.getString("job_id");
-
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.SPREADSHEET_ID,
-      range: `${SCHEDULED_DMS_SHEET}!A2:K`
-    });
-
-    const rows = res.data.values || [];
-    const index = rows.findIndex(r => r[0] === jobId);
-
-    if (index === -1) {
-      return interaction.editReply("❌ Job ID not found.");
-    }
-
-    if (rows[index][5] !== "scheduled") {
-      return interaction.editReply("❌ That DM is no longer scheduled.");
-    }
-
-    const rowNum = index + 2;
-
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: process.env.SPREADSHEET_ID,
-      range: `${SCHEDULED_DMS_SHEET}!F${rowNum}:J${rowNum}`,
-      valueInputOption: "RAW",
-      requestBody: {
-        values: [[
-          "cancelled",
-          interaction.user.id,
-          new Date().toISOString(),
-          "",
-          `Cancelled by ${interaction.user.id}`
-        ]]
-      }
-    });
-
-    const previewMessageId = rows[index][10];
-    try {
-      const channel = await interaction.client.channels.fetch(ALLOWED_CHANNEL_ID);
-      const msg = await channel.messages.fetch(previewMessageId);
-      await msg.edit(
-        msg.content +
-        `\n\n──────────────\n🛑 **DM CANCELLED**\nBy: <@${interaction.user.id}>`
-      );
-    } catch {}
-
-    return interaction.editReply(`🛑 Scheduled DM **${jobId}** cancelled.`);
-  }
-
-  // ---------- PREVIEW ----------
-  const target = interaction.options.getUser("target");
+  const user = interaction.options.getUser("user");
   const message = interaction.options.getString("message");
-  const sendAt = interaction.options.getString("send_at");
+  const sendAtRaw = interaction.options.getString("send_at");
 
-  const buttons = new ActionRowBuilder().addComponents(
+  const sendAt = sendAtRaw ? new Date(sendAtRaw).toISOString() : null;
+  const jobId = crypto.randomUUID();
+
+  const embed = new EmbedBuilder()
+    .setTitle("📨 DM PREVIEW")
+    .addFields(
+      { name: "Moderator", value: `<@${interaction.user.id}>` },
+      { name: "Target", value: `<@${user.id}>` },
+      { name: "Message", value: message },
+      {
+        name: sendAt ? "Scheduled for" : "Send",
+        value: sendAt ? sendAt : "Immediately"
+      }
+    )
+    .setColor(0x5865f2);
+
+  const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId("dm_confirm")
+      .setCustomId(`dm_confirm:${jobId}`)
       .setLabel("Confirm")
       .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
-      .setCustomId("dm_cancel")
+      .setCustomId(`dm_cancel:${jobId}`)
       .setLabel("Cancel")
       .setStyle(ButtonStyle.Danger)
   );
 
-  const previewMsg = await interaction.editReply({
-    content:
-      `📨 **DM PREVIEW**\n\n` +
-      `**Moderator:** <@${interaction.user.id}>\n` +
-      `**Target:** <@${target.id}>\n\n` +
-      `**Message:**\n${message}\n\n` +
-      (sendAt
-        ? `🕒 **Scheduled for:** ${sendAt} UTC\n`
-        : `🚀 **Send immediately on confirmation**\n`) +
-      `⚠️ Nothing has been sent yet.`,
-    components: [buttons],
-    fetchReply: true
+  const channel = await interaction.client.channels.fetch(MOD_CHANNEL_ID);
+  const previewMsg = await channel.send({ embeds: [embed], components: [row] });
+
+  // Store job
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: process.env.SPREADSHEET_ID,
+    range: `${SHEET_NAME}!A:K`,
+    valueInputOption: "RAW",
+    requestBody: {
+      values: [[
+        jobId,
+        "user",
+        user.id,
+        message,
+        sendAt ?? "",
+        sendAt ? "scheduled" : "pending",
+        interaction.user.id,
+        nowISO(),
+        "",
+        "",
+        previewMsg.id
+      ]]
+    }
   });
 
-  previewState.set(previewMsg.id, {
-    moderatorId: interaction.user.id,
-    targetId: target.id,
-    message,
-    sendAt
-  });
+  await interaction.editReply("Preview posted.");
 }
 
-// ================= BUTTON HANDLER =================
 async function handleDMButton(interaction) {
-  if (!["dm_confirm", "dm_cancel"].includes(interaction.customId)) return;
+  const [action, jobId] = interaction.customId.split(":");
 
-  const state = previewState.get(interaction.message.id);
-  if (!state) return;
+  await interaction.deferUpdate();
 
-  if (interaction.user.id !== state.moderatorId) {
-    return interaction.reply({ content: "❌ Not your preview.", ephemeral: true });
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: process.env.SPREADSHEET_ID,
+    range: `${SHEET_NAME}!A2:K`
+  });
+
+  const rows = res.data.values || [];
+  const index = rows.findIndex(r => r[0] === jobId);
+  if (index === -1) return;
+
+  const rowNumber = index + 2;
+  const row = rows[index];
+
+  if (action === "dm_cancel") {
+    row[5] = "cancelled";
+    await updateRow(rowNumber, row);
+    await interaction.message.edit({ components: [] });
+    return;
   }
 
-  previewState.delete(interaction.message.id);
+  if (action === "dm_confirm") {
+    if (row[4]) {
+      // scheduled — do nothing now
+      await interaction.message.edit({ components: [] });
+      return;
+    }
 
-  if (interaction.customId === "dm_cancel") {
-    return interaction.update({
-      content: interaction.message.content + "\n\n❌ **Cancelled**",
-      components: []
-    });
-  }
+    // send immediately
+    try {
+      const user = await interaction.client.users.fetch(row[2]);
+      await user.send(row[3]);
 
-  // ---------- SCHEDULE ----------
-  if (state.sendAt) {
-    const jobId = crypto.randomUUID();
+      row[5] = "sent";
+      row[8] = nowISO();
+      row[9] = "";
 
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: process.env.SPREADSHEET_ID,
-      range: `${SCHEDULED_DMS_SHEET}!A:K`,
-      valueInputOption: "RAW",
-      requestBody: {
-        values: [[
-          jobId,
-          "user",
-          state.targetId,
-          state.message,
-          new Date(state.sendAt).toISOString(),
-          "scheduled",
-          state.moderatorId,
-          new Date().toISOString(),
-          "",
-          "",
-          interaction.message.id
-        ]]
-      }
-    });
-
-    return interaction.update({
-      content:
-        interaction.message.content +
-        `\n\n──────────────\n🕒 **DM SCHEDULED**\nJob ID: \`${jobId}\``,
-      components: []
-    });
-  }
-
-  // ---------- IMMEDIATE SEND ----------
-  try {
-    const user = await interaction.client.users.fetch(state.targetId);
-    await user.send(state.message);
-
-    return interaction.update({
-      content: interaction.message.content + "\n\n✅ **DM SENT**",
-      components: []
-    });
-  } catch (err) {
-    return interaction.update({
-      content:
-        interaction.message.content +
-        `\n\n❌ **FAILED**\n${err.message}`,
-      components: []
-    });
+      await updateRow(rowNumber, row);
+      await interaction.message.edit({ components: [] });
+    } catch (err) {
+      row[5] = "failed";
+      row[9] = err.message;
+      await updateRow(rowNumber, row);
+    }
   }
 }
+
+async function updateRow(rowNumber, row) {
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: process.env.SPREADSHEET_ID,
+    range: `${SHEET_NAME}!A${rowNumber}:K${rowNumber}`,
+    valueInputOption: "RAW",
+    requestBody: { values: [row] }
+  });
+}
+
+/* ===================== SCHEDULER ===================== */
+
+function startDMScheduler(client) {
+  setInterval(async () => {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.SPREADSHEET_ID,
+      range: `${SHEET_NAME}!A2:K`
+    });
+
+    const rows = res.data.values || [];
+    const now = new Date();
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 2;
+
+      if (row[5] !== "scheduled") continue;
+      if (new Date(row[4]) > now) continue;
+
+      try {
+        const user = await client.users.fetch(row[2]);
+        await user.send(row[3]);
+
+        row[5] = "sent";
+        row[8] = nowISO();
+        row[9] = "";
+
+        await updateRow(rowNum, row);
+
+        const channel = await client.channels.fetch(MOD_CHANNEL_ID);
+        const msg = await channel.messages.fetch(row[10]);
+        await msg.edit({ components: [] });
+      } catch (err) {
+        row[5] = "failed";
+        row[9] = err.message;
+        await updateRow(rowNum, row);
+      }
+
+      await new Promise(r => setTimeout(r, 1200));
+    }
+  }, 30_000);
+}
+
+/* ===================== EXPORT ===================== */
 
 module.exports = {
   dmCommand,
   handleDM,
-  handleDMButton
+  handleDMButton,
+  startDMScheduler
 };
