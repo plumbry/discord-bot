@@ -12,10 +12,14 @@ const {
   handleWelcome
 } = require("./welcome ping");
 
-// Event bans
+// Event bans (ALL commands live here)
 const {
   eventBanCommand,
-  handleEventBan
+  recentBanCommand,
+  myBanCommand,
+  handleEventBan,
+  handleRecentBan,
+  handleMyBan
 } = require("./event bans/eventBans");
 
 const GUILD_ID = "1371615693392576580";
@@ -32,12 +36,15 @@ client.once("ready", async () => {
   const rest = new REST({ version: "10" })
     .setToken(process.env.DISCORD_TOKEN);
 
+  // 🔒 SINGLE SOURCE OF TRUTH FOR COMMANDS
   await rest.put(
     Routes.applicationGuildCommands(client.user.id, GUILD_ID),
     {
       body: [
         verifyCommand.toJSON(),
-        eventBanCommand.toJSON()
+        eventBanCommand.toJSON(),
+        recentBanCommand.toJSON(),
+        myBanCommand.toJSON()
       ]
     }
   );
@@ -60,6 +67,14 @@ client.on("interactionCreate", async interaction => {
 
   if (interaction.commandName === "eventban") {
     return handleEventBan(interaction);
+  }
+
+  if (interaction.commandName === "recentban") {
+    return handleRecentBan(interaction);
+  }
+
+  if (interaction.commandName === "myban") {
+    return handleMyBan(interaction);
   }
 
   return interaction.editReply("Unknown command.");
