@@ -5,7 +5,7 @@ const {
   Routes
 } = require("discord.js");
 
-// Welcome / Verify
+// Welcome / Verify (UNCHANGED)
 const {
   verifyCommand,
   handleVerify,
@@ -58,11 +58,8 @@ client.on("guildMemberAdd", handleWelcome);
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  await interaction.deferReply({
-    ephemeral: ["verify", "eventban"].includes(interaction.commandName)
-      ? false
-      : true
-  });
+  // ALWAYS defer so we never time out
+  await interaction.deferReply({ ephemeral: false });
 
   if (interaction.commandName === "verify") {
     return handleVerify(interaction);
@@ -79,6 +76,8 @@ client.on("interactionCreate", async interaction => {
   if (interaction.commandName === "myban") {
     return handleMyBan(interaction);
   }
+
+  return interaction.editReply("Unknown command.");
 });
 
 client.login(process.env.DISCORD_TOKEN);
