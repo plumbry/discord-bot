@@ -61,7 +61,6 @@ async function updateRow(rowNumber, row) {
 const dmCommand = new SlashCommandBuilder()
   .setName("dm")
   .setDescription("Send or schedule DMs")
-
   .addSubcommand(sub =>
     sub
       .setName("preview-user")
@@ -79,7 +78,6 @@ const dmCommand = new SlashCommandBuilder()
         opt.setName("time").setDescription("Send time (UTC)")
       )
   )
-
   .addSubcommand(sub =>
     sub
       .setName("preview-role")
@@ -198,7 +196,13 @@ async function handleDMButton(interaction) {
   if (action === "dm_cancel") {
     row[5] = "cancelled";
     await updateRow(rowNumber, row);
-    await interaction.message.edit({ components: [] });
+
+    const channel = interaction.channel;
+    const cancelledMessage = "❌ DM cancelled";
+
+    await interaction.message.delete().catch(() => {});
+    await channel.send(cancelledMessage);
+
     return;
   }
 
@@ -215,7 +219,6 @@ async function handleDMButton(interaction) {
 
         row[5] = "sent";
         row[8] = nowISO();
-
         await updateRow(rowNumber, row);
       } catch (err) {
         row[5] = "failed";
