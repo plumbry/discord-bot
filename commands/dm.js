@@ -14,7 +14,7 @@ const MOD_CHANNEL_ID = "1471082166535454780";
 const SHEET_NAME = "Scheduled DMs";
 
 /*
-Sheet columns (A → L):
+Sheet columns (historical + current, variable length):
 A jobId
 B targetType
 C targetId
@@ -70,7 +70,7 @@ function parseUTCDateTime(date, time) {
 async function updateRow(rowNumber, row) {
   await sheets.spreadsheets.values.update({
     spreadsheetId: process.env.SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A${rowNumber}:L${rowNumber}`,
+    range: `${SHEET_NAME}!A${rowNumber}:Z${rowNumber}`,
     valueInputOption: "RAW",
     requestBody: { values: [row] }
   });
@@ -150,7 +150,7 @@ async function handleDM(interaction) {
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: process.env.SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A:L`,
+    range: `${SHEET_NAME}!A:Z`,
     valueInputOption: "RAW",
     requestBody: {
       values: [[
@@ -181,7 +181,7 @@ async function handleDMButton(interaction) {
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A2:L`
+    range: `${SHEET_NAME}!A2:Z`
   });
 
   const rows = res.data.values || [];
@@ -227,7 +227,7 @@ function startDMScheduler(client) {
   setInterval(async () => {
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.SPREADSHEET_ID,
-      range: `${SHEET_NAME}!A2:L`
+      range: `${SHEET_NAME}!A2:Z`
     });
 
     const rows = res.data.values || [];
@@ -260,9 +260,14 @@ function startDMScheduler(client) {
 
       await updateRow(rowNumber, row);
 
+      // ===== PREVIEW MESSAGE UPDATE (FIXED) =====
       try {
         const channel = await client.channels.fetch(MOD_CHANNEL_ID);
-        const msg = await channel.messages.fetch(row[11]);
+
+        const previewMessageId = row[row.length - 1];
+        if (!previewMessageId) throw new Error("Missing preview_message_id");
+
+        const msg = await channel.messages.fetch(previewMessageId);
 
         const resultEmbed = new EmbedBuilder()
           .setTitle(`📨 DM ${row[5].toUpperCase()}`)
@@ -279,7 +284,7 @@ function startDMScheduler(client) {
           components: []
         });
       } catch {
-        // preview update failure should not block scheduler
+        // preview edit failure must not block scheduler
       }
 
       await new Promise(r => setTimeout(r, 1200));
