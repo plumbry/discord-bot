@@ -12,8 +12,10 @@ const BAN_CHANNEL_ID = "1472795189515915466";
 
 // ================= GOOGLE AUTH =================
 const credentials = JSON.parse(
-  Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, "base64")
-    .toString("utf8")
+  Buffer.from(
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
+    "base64"
+  ).toString("utf8")
 );
 
 const auth = new google.auth.GoogleAuth({
@@ -38,7 +40,12 @@ async function logAudit(action, moderator, user = "") {
     range: `${AUDIT_SHEET}!A2:D`,
     valueInputOption: "RAW",
     requestBody: {
-      values: [[formatDate(new Date()), action, moderator.tag, user?.tag || user]]
+      values: [[
+        formatDate(new Date()),
+        action,
+        moderator.tag,
+        user?.tag || user
+      ]]
     }
   });
 }
@@ -68,15 +75,15 @@ async function writeRows(rows) {
 }
 
 // ================= MESSAGE FORMATTERS =================
-const formatEventBan = row =>
-`${row[1]} — ${row[3]}-Event ${row[2]} Ban Started ${row[5]}
-${row[4]} Events Remaining
-Reason: ${row[8]}`;
+const formatEventBan = r =>
+`${r[1]} — ${r[3]}-Event ${r[2]} Ban Started ${r[5]}
+${r[4]} Events Remaining
+Reason: ${r[8] || "No reason provided"}`;
 
-const formatProbation = row =>
-`${row[1]} — Probation Started ${row[5]}
-Ends: ${row[6]} (${row[3]} days)
-Reason: ${row[8]}`;
+const formatProbation = r =>
+`${r[1]} — Probation Started ${r[5]}
+Ends: ${r[6]} (${r[3]} days)
+Reason: ${r[8] || "No reason provided"}`;
 
 // ================= COMMAND BUILDERS =================
 const eventBanCommand = new SlashCommandBuilder()
@@ -94,7 +101,8 @@ const eventBanCommand = new SlashCommandBuilder()
             { name: "No Money", value: "No Money" }
           ))
       .addIntegerOption(o =>
-        o.setName("events").setDescription("Events").setRequired(true).setMinValue(1).setMaxValue(5))
+        o.setName("events").setDescription("Events").setRequired(true)
+          .setMinValue(1).setMaxValue(5))
       .addStringOption(o =>
         o.setName("reason").setDescription("Reason").setRequired(true))
   )
@@ -117,7 +125,8 @@ const eventBanCommand = new SlashCommandBuilder()
             { name: "Money", value: "Money" },
             { name: "No Money", value: "No Money" }
           ))
-      .addIntegerOption(o => o.setName("events").setDescription("Events passed").setRequired(true))
+      .addIntegerOption(o =>
+        o.setName("events").setDescription("Events passed").setRequired(true))
   )
 
   .addSubcommand(s =>
@@ -158,7 +167,8 @@ async function handleEventBan(interaction) {
       const row = [
         u.id, u.username, type,
         events.toString(), events.toString(),
-        formatDate(new Date()), "", interaction.user.tag, reason, ""
+        formatDate(new Date()), "",
+        interaction.user.tag, reason, ""
       ];
 
       const msg = await channel.send(formatEventBan(row));
@@ -182,7 +192,8 @@ async function handleEventBan(interaction) {
 
       const row = [
         u.id, u.username, "Probation",
-        days.toString(), "", start, end,
+        days.toString(), "",
+        start, end,
         interaction.user.tag, reason, ""
       ];
 
@@ -228,8 +239,7 @@ async function handleEventBan(interaction) {
       for (let i = rows.length - 1; i >= 0; i--) {
         if (rows[i][0] === u.id) {
           if (rows[i][9]) {
-            const m = await channel.messages.fetch(rows[i][9]);
-            await m.delete().catch(() => {});
+            await channel.messages.fetch(rows[i][9]).then(m => m.delete()).catch(() => {});
           }
           rows.splice(i, 1);
           break;

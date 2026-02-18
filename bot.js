@@ -12,7 +12,7 @@ const {
   handleWelcome
 } = require("./welcome ping");
 
-// Event bans (ALL commands live here)
+// Event bans (ALL commands)
 const {
   eventBanCommand,
   recentBanCommand,
@@ -36,7 +36,7 @@ client.once("ready", async () => {
   const rest = new REST({ version: "10" })
     .setToken(process.env.DISCORD_TOKEN);
 
-  // 🔒 SINGLE SOURCE OF TRUTH FOR COMMANDS
+  // 🔒 SINGLE SOURCE OF TRUTH — ALL COMMANDS
   await rest.put(
     Routes.applicationGuildCommands(client.user.id, GUILD_ID),
     {
@@ -59,7 +59,10 @@ client.on("guildMemberAdd", handleWelcome);
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  await interaction.deferReply({ ephemeral: false });
+  // ✅ ONLY /myban is ephemeral
+  await interaction.deferReply({
+    ephemeral: interaction.commandName === "myban"
+  });
 
   if (interaction.commandName === "verify") {
     return handleVerify(interaction);
