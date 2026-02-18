@@ -95,3 +95,21 @@ async function handleDMButton(interaction) {
 
   if (interaction.customId === "dm_confirm") {
     return interaction.reply({
+      content: "✅ Confirmed. (Sending not enabled yet)",
+      ephemeral: true
+    });
+  }
+
+  if (interaction.customId === "dm_cancel") {
+    return interaction.reply({
+      content: "❌ DM cancelled.",
+      ephemeral: true
+    });
+  }
+}
+
+module.exports = {
+  dmCommand,
+  handleDM,
+  handleDMButton
+};
