@@ -1,24 +1,19 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const {
+  SlashCommandBuilder,
+  PermissionFlagsBits
+} = require("discord.js");
 const { google } = require("googleapis");
 
 // ================= CONFIG =================
-const SHEET_ID = "1K5BcAIM-Of9buZVmBzdtGRvjJO2XP9ZAPbFIzE5j1ZM";
+const SHEET_ID = "YOUR_SHEET_ID";
 const EVENT_SHEET = "Event Bans";
-const AUDIT_SHEET = "Audit Log";
-const BAN_CHANNEL_ID = "1472795189515915466";
+const BAN_CHANNEL_ID = "YOUR_BAN_CHANNEL_ID";
 
 // ================= GOOGLE AUTH =================
-let credentials;
-
-try {
-  const decoded = Buffer.from(
-    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
-    "base64"
-  ).toString("utf8");
-  credentials = JSON.parse(decoded);
-} catch {
-  credentials = {};
-}
+const credentials = JSON.parse(
+  Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, "base64")
+    .toString("utf8")
+);
 
 const auth = new google.auth.GoogleAuth({
   credentials,
@@ -27,249 +22,277 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: "v4", auth });
 
-// ================= SLASH COMMAND =================
+// ================= COMMAND =================
 const eventBanCommand = new SlashCommandBuilder()
   .setName("eventban")
-  .setDescription("Manage event and probation bans")
+  .setDescription("Event ban management")
 
-  // APPLY EVENT BAN
+  // APPLY
   .addSubcommand(sub =>
     sub.setName("apply")
       .setDescription("Apply an event ban")
-      .addUserOption(o => o.setName("user").setDescription("Player").setRequired(true))
+      .addUserOption(o => o.setName("user").setRequired(true))
       .addStringOption(o =>
-        o.setName("type").setDescription("Ban type").setRequired(true)
-          .addChoices(
-            { name: "Money", value: "Money" },
-            { name: "No Money", value: "No Money" }
-          )
-      )
-      .addStringOption(o =>
-        o.setName("events").setDescription("Number of events").setRequired(true)
-          .addChoices(
-            { name: "1 Event", value: "1" },
-            { name: "2 Events", value: "2" },
-            { name: "5 Events", value: "5" }
-          )
-      )
-      .addStringOption(o => o.setName("reason").setDescription("Reason").setRequired(true))
-  )
-
-  // EVENT PASSED
-  .addSubcommand(sub =>
-    sub.setName("eventpassed")
-      .setDescription("Reduce all bans of a type by X events")
-      .addStringOption(o =>
-        o.setName("type").setDescription("Ban type").setRequired(true)
+        o.setName("type").setRequired(true)
           .addChoices(
             { name: "Money", value: "Money" },
             { name: "No Money", value: "No Money" }
           )
       )
       .addIntegerOption(o =>
-        o.setName("events").setDescription("Events passed").setRequired(true).setMinValue(1).setMaxValue(10)
+        o.setName("events").setRequired(true).setMinValue(1).setMaxValue(5)
       )
   )
 
   // PROBATION
   .addSubcommand(sub =>
     sub.setName("probation")
-      .setDescription("Apply a time-based probation ban")
-      .addUserOption(o => o.setName("user").setDescription("Player").setRequired(true))
+      .setDescription("Apply a probation ban")
+      .addUserOption(o => o.setName("user").setRequired(true))
       .addIntegerOption(o =>
-        o.setName("days").setDescription("Length in days").setRequired(true).setMinValue(1).setMaxValue(365)
+        o.setName("days").setRequired(true).setMinValue(1)
       )
       .addStringOption(o =>
-        o.setName("start").setDescription("Start date (DD/MM/YYYY)").setRequired(true)
+        o.setName("start")
+          .setDescription("YYYY-MM-DD (can be in the past)")
+          .setRequired(true)
       )
+  )
+
+  // EVENT PASSED
+  .addSubcommand(sub =>
+    sub.setName("eventpassed")
+      .setDescription("Reduce remaining bans of a type")
       .addStringOption(o =>
-        o.setName("reason").setDescription("Reason").setRequired(true)
+        o.setName("type").setRequired(true)
+          .addChoices(
+            { name: "Money", value: "Money" },
+            { name: "No Money", value: "No Money" }
+          )
+      )
+      .addIntegerOption(o =>
+        o.setName("events").setRequired(true).setMinValue(1)
       )
   )
 
   // REMOVE LAST
   .addSubcommand(sub =>
     sub.setName("removelast")
-      .setDescription("Remove most recent ban")
-      .addUserOption(o => o.setName("user").setDescription("Player").setRequired(true))
+      .setDescription("Remove last ban for a user")
+      .addUserOption(o => o.setName("user").setRequired(true))
   );
 
 // ================= HELPERS =================
-function formatDate(date) {
-  return date.toLocaleDateString("en-GB");
-}
-
 async function getRows() {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: `${EVENT_SHEET}!A2:J`
+    range: `${EVENT_SHEET}!A2:I`
   });
   return res.data.values || [];
 }
 
-async function overwriteSheet(rows) {
+async function writeRows(rows) {
   await sheets.spreadsheets.values.clear({
     spreadsheetId: SHEET_ID,
-    range: `${EVENT_SHEET}!A2:J`
+    range: `${EVENT_SHEET}!A2:I`
   });
 
   if (rows.length) {
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
-      range: `${EVENT_SHEET}!A2:J`,
+      range: `${EVENT_SHEET}!A2:I`,
       valueInputOption: "RAW",
       requestBody: { values: rows }
     });
   }
 }
 
-async function logAudit(action, moderatorTag, userTag = "") {
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: SHEET_ID,
-    range: `${AUDIT_SHEET}!A2:D`,
-    valueInputOption: "RAW",
-    requestBody: {
-      values: [[
-        formatDate(new Date()),
-        action,
-        moderatorTag,
-        userTag
-      ]]
-    }
-  });
+function today() {
+  return new Date().toISOString().split("T")[0];
 }
 
 // ================= HANDLER =================
 async function handleEventBan(interaction) {
-  if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
-    return interaction.editReply("❌ You do not have permission.");
-  }
-
-  if (interaction.channelId !== BAN_CHANNEL_ID) {
-    return interaction.editReply("❌ Wrong channel.");
-  }
-
   const sub = interaction.options.getSubcommand();
-  const moderator = interaction.user;
-  const today = formatDate(new Date());
 
-  // APPLY EVENT BAN
+  // ================= APPLY =================
   if (sub === "apply") {
+    if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+      return interaction.editReply("No permission.");
+    }
+
     const user = interaction.options.getUser("user");
     const type = interaction.options.getString("type");
-    const events = parseInt(interaction.options.getString("events"), 10);
-    const reason = interaction.options.getString("reason");
+    const events = interaction.options.getInteger("events");
 
-    const channel = await interaction.client.channels.fetch(BAN_CHANNEL_ID);
-    await channel.send(
-      `${user.tag} — ${events}-Event ${type} Ban Started ${today}\n` +
-      `${events} Events Remaining\nReason: ${reason}`
-    );
+    const rows = await getRows();
+    rows.push([
+      user.id,
+      user.tag,
+      type,
+      events.toString(),
+      events.toString(),
+      today(),
+      "",
+      interaction.user.tag,
+      ""
+    ]);
 
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SHEET_ID,
-      range: `${EVENT_SHEET}!A2:J`,
-      valueInputOption: "RAW",
-      requestBody: {
-        values: [[
-          user.id, user.tag, type,
-          events, events,
-          today, today,
-          reason, moderator.tag,
-          "EVENT"
-        ]]
-      }
-    });
+    await writeRows(rows);
 
-    await logAudit("EVENT_BAN_APPLY", moderator.tag, user.tag);
-    return interaction.editReply("✅ Event ban applied.");
+    await interaction.client.channels.fetch(BAN_CHANNEL_ID)
+      .then(c =>
+        c.send(
+          `${user} received a **${events} event ${type} ban** — actioned by ${interaction.user.tag}`
+        )
+      );
+
+    return interaction.editReply("Ban applied.");
   }
 
-  // EVENT PASSED
+  // ================= PROBATION =================
+  if (sub === "probation") {
+    if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+      return interaction.editReply("No permission.");
+    }
+
+    const user = interaction.options.getUser("user");
+    const days = interaction.options.getInteger("days");
+    const start = interaction.options.getString("start");
+
+    const end = new Date(start);
+    end.setDate(end.getDate() + days);
+
+    const rows = await getRows();
+    rows.push([
+      user.id,
+      user.tag,
+      "Probation",
+      days.toString(),
+      "",
+      start,
+      end.toISOString().split("T")[0],
+      interaction.user.tag,
+      ""
+    ]);
+
+    await writeRows(rows);
+
+    await interaction.client.channels.fetch(BAN_CHANNEL_ID)
+      .then(c =>
+        c.send(
+          `${user} placed on **${days}-day probation** (from ${start}) — actioned by ${interaction.user.tag}`
+        )
+      );
+
+    return interaction.editReply("Probation applied.");
+  }
+
+  // ================= EVENT PASSED =================
   if (sub === "eventpassed") {
+    if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+      return interaction.editReply("No permission.");
+    }
+
     const type = interaction.options.getString("type");
     const passed = interaction.options.getInteger("events");
+
     const rows = await getRows();
 
     for (const row of rows) {
-      if (row[2] === type && row[4] && Number(row[4]) > 0) {
+      if (row[2] === type && Number(row[4]) > 0) {
         row[4] = Math.max(0, Number(row[4]) - passed).toString();
       }
     }
 
-    await overwriteSheet(rows);
+    await writeRows(rows);
 
-    const channel = await interaction.client.channels.fetch(BAN_CHANNEL_ID);
-    await channel.send(
-      `Remaining ${type} Events reduced by ${passed} — actioned by ${moderator.tag}`
-    );
+    await interaction.client.channels.fetch(BAN_CHANNEL_ID)
+      .then(c =>
+        c.send(
+          `Remaining ${type} Events reduced by ${passed} — actioned by ${interaction.user.tag}`
+        )
+      );
 
-    await logAudit(
-      `EVENT_PASSED_${type.toUpperCase().replace(" ", "_")}`,
-      moderator.tag
-    );
-
-    return interaction.editReply("✅ Event bans updated.");
+    return interaction.editReply("Events applied.");
   }
 
-  // PROBATION
-  if (sub === "probation") {
-    const user = interaction.options.getUser("user");
-    const days = interaction.options.getInteger("days");
-    const start = interaction.options.getString("start");
-    const reason = interaction.options.getString("reason");
-
-    const [d, m, y] = start.split("/").map(Number);
-    const startDate = new Date(y, m - 1, d);
-    const endDate = new Date(startDate);
-    endDate.setDate(endDate.getDate() + days);
-
-    const channel = await interaction.client.channels.fetch(BAN_CHANNEL_ID);
-    await channel.send(
-      `${user.tag} — **Probation Started** ${formatDate(startDate)}\n` +
-      `Ends: ${formatDate(endDate)} (${days} days)\n` +
-      `Reason: ${reason}`
-    );
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SHEET_ID,
-      range: `${EVENT_SHEET}!A2:J`,
-      valueInputOption: "RAW",
-      requestBody: {
-        values: [[
-          user.id, user.tag,
-          "Probation", days, "",
-          formatDate(startDate), formatDate(endDate),
-          reason, moderator.tag,
-          "PROBATION"
-        ]]
-      }
-    });
-
-    await logAudit("PROBATION_APPLY", moderator.tag, user.tag);
-    return interaction.editReply("✅ Probation ban applied.");
-  }
-
-  // REMOVE LAST
+  // ================= REMOVE LAST =================
   if (sub === "removelast") {
+    if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+      return interaction.editReply("No permission.");
+    }
+
     const user = interaction.options.getUser("user");
     const rows = await getRows();
 
-    const idx = [...rows].map((r, i) => ({ r, i }))
-      .reverse()
-      .find(x => x.r[0] === user.id);
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (rows[i][0] === user.id) {
+        rows.splice(i, 1);
+        break;
+      }
+    }
 
-    if (!idx) return interaction.editReply("No bans found.");
+    await writeRows(rows);
 
-    rows.splice(idx.i, 1);
-    await overwriteSheet(rows);
+    await interaction.client.channels.fetch(BAN_CHANNEL_ID)
+      .then(c =>
+        c.send(
+          `Last ban removed for ${user} — actioned by ${interaction.user.tag}`
+        )
+      );
 
-    await logAudit("REMOVE_LAST_BAN", moderator.tag, user.tag);
-    return interaction.editReply("✅ Last ban removed.");
+    return interaction.editReply("Last ban removed.");
   }
 }
 
+// ================= EXTRA COMMANDS =================
+const recentBanCommand = new SlashCommandBuilder()
+  .setName("recentban")
+  .setDescription("View a user's most recent event ban")
+  .addUserOption(o => o.setName("user").setRequired(true));
+
+const myBanCommand = new SlashCommandBuilder()
+  .setName("myban")
+  .setDescription("View your current event ban");
+
+async function handleRecentBan(interaction) {
+  if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+    return interaction.editReply("No permission.");
+  }
+
+  const user = interaction.options.getUser("user");
+  const rows = await getRows();
+  const ban = [...rows].reverse().find(r => r[0] === user.id);
+
+  return interaction.editReply(
+    ban
+      ? `Most recent ban for ${user}: **${ban[2]}**`
+      : "No bans found."
+  );
+}
+
+async function handleMyBan(interaction) {
+  const rows = await getRows();
+  const bans = rows.filter(r => r[0] === interaction.user.id && r[4] !== "0");
+
+  if (!bans.length) {
+    return interaction.editReply("You have no active event bans.");
+  }
+
+  return interaction.editReply(
+    bans
+      .map(b => `${b[2]} — ${b[4]} remaining`)
+      .join("\n")
+  );
+}
+
+// ================= EXPORTS =================
 module.exports = {
   eventBanCommand,
-  handleEventBan
+  handleEventBan,
+  recentBanCommand,
+  handleRecentBan,
+  myBanCommand,
+  handleMyBan
 };
