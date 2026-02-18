@@ -8,36 +8,61 @@ const {
 const { google } = require("googleapis");
 const crypto = require("crypto");
 
+/* ===================== CONSTANTS ===================== */
+
 const MOD_CHANNEL_ID = "1471082166535454780";
 const SHEET_NAME = "Scheduled DMs";
 
-/* ===================== ENV GUARDS ===================== */
+/* ===================== ENV GUARANTEES ===================== */
+/**
+ * These are NON-NEGOTIABLE.
+ * If any are missing, the bot MUST fail immediately.
+ */
 
 if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64) {
-  throw new Error("Missing GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 secret");
+  throw new Error(
+    "Missing GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 (required for Google Sheets auth)"
+  );
 }
 
 if (!process.env.SPREADSHEET_ID) {
-  throw new Error("Missing SPREADSHEET_ID secret");
+  throw new Error(
+    "Missing SPREADSHEET_ID (required to locate Scheduled DMs sheet)"
+  );
 }
 
 /* ===================== GOOGLE AUTH ===================== */
+/**
+ * GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 is ALWAYS the source of truth.
+ * No other secrets are read for Google access.
+ */
+
+const credentials = JSON.parse(
+  Buffer.from(
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
+    "base64"
+  ).toString("utf8")
+);
 
 const auth = new google.auth.GoogleAuth({
-  credentials: JSON.parse(
-    Buffer.from(
-      process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
-      "base64"
-    ).toString("utf8")
-  ),
+  credentials,
   scopes: ["https://www.googleapis.com/auth/spreadsheets"]
 });
 
 const sheets = google.sheets({ version: "v4", auth });
 
-/* ===================== UTIL ===================== */
+/* ===================== HELPERS ===================== */
 
 const nowISO = () => new Date().toISOString();
+
+async function updateRow(rowNumber, row) {
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: process.env.SPREADSHEET_ID,
+    range: `${SHEET_NAME}!A${rowNumber}:K${rowNumber}`,
+    valueInputOption: "RAW",
+    requestBody: { values: [row] }
+  });
+}
 
 /* ===================== SLASH COMMAND ===================== */
 
@@ -55,38 +80,39 @@ const dmCommand = new SlashCommandBuilder()
         opt.setName("message").setDescription("Message content").setRequired(true)
       )
       .addStringOption(opt =>
-        opt.setName("send_at")
-          .setDescription("ISO time (UTC) to schedule, or omit to send now")
+        opt
+          .setName("send_at")
+          .setDescription("ISO timestamp (UTC). Omit to send immediately.")
           .setRequired(false)
       )
   );
 
-/* ===================== HANDLERS ===================== */
+/* ===================== COMMAND HANDLER ===================== */
 
 async function handleDM(interaction) {
   await interaction.deferReply({ ephemeral: true });
 
-  const user = interaction.options.getUser("user");
+  const targetUser = interaction.options.getUser("user");
   const message = interaction.options.getString("message");
   const sendAtRaw = interaction.options.getString("send_at");
 
-  const sendAt = sendAtRaw ? new Date(sendAtRaw).toISOString() : null;
+  const sendAt = sendAtRaw ? new Date(sendAtRaw).toISOString() : "";
   const jobId = crypto.randomUUID();
 
   const embed = new EmbedBuilder()
     .setTitle("📨 DM PREVIEW")
+    .setColor(0x5865f2)
     .addFields(
       { name: "Moderator", value: `<@${interaction.user.id}>` },
-      { name: "Target", value: `<@${user.id}>` },
+      { name: "Target", value: `<@${targetUser.id}>` },
       { name: "Message", value: message },
       {
-        name: sendAt ? "Scheduled for" : "Send",
-        value: sendAt ? sendAt : "Immediately"
+        name: sendAt ? "Scheduled For (UTC)" : "Send",
+        value: sendAt || "Immediately"
       }
-    )
-    .setColor(0x5865f2);
+    );
 
-  const row = new ActionRowBuilder().addComponents(
+  const buttons = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`dm_confirm:${jobId}`)
       .setLabel("Confirm")
@@ -98,36 +124,39 @@ async function handleDM(interaction) {
   );
 
   const channel = await interaction.client.channels.fetch(MOD_CHANNEL_ID);
-  const previewMsg = await channel.send({ embeds: [embed], components: [row] });
+  const previewMessage = await channel.send({
+    embeds: [embed],
+    components: [buttons]
+  });
 
-  // Store job
   await sheets.spreadsheets.values.append({
     spreadsheetId: process.env.SPREADSHEET_ID,
     range: `${SHEET_NAME}!A:K`,
     valueInputOption: "RAW",
     requestBody: {
       values: [[
-        jobId,
-        "user",
-        user.id,
-        message,
-        sendAt ?? "",
-        sendAt ? "scheduled" : "pending",
-        interaction.user.id,
-        nowISO(),
-        "",
-        "",
-        previewMsg.id
+        jobId,                     // A jobId
+        "user",                    // B targetType
+        targetUser.id,             // C targetId
+        message,                   // D message
+        sendAt,                    // E sendAt
+        sendAt ? "scheduled" : "pending", // F status
+        interaction.user.id,       // G moderatorId
+        nowISO(),                  // H createdAt
+        "",                         // I sentAt
+        "",                         // J error
+        previewMessage.id          // K previewMessageId
       ]]
     }
   });
 
-  await interaction.editReply("Preview posted.");
+  await interaction.editReply("✅ Preview posted.");
 }
+
+/* ===================== BUTTON HANDLER ===================== */
 
 async function handleDMButton(interaction) {
   const [action, jobId] = interaction.customId.split(":");
-
   await interaction.deferUpdate();
 
   const res = await sheets.spreadsheets.values.get({
@@ -151,12 +180,11 @@ async function handleDMButton(interaction) {
 
   if (action === "dm_confirm") {
     if (row[4]) {
-      // scheduled — do nothing now
+      // scheduled — scheduler will handle
       await interaction.message.edit({ components: [] });
       return;
     }
 
-    // send immediately
     try {
       const user = await interaction.client.users.fetch(row[2]);
       await user.send(row[3]);
@@ -175,15 +203,6 @@ async function handleDMButton(interaction) {
   }
 }
 
-async function updateRow(rowNumber, row) {
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: process.env.SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A${rowNumber}:K${rowNumber}`,
-    valueInputOption: "RAW",
-    requestBody: { values: [row] }
-  });
-}
-
 /* ===================== SCHEDULER ===================== */
 
 function startDMScheduler(client) {
@@ -198,7 +217,7 @@ function startDMScheduler(client) {
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
-      const rowNum = i + 2;
+      const rowNumber = i + 2;
 
       if (row[5] !== "scheduled") continue;
       if (new Date(row[4]) > now) continue;
@@ -211,7 +230,7 @@ function startDMScheduler(client) {
         row[8] = nowISO();
         row[9] = "";
 
-        await updateRow(rowNum, row);
+        await updateRow(rowNumber, row);
 
         const channel = await client.channels.fetch(MOD_CHANNEL_ID);
         const msg = await channel.messages.fetch(row[10]);
@@ -219,15 +238,16 @@ function startDMScheduler(client) {
       } catch (err) {
         row[5] = "failed";
         row[9] = err.message;
-        await updateRow(rowNum, row);
+        await updateRow(rowNumber, row);
       }
 
+      // Discord rate-limit safety
       await new Promise(r => setTimeout(r, 1200));
     }
   }, 30_000);
 }
 
-/* ===================== EXPORT ===================== */
+/* ===================== EXPORTS ===================== */
 
 module.exports = {
   dmCommand,
