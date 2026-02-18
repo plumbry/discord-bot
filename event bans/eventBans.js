@@ -239,7 +239,9 @@ async function handleEventBan(interaction) {
       for (let i = rows.length - 1; i >= 0; i--) {
         if (rows[i][0] === u.id) {
           if (rows[i][9]) {
-            await channel.messages.fetch(rows[i][9]).then(m => m.delete()).catch(() => {});
+            await channel.messages.fetch(rows[i][9])
+              .then(m => m.delete())
+              .catch(() => {});
           }
           rows.splice(i, 1);
           break;
@@ -249,7 +251,7 @@ async function handleEventBan(interaction) {
       await writeRows(rows);
       await logAudit("REMOVE_LAST_BAN", interaction.user, u);
 
-      return interaction.editReply("Last ban removed.");
+      return interaction.editReply(`Last ban for ${u.username} removed`);
     }
 
   } catch (e) {
@@ -266,9 +268,17 @@ async function handleRecentBan(interaction) {
   const rows = await getRows();
   const r = [...rows].reverse().find(x => x[0] === u.id);
 
-  return interaction.editReply(
-    r ? formatEventBan(r) : "No bans found."
-  );
+  if (!r) {
+    return interaction.editReply("No bans found.");
+  }
+
+  // 🔒 EXPLICIT COLUMN USAGE — reason is ALWAYS column 8
+  const message =
+`${r[1]} — ${r[3]}-Event ${r[2]} Ban Started ${r[5]}
+${r[4]} Events Remaining
+Reason: ${r[8] || "No reason provided"}`;
+
+  return interaction.editReply(message);
 }
 
 async function handleMyBan(interaction) {
