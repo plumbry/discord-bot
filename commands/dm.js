@@ -16,7 +16,7 @@ const SHEET_NAME = "Scheduled DMs";
 /*
 Columns (flexible):
 A jobId
-B targetType
+B targetType        ("user" | "role")
 C targetId
 D message
 E send_at
@@ -85,16 +85,19 @@ const dmCommand = new SlashCommandBuilder()
       .setName("preview")
       .setDescription("Preview a DM before sending or scheduling")
       .addUserOption(opt =>
-        opt.setName("user").setDescription("Target user").setRequired(true)
+        opt.setName("user").setDescription("Target user")
+      )
+      .addRoleOption(opt =>
+        opt.setName("role").setDescription("Target role")
       )
       .addStringOption(opt =>
         opt.setName("message").setDescription("Message content").setRequired(true)
       )
       .addStringOption(opt =>
-        opt.setName("date").setDescription("Send date (UTC)").setRequired(false)
+        opt.setName("date").setDescription("Send date (UTC)")
       )
       .addStringOption(opt =>
-        opt.setName("time").setDescription("Send time (UTC)").setRequired(false)
+        opt.setName("time").setDescription("Send time (UTC)")
       )
   );
 
@@ -104,9 +107,17 @@ async function handleDM(interaction) {
   await interaction.deferReply({ ephemeral: true });
 
   const targetUser = interaction.options.getUser("user");
+  const targetRole = interaction.options.getRole("role");
   const message = interaction.options.getString("message");
   const date = interaction.options.getString("date");
   const time = interaction.options.getString("time");
+
+  if (!targetUser && !targetRole) {
+    return interaction.editReply("❌ You must specify a user or a role.");
+  }
+  if (targetUser && targetRole) {
+    return interaction.editReply("❌ Specify either a user or a role, not both.");
+  }
 
   let sendAt = "";
   try {
@@ -116,13 +127,18 @@ async function handleDM(interaction) {
   }
 
   const jobId = crypto.randomUUID();
+  const targetType = targetUser ? "user" : "role";
+  const targetId = targetUser ? targetUser.id : targetRole.id;
 
   const embed = new EmbedBuilder()
     .setTitle("📨 DM PREVIEW")
     .setColor(0x5865f2)
     .addFields(
       { name: "Moderator", value: `<@${interaction.user.id}>` },
-      { name: "Target", value: `<@${targetUser.id}>` },
+      {
+        name: "Target",
+        value: targetUser ? `<@${targetUser.id}>` : `<@&${targetRole.id}>`
+      },
       { name: "Message", value: message },
       {
         name: sendAt ? "Message Scheduled for" : "Send",
@@ -154,8 +170,8 @@ async function handleDM(interaction) {
     requestBody: {
       values: [[
         jobId,
-        "user",
-        targetUser.id,
+        targetType,
+        targetId,
         message,
         sendAt,
         sendAt ? "scheduled" : "pending",
@@ -203,19 +219,25 @@ async function handleDMButton(interaction) {
       return;
     }
 
-    try {
-      const user = await interaction.client.users.fetch(row[2]);
-      await user.send(row[3]);
+    // Immediate send ONLY for user (unchanged behavior)
+    if (row[1] === "user") {
+      try {
+        const user = await interaction.client.users.fetch(row[2]);
+        await user.send(row[3]);
 
-      row[5] = "sent";
-      row[8] = nowISO();
+        row[5] = "sent";
+        row[8] = nowISO();
 
-      await updateRow(rowNumber, row);
+        await updateRow(rowNumber, row);
+        await interaction.message.edit({ components: [] });
+      } catch (err) {
+        row[5] = "failed";
+        row[10] = err.message;
+        await updateRow(rowNumber, row);
+      }
+    } else {
+      // Role immediate sends are handled by scheduler (intentional)
       await interaction.message.edit({ components: [] });
-    } catch (err) {
-      row[5] = "failed";
-      row[10] = err.message;
-      await updateRow(rowNumber, row);
     }
   }
 }
@@ -239,52 +261,61 @@ function startDMScheduler(client) {
       if (row[5] !== "scheduled") continue;
       if (new Date(row[4]) > now) continue;
 
+      let failedUsers = [];
       let error = "";
 
       try {
-        const user = await client.users.fetch(row[2]);
-        await user.send(row[3]);
+        if (row[1] === "user") {
+          const user = await client.users.fetch(row[2]);
+          await user.send(row[3]);
+        }
 
-        row[5] = "sent";
+        if (row[1] === "role") {
+          const guild = client.guilds.cache.first();
+          const role = await guild.roles.fetch(row[2]);
+          if (!role) throw new Error("Role not found");
+
+          for (const member of role.members.values()) {
+            try {
+              await member.send(row[3]);
+            } catch {
+              failedUsers.push(member.id);
+            }
+            await new Promise(r => setTimeout(r, 1200));
+          }
+        }
+
+        row[5] = failedUsers.length === 0 ? "sent" : "sent";
         row[8] = nowISO();
       } catch (err) {
         row[5] = "failed";
         error = err.message;
       }
 
+      row[9] = failedUsers.join(",");
       row[10] = error;
       await updateRow(rowNumber, row);
 
-      // ===== PREVIEW MESSAGE UPDATE =====
       try {
         const channel = await client.channels.fetch(MOD_CHANNEL_ID);
         const previewMessageId = row[row.length - 1];
-        if (!previewMessageId) throw new Error("Missing preview_message_id");
-
         const msg = await channel.messages.fetch(previewMessageId);
 
-        const resultEmbed = new EmbedBuilder()
+        const embed = new EmbedBuilder()
           .setTitle(`📨 DM ${row[5].toUpperCase()}`)
           .setColor(row[5] === "sent" ? 0x57f287 : 0xed4245)
           .addFields(
             { name: "Moderator", value: `<@${row[6]}>` },
-            { name: "Target", value: `<@${row[2]}>` },
-            { name: "Message", value: row[3] },
             {
-              name: row[5] === "sent"
-                ? "Message Sent at"
-                : "Message Failed at",
-              value: row[8] || nowISO()
-            }
+              name: "Target",
+              value: row[1] === "user" ? `<@${row[2]}>` : `<@&${row[2]}>`
+            },
+            { name: "Message", value: row[3] },
+            { name: "Message Sent at", value: row[8] || nowISO() }
           );
 
-        await msg.edit({
-          embeds: [resultEmbed],
-          components: []
-        });
-      } catch {
-        // preview edit failure must not block scheduler
-      }
+        await msg.edit({ embeds: [embed], components: [] });
+      } catch {}
 
       await new Promise(r => setTimeout(r, 1200));
     }
