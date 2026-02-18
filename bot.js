@@ -5,14 +5,14 @@ const {
   Routes
 } = require("discord.js");
 
-// Welcome / Verify (UNCHANGED)
+// ===== VERIFY / WELCOME (UNCHANGED) =====
 const {
   verifyCommand,
   handleVerify,
   handleWelcome
 } = require("./welcome ping");
 
-// Event bans system
+// ===== EVENT BANS (UNCHANGED) =====
 const {
   eventBanCommand,
   recentBanCommand,
@@ -23,7 +23,7 @@ const {
   checkProbationExpiry
 } = require("./event bans/eventBans");
 
-// DM system
+// ===== DM SYSTEM =====
 const {
   dmCommand,
   handleDM,
@@ -78,7 +78,7 @@ client.on("interactionCreate", async interaction => {
     return;
   }
 
-  // BUTTONS
+  // BUTTON INTERACTIONS  ✅ THIS IS THE IMPORTANT PART
   if (interaction.isButton()) {
     return handleDMButton(interaction);
   }
@@ -86,6 +86,7 @@ client.on("interactionCreate", async interaction => {
 
 client.on("guildMemberAdd", handleWelcome);
 
+// ===== DAILY PROBATION CHECK (UNCHANGED) =====
 function scheduleDailyProbationCheck(client) {
   const now = new Date();
   const next = new Date();
