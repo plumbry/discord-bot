@@ -24,8 +24,18 @@ const auth = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: "v4", auth });
 
 // ================= HELPERS =================
+function formatDate(date) {
+  return date.toLocaleDateString("en-GB");
+}
+
 function today() {
-  return new Date().toLocaleDateString("en-GB");
+  return formatDate(new Date());
+}
+
+function addDays(dateStr, days) {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + days);
+  return d;
 }
 
 async function logAudit(action, moderator, user) {
@@ -63,9 +73,9 @@ async function writeRows(rows) {
   }
 }
 
-function formatBanMessage(row) {
+function formatEventBanMessage(row) {
   const [
-    userId,
+    ,
     username,
     type,
     original,
@@ -81,7 +91,25 @@ ${remaining} Events Remaining
 Reason: ${reason}`;
 }
 
-// ================= COMMANDS =================
+function formatProbationMessage(row) {
+  const [
+    ,
+    username,
+    ,
+    days,
+    ,
+    start,
+    end,
+    ,
+    reason
+  ] = row;
+
+  return `${username} — Probation Started ${start}
+Ends: ${end} (${days} days)
+Reason: ${reason}`;
+}
+
+// ================= COMMAND =================
 const eventBanCommand = new SlashCommandBuilder()
   .setName("eventban")
   .setDescription("Event ban management")
@@ -102,6 +130,25 @@ const eventBanCommand = new SlashCommandBuilder()
       .addIntegerOption(o =>
         o.setName("events").setDescription("Number of events").setRequired(true)
           .setMinValue(1).setMaxValue(5)
+      )
+      .addStringOption(o =>
+        o.setName("reason").setDescription("Reason").setRequired(true)
+      )
+  )
+
+  .addSubcommand(sub =>
+    sub.setName("probation")
+      .setDescription("Apply a probation ban")
+      .addUserOption(o =>
+        o.setName("user").setDescription("User").setRequired(true)
+      )
+      .addIntegerOption(o =>
+        o.setName("days").setDescription("Number of days").setRequired(true)
+      )
+      .addStringOption(o =>
+        o.setName("start")
+          .setDescription("Start date YYYY-MM-DD")
+          .setRequired(true)
       )
       .addStringOption(o =>
         o.setName("reason").setDescription("Reason").setRequired(true)
@@ -138,7 +185,7 @@ async function handleEventBan(interaction) {
     const rows = await getRows();
     const channel = await interaction.client.channels.fetch(BAN_CHANNEL_ID);
 
-    // ===== APPLY =====
+    // ===== EVENT BAN APPLY =====
     if (sub === "apply") {
       const user = interaction.options.getUser("user");
       const type = interaction.options.getString("type");
@@ -155,17 +202,49 @@ async function handleEventBan(interaction) {
         "",
         interaction.user.tag,
         reason,
-        "" // message ID
+        ""
       ];
 
-      const message = await channel.send(formatBanMessage(row));
-      row[9] = message.id;
+      const msg = await channel.send(formatEventBanMessage(row));
+      row[9] = msg.id;
 
       rows.push(row);
       await writeRows(rows);
       await logAudit("EVENT_BAN_APPLY", interaction.user, user);
 
-      return interaction.editReply("Ban applied.");
+      return interaction.editReply("Event ban applied.");
+    }
+
+    // ===== PROBATION =====
+    if (sub === "probation") {
+      const user = interaction.options.getUser("user");
+      const days = interaction.options.getInteger("days");
+      const startStr = interaction.options.getString("start");
+      const reason = interaction.options.getString("reason");
+
+      const endDate = addDays(startStr, days);
+
+      const row = [
+        user.id,
+        user.username,
+        "Probation",
+        days.toString(),
+        "",
+        startStr,
+        formatDate(endDate),
+        interaction.user.tag,
+        reason,
+        ""
+      ];
+
+      const msg = await channel.send(formatProbationMessage(row));
+      row[9] = msg.id;
+
+      rows.push(row);
+      await writeRows(rows);
+      await logAudit("PROBATION_APPLY", interaction.user, user);
+
+      return interaction.editReply("Probation applied.");
     }
 
     // ===== EVENT PASSED =====
@@ -179,7 +258,7 @@ async function handleEventBan(interaction) {
 
           if (row[9]) {
             const msg = await channel.messages.fetch(row[9]);
-            await msg.edit(formatBanMessage(row));
+            await msg.edit(formatEventBanMessage(row));
           }
         }
       }
