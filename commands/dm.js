@@ -10,7 +10,7 @@ const ALLOWED_CHANNEL_ID = "1471082166535454780";
 
 // In-memory preview state
 // key: previewMessageId
-// value: { moderatorId, targetUserId, message }
+// value: { moderatorId, targetUserId, message, sendAt }
 const previewState = new Map();
 
 const dmCommand = new SlashCommandBuilder()
@@ -31,6 +31,12 @@ const dmCommand = new SlashCommandBuilder()
           )
           .addStringOption(opt =>
             opt.setName("message").setDescription("Message").setRequired(true)
+          )
+          .addStringOption(opt =>
+            opt
+              .setName("send_at")
+              .setDescription("Optional schedule time (YYYY-MM-DD HH:MM)")
+              .setRequired(false)
           )
       )
   )
@@ -62,6 +68,11 @@ async function handleDM(interaction) {
 
   const target = interaction.options.getUser("target");
   const message = interaction.options.getString("message");
+  const sendAt = interaction.options.getString("send_at");
+
+  const deliveryLine = sendAt
+    ? `🕒 **Scheduled for:** ${sendAt}`
+    : `🚀 **Delivery:** Send immediately on confirmation`;
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -80,7 +91,7 @@ async function handleDM(interaction) {
       `**Moderator:** ${interaction.user.tag} (${interaction.user.id})\n` +
       `**Target:** ${target.tag} (${target.id})\n\n` +
       `**Message:**\n${message}\n\n` +
-      `🚀 **Delivery:** Send immediately on confirmation\n\n` +
+      `${deliveryLine}\n\n` +
       `⚠️ Nothing has been sent yet.`,
     components: [row],
     fetchReply: true
@@ -89,7 +100,8 @@ async function handleDM(interaction) {
   previewState.set(previewMessage.id, {
     moderatorId: interaction.user.id,
     targetUserId: target.id,
-    message
+    message,
+    sendAt
   });
 }
 
@@ -115,7 +127,7 @@ async function handleDMButton(interaction) {
     });
   }
 
-  // ---------- CANCEL ----------
+  // CANCEL
   if (interaction.customId === "dm_cancel") {
     previewState.delete(interaction.message.id);
 
@@ -127,7 +139,7 @@ async function handleDMButton(interaction) {
     });
   }
 
-  // ---------- CONFIRM ----------
+  // CONFIRM (still sends immediately for now)
   if (interaction.customId === "dm_confirm") {
     previewState.delete(interaction.message.id);
 
