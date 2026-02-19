@@ -222,7 +222,6 @@ async function handleDMButton(interaction) {
   const rowNumber = index + 2;
   const row = rows[index];
 
-  /* ---------- CANCEL ---------- */
   if (action === "dm_cancel") {
     const cancelledAt = nowISO();
 
@@ -246,18 +245,12 @@ async function handleDMButton(interaction) {
         { name: "Cancelled at (UTC)", value: cancelledAt }
       );
 
-    await interaction.message.edit({
-      embeds: [cancelledEmbed],
-      components: []
-    });
-
+    await interaction.message.edit({ embeds: [cancelledEmbed], components: [] });
     await interaction.channel.send("❌ DM cancelled");
     return;
   }
 
-  /* ---------- CONFIRM ---------- */
   if (action === "dm_confirm") {
-    // Normalize immediate DMs → scheduled now
     if (!row[4]) {
       row[4] = nowISO();
       row[5] = "scheduled";
@@ -300,12 +293,17 @@ function startDMScheduler(client) {
           sent = 1;
         } else {
           const guild = await client.guilds.fetch(row[14]);
-          const role = await guild.roles.fetch(row[2]);
-          if (!role) throw new Error("Role not found");
 
-          total = role.members.size;
+          // 🔑 FIX: ensure all members are loaded
+          await guild.members.fetch();
 
-          for (const member of role.members.values()) {
+          const members = guild.members.cache.filter(m =>
+            m.roles.cache.has(row[2])
+          );
+
+          total = members.size;
+
+          for (const member of members.values()) {
             try {
               await member.send(row[3]);
               sent++;
