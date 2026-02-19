@@ -14,31 +14,31 @@ const MOD_CHANNEL_ID = "1471082166535454780";
 const SHEET_NAME = "Scheduled DMs";
 
 /*
-Columns (by index):
-0 jobId
-1 targetType
-2 targetId
-3 message
-4 send_at
-5 status
-6 moderatorId
-7 created_at
-8 sent_at
-9 failed_users
+Sheet columns (A → O):
+
+0  jobId
+1  targetType           ("user" | "role")
+2  targetId
+3  message
+4  send_at              (ISO UTC)
+5  status               (pending | scheduled | sent | partially_sent | failed | cancelled)
+6  moderatorId
+7  created_at
+8  sent_at
+9  failed_users
 10 error
 11 cancelled_by
 12 cancelled_at
 13 preview_message_id
+14 guild_id
 */
 
-/* ===================== ENV GUARANTEES ===================== */
+/* ===================== ENV ===================== */
 
-if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64) {
+if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64)
   throw new Error("Missing GOOGLE_SERVICE_ACCOUNT_JSON_BASE64");
-}
-if (!process.env.SPREADSHEET_ID) {
+if (!process.env.SPREADSHEET_ID)
   throw new Error("Missing SPREADSHEET_ID");
-}
 
 /* ===================== GOOGLE AUTH ===================== */
 
@@ -87,17 +87,17 @@ const dmCommand = new SlashCommandBuilder()
     sub
       .setName("preview-user")
       .setDescription("Preview a DM to a user")
-      .addUserOption(opt =>
-        opt.setName("user").setDescription("Target user").setRequired(true)
+      .addUserOption(o =>
+        o.setName("user").setDescription("Target user").setRequired(true)
       )
-      .addStringOption(opt =>
-        opt.setName("message").setDescription("Message content").setRequired(true)
+      .addStringOption(o =>
+        o.setName("message").setDescription("Message content").setRequired(true)
       )
-      .addStringOption(opt =>
-        opt.setName("date").setDescription("Send date (UTC)")
+      .addStringOption(o =>
+        o.setName("date").setDescription("Send date (UTC)")
       )
-      .addStringOption(opt =>
-        opt.setName("time").setDescription("Send time (UTC)")
+      .addStringOption(o =>
+        o.setName("time").setDescription("Send time (UTC)")
       )
   )
 
@@ -105,17 +105,17 @@ const dmCommand = new SlashCommandBuilder()
     sub
       .setName("preview-role")
       .setDescription("Preview a DM to a role")
-      .addRoleOption(opt =>
-        opt.setName("role").setDescription("Target role").setRequired(true)
+      .addRoleOption(o =>
+        o.setName("role").setDescription("Target role").setRequired(true)
       )
-      .addStringOption(opt =>
-        opt.setName("message").setDescription("Message content").setRequired(true)
+      .addStringOption(o =>
+        o.setName("message").setDescription("Message content").setRequired(true)
       )
-      .addStringOption(opt =>
-        opt.setName("date").setDescription("Send date (UTC)")
+      .addStringOption(o =>
+        o.setName("date").setDescription("Send date (UTC)")
       )
-      .addStringOption(opt =>
-        opt.setName("time").setDescription("Send time (UTC)")
+      .addStringOption(o =>
+        o.setName("time").setDescription("Send time (UTC)")
       )
   );
 
@@ -143,15 +143,15 @@ async function handleDM(interaction) {
     ? interaction.options.getUser("user").id
     : interaction.options.getRole("role").id;
 
-  const targetType = isUser ? "user" : "role";
-  const targetLabel = isUser ? `<@${targetId}>` : `<@&${targetId}>`;
-
   const embed = new EmbedBuilder()
     .setTitle("📨 DM PREVIEW")
     .setColor(0x5865f2)
     .addFields(
       { name: "Moderator", value: `<@${interaction.user.id}>` },
-      { name: "Target", value: targetLabel },
+      {
+        name: "Target",
+        value: isUser ? `<@${targetId}>` : `<@&${targetId}>`
+      },
       { name: "Message", value: message },
       {
         name: sendAt ? "Message Scheduled for" : "Send",
@@ -183,7 +183,7 @@ async function handleDM(interaction) {
     requestBody: {
       values: [[
         jobId,
-        targetType,
+        isUser ? "user" : "role",
         targetId,
         message,
         sendAt,
@@ -195,7 +195,8 @@ async function handleDM(interaction) {
         "",
         "",
         "",
-        previewMessage.id
+        previewMessage.id,
+        interaction.guildId
       ]]
     }
   });
@@ -256,7 +257,7 @@ async function handleDMButton(interaction) {
 
   /* ---------- CONFIRM ---------- */
   if (action === "dm_confirm") {
-    // 🔑 FIX: normalize immediate DMs into scheduled-now
+    // Normalize immediate DMs → scheduled now
     if (!row[4]) {
       row[4] = nowISO();
       row[5] = "scheduled";
@@ -286,42 +287,38 @@ function startDMScheduler(client) {
       if (row[5] !== "scheduled") continue;
       if (new Date(row[4]) > now) continue;
 
-      let failedUsers = [];
-      let totalTargets = 0;
-      let successCount = 0;
+      let total = 0;
+      let sent = 0;
+      let failed = [];
       let error = "";
 
       try {
         if (row[1] === "user") {
-          totalTargets = 1;
+          total = 1;
           const user = await client.users.fetch(row[2]);
           await user.send(row[3]);
-          successCount = 1;
+          sent = 1;
         } else {
-          const guild = client.guilds.cache.first();
+          const guild = await client.guilds.fetch(row[14]);
           const role = await guild.roles.fetch(row[2]);
           if (!role) throw new Error("Role not found");
 
-          totalTargets = role.members.size;
+          total = role.members.size;
 
           for (const member of role.members.values()) {
             try {
               await member.send(row[3]);
-              successCount++;
+              sent++;
             } catch {
-              failedUsers.push(member.id);
+              failed.push(member.id);
             }
             await new Promise(r => setTimeout(r, 1200));
           }
         }
 
-        if (successCount === 0) {
-          row[5] = "failed";
-        } else if (successCount < totalTargets) {
-          row[5] = "partially_sent";
-        } else {
-          row[5] = "sent";
-        }
+        if (sent === 0) row[5] = "failed";
+        else if (sent < total) row[5] = "partially_sent";
+        else row[5] = "sent";
 
         row[8] = nowISO();
       } catch (err) {
@@ -329,8 +326,9 @@ function startDMScheduler(client) {
         error = err.message;
       }
 
-      row[9] = failedUsers.join(",");
+      row[9] = failed.join(",");
       row[10] = error;
+
       await updateRow(rowNumber, row);
 
       try {
@@ -358,13 +356,9 @@ function startDMScheduler(client) {
               value: row[1] === "user" ? `<@${row[2]}>` : `<@&${row[2]}>`
             },
             { name: "Message", value: row[3] },
-            { name: "Total Targets", value: String(totalTargets), inline: true },
-            { name: "Sent", value: String(successCount), inline: true },
-            {
-              name: "Failed",
-              value: String(totalTargets - successCount),
-              inline: true
-            },
+            { name: "Total Targets", value: String(total), inline: true },
+            { name: "Sent", value: String(sent), inline: true },
+            { name: "Failed", value: String(total - sent), inline: true },
             { name: "Sent at (UTC)", value: row[8] }
           );
 
