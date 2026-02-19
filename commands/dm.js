@@ -13,6 +13,24 @@ const crypto = require("crypto");
 const MOD_CHANNEL_ID = "1471082166535454780";
 const SHEET_NAME = "Scheduled DMs";
 
+/*
+Columns (by index):
+0 jobId
+1 targetType
+2 targetId
+3 message
+4 send_at
+5 status
+6 moderatorId
+7 created_at
+8 sent_at
+9 failed_users
+10 error
+11 cancelled_by
+12 cancelled_at
+13 preview_message_id
+*/
+
 /* ===================== ENV GUARANTEES ===================== */
 
 if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64) {
@@ -25,7 +43,10 @@ if (!process.env.SPREADSHEET_ID) {
 /* ===================== GOOGLE AUTH ===================== */
 
 const credentials = JSON.parse(
-  Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, "base64").toString("utf8")
+  Buffer.from(
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
+    "base64"
+  ).toString("utf8")
 );
 
 const auth = new google.auth.GoogleAuth({
@@ -61,6 +82,7 @@ async function updateRow(rowNumber, row) {
 const dmCommand = new SlashCommandBuilder()
   .setName("dm")
   .setDescription("Send or schedule DMs")
+
   .addSubcommand(sub =>
     sub
       .setName("preview-user")
@@ -78,6 +100,7 @@ const dmCommand = new SlashCommandBuilder()
         opt.setName("time").setDescription("Send time (UTC)")
       )
   )
+
   .addSubcommand(sub =>
     sub
       .setName("preview-role")
@@ -148,7 +171,10 @@ async function handleDM(interaction) {
   );
 
   const channel = await interaction.client.channels.fetch(MOD_CHANNEL_ID);
-  const previewMessage = await channel.send({ embeds: [embed], components: [buttons] });
+  const previewMessage = await channel.send({
+    embeds: [embed],
+    components: [buttons]
+  });
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: process.env.SPREADSHEET_ID,
@@ -164,6 +190,8 @@ async function handleDM(interaction) {
         sendAt ? "scheduled" : "pending",
         interaction.user.id,
         nowISO(),
+        "",
+        "",
         "",
         "",
         "",
@@ -193,16 +221,12 @@ async function handleDMButton(interaction) {
   const rowNumber = index + 2;
   const row = rows[index];
 
+  /* ---------- CANCEL ---------- */
   if (action === "dm_cancel") {
     const cancelledAt = nowISO();
 
-    // status
     row[5] = "cancelled";
-
-    // remove send_at
     row[4] = "";
-
-    // cancelled_by, cancelled_at (append-safe)
     row[11] = interaction.user.id;
     row[12] = cancelledAt;
 
@@ -230,25 +254,13 @@ async function handleDMButton(interaction) {
     return;
   }
 
+  /* ---------- CONFIRM ---------- */
   if (action === "dm_confirm") {
-    if (row[4]) {
-      await interaction.message.edit({ components: [] });
-      return;
-    }
-
-    if (row[1] === "user") {
-      try {
-        const user = await interaction.client.users.fetch(row[2]);
-        await user.send(row[3]);
-
-        row[5] = "sent";
-        row[8] = nowISO();
-        await updateRow(rowNumber, row);
-      } catch (err) {
-        row[5] = "failed";
-        row[10] = err.message;
-        await updateRow(rowNumber, row);
-      }
+    // 🔑 FIX: normalize immediate DMs into scheduled-now
+    if (!row[4]) {
+      row[4] = nowISO();
+      row[5] = "scheduled";
+      await updateRow(rowNumber, row);
     }
 
     await interaction.message.edit({ components: [] });
@@ -274,7 +286,90 @@ function startDMScheduler(client) {
       if (row[5] !== "scheduled") continue;
       if (new Date(row[4]) > now) continue;
 
-      // (unchanged scheduler logic)
+      let failedUsers = [];
+      let totalTargets = 0;
+      let successCount = 0;
+      let error = "";
+
+      try {
+        if (row[1] === "user") {
+          totalTargets = 1;
+          const user = await client.users.fetch(row[2]);
+          await user.send(row[3]);
+          successCount = 1;
+        } else {
+          const guild = client.guilds.cache.first();
+          const role = await guild.roles.fetch(row[2]);
+          if (!role) throw new Error("Role not found");
+
+          totalTargets = role.members.size;
+
+          for (const member of role.members.values()) {
+            try {
+              await member.send(row[3]);
+              successCount++;
+            } catch {
+              failedUsers.push(member.id);
+            }
+            await new Promise(r => setTimeout(r, 1200));
+          }
+        }
+
+        if (successCount === 0) {
+          row[5] = "failed";
+        } else if (successCount < totalTargets) {
+          row[5] = "partially_sent";
+        } else {
+          row[5] = "sent";
+        }
+
+        row[8] = nowISO();
+      } catch (err) {
+        row[5] = "failed";
+        error = err.message;
+      }
+
+      row[9] = failedUsers.join(",");
+      row[10] = error;
+      await updateRow(rowNumber, row);
+
+      try {
+        const channel = await client.channels.fetch(MOD_CHANNEL_ID);
+        const msg = await channel.messages.fetch(row[13]);
+
+        const title =
+          row[5] === "partially_sent"
+            ? "📨 DM PARTIALLY SENT"
+            : `📨 DM ${row[5].toUpperCase()}`;
+
+        const embed = new EmbedBuilder()
+          .setTitle(title)
+          .setColor(
+            row[5] === "sent"
+              ? 0x57f287
+              : row[5] === "partially_sent"
+              ? 0xfaa61a
+              : 0xed4245
+          )
+          .addFields(
+            { name: "Moderator", value: `<@${row[6]}>` },
+            {
+              name: "Target",
+              value: row[1] === "user" ? `<@${row[2]}>` : `<@&${row[2]}>`
+            },
+            { name: "Message", value: row[3] },
+            { name: "Total Targets", value: String(totalTargets), inline: true },
+            { name: "Sent", value: String(successCount), inline: true },
+            {
+              name: "Failed",
+              value: String(totalTargets - successCount),
+              inline: true
+            },
+            { name: "Sent at (UTC)", value: row[8] }
+          );
+
+        await msg.edit({ embeds: [embed], components: [] });
+      } catch {}
     }
   }, 30_000);
 }
