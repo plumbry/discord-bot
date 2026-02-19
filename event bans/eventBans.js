@@ -135,13 +135,11 @@ const eventBanCommand = new SlashCommandBuilder()
       .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
   )
 
-  // ✅ NEW
   .addSubcommand(s =>
     s.setName("summary")
       .setDescription("View summary of active event bans")
   )
 
-  // ✅ NEW
   .addSubcommand(s =>
     s.setName("history")
       .setDescription("View full event ban history for a user")
@@ -160,6 +158,9 @@ const myBanCommand = new SlashCommandBuilder()
 // ================= HANDLERS =================
 async function handleEventBan(interaction) {
   try {
+    // ✅ FIX: always defer before editReply
+    await interaction.deferReply({ ephemeral: false });
+
     if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels))
       return interaction.editReply("No permission.");
 
