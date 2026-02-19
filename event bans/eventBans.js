@@ -158,7 +158,6 @@ const myBanCommand = new SlashCommandBuilder()
 // ================= HANDLERS =================
 async function handleEventBan(interaction) {
   try {
-    // ✅ FIX: always defer before editReply
     await interaction.deferReply({ ephemeral: false });
 
     if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels))
@@ -171,21 +170,29 @@ async function handleEventBan(interaction) {
     const rows = await getRows();
     const channel = await interaction.client.channels.fetch(BAN_CHANNEL_ID);
 
-    // ===== SUMMARY =====
+    // ===== SUMMARY (UPDATED) =====
     if (sub === "summary") {
-      const activeEvents = rows.filter(r => r[2] !== "Probation" && Number(r[4]) > 0);
-      const probations = rows.filter(r => r[2] === "Probation" && r[9] !== "ENDED");
-
-      const totalRemaining = activeEvents.reduce(
-        (sum, r) => sum + Number(r[4]),
-        0
+      const activeEvents = rows.filter(
+        r => r[2] !== "Probation" && Number(r[4]) > 0
       );
+
+      const probations = rows.filter(
+        r => r[2] === "Probation" && r[9] !== "ENDED"
+      );
+
+      const uniquePlayers = [
+        ...new Set(activeEvents.map(r => r[1]))
+      ];
+
+      const playerList = uniquePlayers.length
+        ? uniquePlayers.join(", ")
+        : "None";
 
       return interaction.editReply(
         `📊 **Event Ban Summary**\n\n` +
         `Active Event Bans: **${activeEvents.length}**\n` +
-        `Active Probations: **${probations.length}**\n` +
-        `Total Remaining Events: **${totalRemaining}**`
+        `Active Probations: **${probations.length}**\n\n` +
+        `👥 **Banned Players:**\n${playerList}`
       );
     }
 
