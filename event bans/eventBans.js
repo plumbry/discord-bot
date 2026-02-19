@@ -133,6 +133,19 @@ const eventBanCommand = new SlashCommandBuilder()
     s.setName("removelast")
       .setDescription("Remove last ban")
       .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
+  )
+
+  // ✅ NEW
+  .addSubcommand(s =>
+    s.setName("summary")
+      .setDescription("View summary of active event bans")
+  )
+
+  // ✅ NEW
+  .addSubcommand(s =>
+    s.setName("history")
+      .setDescription("View full event ban history for a user")
+      .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
   );
 
 const recentBanCommand = new SlashCommandBuilder()
@@ -143,29 +156,6 @@ const recentBanCommand = new SlashCommandBuilder()
 const myBanCommand = new SlashCommandBuilder()
   .setName("myban")
   .setDescription("View your current event bans");
-
-// ================= PROBATION EXPIRY CHECK =================
-async function checkProbationExpiry(client) {
-  const rows = await getRows();
-  const channel = await client.channels.fetch(BAN_CHANNEL_ID);
-  let updated = false;
-
-  for (const r of rows) {
-    if (
-      r[2] === "Probation" &&
-      r[6] === today() &&
-      r[9] !== "ENDED"
-    ) {
-      await channel.send(`Probation for ${r[1]} ended`);
-      r[9] = "ENDED";
-      updated = true;
-    }
-  }
-
-  if (updated) {
-    await writeRows(rows);
-  }
-}
 
 // ================= HANDLERS =================
 async function handleEventBan(interaction) {
@@ -179,6 +169,46 @@ async function handleEventBan(interaction) {
     const sub = interaction.options.getSubcommand();
     const rows = await getRows();
     const channel = await interaction.client.channels.fetch(BAN_CHANNEL_ID);
+
+    // ===== SUMMARY =====
+    if (sub === "summary") {
+      const activeEvents = rows.filter(r => r[2] !== "Probation" && Number(r[4]) > 0);
+      const probations = rows.filter(r => r[2] === "Probation" && r[9] !== "ENDED");
+
+      const totalRemaining = activeEvents.reduce(
+        (sum, r) => sum + Number(r[4]),
+        0
+      );
+
+      return interaction.editReply(
+        `📊 **Event Ban Summary**\n\n` +
+        `Active Event Bans: **${activeEvents.length}**\n` +
+        `Active Probations: **${probations.length}**\n` +
+        `Total Remaining Events: **${totalRemaining}**`
+      );
+    }
+
+    // ===== HISTORY =====
+    if (sub === "history") {
+      const u = interaction.options.getUser("user");
+      const history = rows.filter(r => r[0] === u.id);
+
+      if (!history.length)
+        return interaction.editReply({ content: "No history found.", ephemeral: true });
+
+      const out = history
+        .reverse()
+        .map(r =>
+          r[2] === "Probation"
+            ? formatProbation(r)
+            : formatEventBan(r)
+        )
+        .join("\n\n");
+
+      return interaction.editReply({ content: out, ephemeral: true });
+    }
+
+    // ===== EXISTING LOGIC BELOW (UNCHANGED) =====
 
     if (sub === "apply") {
       const u = interaction.options.getUser("user");
@@ -311,6 +341,5 @@ module.exports = {
   myBanCommand,
   handleEventBan,
   handleRecentBan,
-  handleMyBan,
-  checkProbationExpiry
+  handleMyBan
 };
