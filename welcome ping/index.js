@@ -1,57 +1,108 @@
 const { SlashCommandBuilder } = require("discord.js");
 
-// ================= SLASH COMMAND =================
+// ================= CONFIG =================
+const VERIFY_CATEGORY_ID = "1405195809057669271";
+const NEW_MEMBER_ROLE_ID = "1419812379692367902";
+const WELCOME_CHANNEL_ID = "1471071557991272459";
+
+// ================= VERIFY COMMAND =================
 const verifyCommand = new SlashCommandBuilder()
   .setName("verify")
-  .setDescription("Verify yourself");
+  .setDescription("Send verification message")
+  .addUserOption(o =>
+    o
+      .setName("member")
+      .setDescription("Member to verify")
+      .setRequired(true)
+  );
 
-// ================= VERIFY HANDLER =================
-async function handleVerify(interaction) {
-  /**
-   * CRITICAL:
-   * This MUST be the first thing that runs.
-   * It guarantees editReply() is always safe.
-   */
-  if (!interaction.deferred && !interaction.replied) {
-    await interaction.deferReply({ ephemeral: true });
-  }
+// ================= ORIGINAL VERIFY MESSAGE =================
+const VERIFY_MESSAGE = memberMention =>
+`Hi ${memberMention}, we need to woman verify you if possible please! We have 2 ways we can do this:
 
+• A quick face cam check - you would join a call in the server with a moderator, turn on your camera and say your username
+
+OR
+
+• A picture of your ID clearly showing your gender with a piece of paper with your discord name on it.
+
+Your personal info can be crossed out. If you are 25+ and wish to "boomer verify" for future tournaments, do not cover your year of birth.
+
+Let us know which option you prefer and we will get started!`;
+
+// ================= ORIGINAL WELCOME LOGIC =================
+let welcomeQueue = [];
+let welcomeTimeout = null;
+
+async function handleWelcome(member) {
   try {
-    // -------------------------------
-    // YOUR EXISTING VERIFY LOGIC
-    // -------------------------------
-    // Keep all of your current logic here.
-    // Below is a safe placeholder pattern.
+    const role = await member.guild.roles.fetch(NEW_MEMBER_ROLE_ID);
+    if (role) {
+      await member.roles.add(role);
+    }
 
-    // Example:
-    // const roleId = "ROLE_ID_HERE";
-    // const role = interaction.guild.roles.cache.get(roleId);
-    // if (!role) {
-    //   return interaction.editReply("❌ Verification role not found.");
-    // }
-    // await interaction.member.roles.add(role);
+    welcomeQueue.push(member.id);
 
-    await interaction.editReply("✅ You have been verified!");
+    if (!welcomeTimeout) {
+      welcomeTimeout = setTimeout(async () => {
+        if (!welcomeQueue.length) return;
+
+        const channel = await member.guild.channels.fetch(WELCOME_CHANNEL_ID);
+        if (!channel || !channel.isTextBased()) return;
+
+        const mentions = welcomeQueue
+          .map(id => `<@${id}>`)
+          .join(" ");
+
+        await channel.send(
+          `Welcome ${mentions}! 👋\n\nPlease follow the steps in the message at the top of this channel before continuing.`
+        );
+
+        welcomeQueue = [];
+        welcomeTimeout = null;
+      }, 45_000);
+    }
   } catch (err) {
-    console.error("Verify error:", err);
+    console.error("handleWelcome error:", err);
+  }
+}
 
-    // Even error paths are now safe
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply(
-        "❌ Verification failed. Please contact a moderator."
-      );
+// ================= VERIFY HANDLER (SAFE) =================
+async function handleVerify(interaction) {
+  try {
+    // MUST defer or reply before editReply (v14 requirement)
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({ ephemeral: false });
+    }
+
+    if (
+      !interaction.channel ||
+      interaction.channel.parentId !== VERIFY_CATEGORY_ID
+    ) {
+      return interaction.editReply("Wrong channel.");
+    }
+
+    const user = interaction.options.getUser("member");
+
+    await interaction.editReply(
+      VERIFY_MESSAGE(`<@${user.id}>`)
+    );
+  } catch (err) {
+    console.error("handleVerify error:", err);
+
+    // Final safety net
+    if (!interaction.replied) {
+      await interaction.reply({
+        content: "Something went wrong while sending the verification message.",
+        ephemeral: true,
+      });
     }
   }
 }
 
-// ================= WELCOME HANDLER =================
-async function handleWelcome(member) {
-  // Leave your existing welcome logic unchanged here
-  // (This file only needed interaction lifecycle hardening)
-}
-
+// ================= EXPORTS =================
 module.exports = {
   verifyCommand,
   handleVerify,
-  handleWelcome
+  handleWelcome,
 };
