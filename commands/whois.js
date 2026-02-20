@@ -27,16 +27,6 @@ function getSheetsClient() {
   return google.sheets({ version: 'v4', auth });
 }
 
-/**
- * Tier role detection (S / A / B / C)
- * Assumes roles already exist — detect only
- */
-function detectTierRole(member) {
-  const tierNames = ['S', 'A', 'B', 'C'];
-  const tierRole = member.roles.cache.find(r => tierNames.includes(r.name));
-  return tierRole ? tierRole.name : 'None';
-}
-
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('whois')
@@ -68,9 +58,6 @@ module.exports = {
       .filter(r => r.id !== guild.id)
       .map(r => r.name)
       .join(', ') || 'None';
-
-    // Tier role
-    const tier = detectTierRole(member);
 
     // Event ban lookup
     let eventBanStatus = 'None';
@@ -134,14 +121,9 @@ module.exports = {
           inline: false
         },
         {
-          name: 'Tier',
-          value: tier,
-          inline: true
-        },
-        {
           name: 'Event Ban Status',
           value: eventBanStatus,
-          inline: true
+          inline: false
         }
       );
 
