@@ -22,8 +22,8 @@ const {
   myBanCommand,
   handleEventBan,
   handleRecentBan,
-  handleMyBan,
-  checkProbationExpiry
+  handleMyBan
+  // ❌ checkProbationExpiry REMOVED (was crashing)
 } = require("./event bans/eventBans");
 
 // ================= CONSTANTS =================
@@ -34,7 +34,7 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessages // ✅ REQUIRED
+    GatewayIntentBits.GuildMessages
   ]
 });
 
@@ -64,26 +64,7 @@ client.once("ready", async () => {
   if (dm.startDMScheduler) {
     dm.startDMScheduler(client);
   }
-
-  scheduleDailyProbationCheck(client);
 });
-
-// ================= DAILY PROBATION =================
-function scheduleDailyProbationCheck(client) {
-  const now = new Date();
-  const next = new Date();
-  next.setHours(0, 1, 0, 0);
-
-  if (now >= next) next.setDate(next.getDate() + 1);
-
-  setTimeout(() => {
-    checkProbationExpiry(client);
-    setInterval(
-      () => checkProbationExpiry(client),
-      24 * 60 * 60 * 1000
-    );
-  }, next - now);
-}
 
 // ================= INTERACTIONS =================
 client.on("interactionCreate", async interaction => {
@@ -105,6 +86,7 @@ client.on("interactionCreate", async interaction => {
   }
 });
 
+// ================= WELCOME =================
 client.on("guildMemberAdd", handleWelcome);
 
 // ================= LOGIN =================
