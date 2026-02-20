@@ -11,6 +11,9 @@ const dm = require("./commands/dm");
 // ================= WHOIS =================
 const whois = require("./commands/whois");
 
+// ================= CHAT PERMS =================
+const chatperms = require("./commands/chatperms");
+
 // ================= VERIFY / WELCOME =================
 const {
   verifyCommand,
@@ -26,7 +29,6 @@ const {
   handleEventBan,
   handleRecentBan,
   handleMyBan
-  // ❌ checkProbationExpiry REMOVED (was crashing)
 } = require("./event bans/eventBans");
 
 // ================= CONSTANTS =================
@@ -53,13 +55,9 @@ client.once("ready", async () => {
     myBanCommand
   ];
 
-  if (dm.dmCommand) {
-    commands.push(dm.dmCommand);
-  }
-
-  if (whois?.data) {
-    commands.push(whois.data);
-  }
+  if (dm.dmCommand) commands.push(dm.dmCommand);
+  if (whois?.data) commands.push(whois.data);
+  if (chatperms?.data) commands.push(chatperms.data);
 
   await rest.put(
     Routes.applicationGuildCommands(client.user.id, GUILD_ID),
@@ -88,6 +86,9 @@ client.on("interactionCreate", async interaction => {
     }
     if (interaction.commandName === "whois") {
       return whois.execute(interaction);
+    }
+    if (interaction.commandName === "chatperms") {
+      return chatperms.execute(interaction);
     }
   }
 
