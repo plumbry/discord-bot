@@ -6,8 +6,8 @@ const {
 
 const { google } = require('googleapis');
 
-// ⬇️ IMPORT EVENT BAN SHEET SOURCE OF TRUTH
-const { EVENT_BANS_SHEET_ID } = require('../event bans/eventBans');
+// ================= CONSTANT =================
+const EVENT_BANS_SHEET_ID = '1K5BcAIM-Of9buZVmBzdtGRvjJO2XP9ZAPbFIzE5j1ZM';
 
 /**
  * Google Sheets auth helper
@@ -87,7 +87,7 @@ module.exports = {
         eventBanStatus = `${banType} (${remaining} events remaining)`;
       }
     } catch (err) {
-      console.error('[WHOIS EVENT BAN ERROR]', err.message);
+      console.error('[WHOIS EVENT BAN ERROR]', err);
       eventBanStatus = 'Error reading sheet';
     }
 
