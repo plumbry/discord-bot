@@ -14,6 +14,10 @@ const whois = require("./commands/whois");
 // ================= CHAT PERMS =================
 const chatperms = require("./commands/chatperms");
 
+// ================= ROLE UTILITIES =================
+const roleclear = require("./commands/roleclear");
+const roletagged = require("./commands/roletagged");
+
 // ================= VERIFY / WELCOME =================
 const {
   verifyCommand,
@@ -58,6 +62,8 @@ client.once("ready", async () => {
   if (dm.dmCommand) commands.push(dm.dmCommand);
   if (whois?.data) commands.push(whois.data);
   if (chatperms?.data) commands.push(chatperms.data);
+  if (roleclear?.data) commands.push(roleclear.data);
+  if (roletagged?.data) commands.push(roletagged.data);
 
   await rest.put(
     Routes.applicationGuildCommands(client.user.id, GUILD_ID),
@@ -89,6 +95,12 @@ client.on("interactionCreate", async interaction => {
     }
     if (interaction.commandName === "chatperms") {
       return chatperms.execute(interaction);
+    }
+    if (interaction.commandName === "roleclear") {
+      return roleclear.execute(interaction);
+    }
+    if (interaction.commandName === "roletagged") {
+      return roletagged.execute(interaction);
     }
   }
 
