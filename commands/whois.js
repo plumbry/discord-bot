@@ -6,6 +6,9 @@ const {
 
 const { google } = require('googleapis');
 
+// ⬇️ IMPORT EVENT BAN SHEET SOURCE OF TRUTH
+const { EVENT_BANS_SHEET_ID } = require('../event bans/eventBans');
+
 /**
  * Google Sheets auth helper
  */
@@ -65,12 +68,9 @@ module.exports = {
     try {
       const sheets = getSheetsClient();
 
-      const spreadsheetId = process.env.EVENT_BANS_SHEET_ID;
-      const range = 'A2:J';
-
       const res = await sheets.spreadsheets.values.get({
-        spreadsheetId,
-        range
+        spreadsheetId: EVENT_BANS_SHEET_ID,
+        range: 'A2:J'
       });
 
       const rows = res.data.values || [];
@@ -87,6 +87,7 @@ module.exports = {
         eventBanStatus = `${banType} (${remaining} events remaining)`;
       }
     } catch (err) {
+      console.error('[WHOIS EVENT BAN ERROR]', err.message);
       eventBanStatus = 'Error reading sheet';
     }
 
@@ -95,36 +96,18 @@ module.exports = {
       .setColor(0x5865F2)
       .setThumbnail(targetUser.displayAvatarURL())
       .addFields(
-        {
-          name: 'User',
-          value: `${targetUser.tag}`,
-          inline: false
-        },
-        {
-          name: 'User ID',
-          value: targetUser.id,
-          inline: false
-        },
+        { name: 'User', value: targetUser.tag },
+        { name: 'User ID', value: targetUser.id },
         {
           name: 'Account Created',
-          value: `<t:${Math.floor(targetUser.createdTimestamp / 1000)}:F>`,
-          inline: false
+          value: `<t:${Math.floor(targetUser.createdTimestamp / 1000)}:F>`
         },
         {
           name: 'Joined Server',
-          value: `<t:${Math.floor(member.joinedTimestamp / 1000)}:F>`,
-          inline: false
+          value: `<t:${Math.floor(member.joinedTimestamp / 1000)}:F>`
         },
-        {
-          name: 'Roles',
-          value: roles,
-          inline: false
-        },
-        {
-          name: 'Event Ban Status',
-          value: eventBanStatus,
-          inline: false
-        }
+        { name: 'Roles', value: roles },
+        { name: 'Event Ban Status', value: eventBanStatus }
       );
 
     await interaction.editReply({ embeds: [embed] });
