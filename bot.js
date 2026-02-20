@@ -8,6 +8,9 @@ const {
 // ================= DM SYSTEM =================
 const dm = require("./commands/dm");
 
+// ================= WHOIS =================
+const whois = require("./commands/whois");
+
 // ================= VERIFY / WELCOME =================
 const {
   verifyCommand,
@@ -54,6 +57,10 @@ client.once("ready", async () => {
     commands.push(dm.dmCommand);
   }
 
+  if (whois?.data) {
+    commands.push(whois.data);
+  }
+
   await rest.put(
     Routes.applicationGuildCommands(client.user.id, GUILD_ID),
     { body: commands.map(c => c.toJSON()) }
@@ -78,6 +85,9 @@ client.on("interactionCreate", async interaction => {
     }
     if (interaction.commandName === "dm" && dm.handleDM) {
       return dm.handleDM(interaction);
+    }
+    if (interaction.commandName === "whois") {
+      return whois.execute(interaction);
     }
   }
 
