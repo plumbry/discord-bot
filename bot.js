@@ -17,6 +17,7 @@ const chatperms = require("./commands/chatperms");
 // ================= ROLE UTILITIES =================
 const roleclear = require("./commands/roleclear");
 const roletagged = require("./commands/roletagged");
+const rolecheck = require("./commands/rolecheck");
 
 // ================= PURGE =================
 const purge = require("./commands/purge");
@@ -67,6 +68,7 @@ client.once("ready", async () => {
   if (chatperms?.data) commands.push(chatperms.data);
   if (roleclear?.data) commands.push(roleclear.data);
   if (roletagged?.data) commands.push(roletagged.data);
+  if (rolecheck?.data) commands.push(rolecheck.data);
   if (purge?.data) commands.push(purge.data);
 
   await rest.put(
@@ -105,6 +107,9 @@ client.on("interactionCreate", async interaction => {
     }
     if (interaction.commandName === "roletagged") {
       return roletagged.execute(interaction);
+    }
+    if (interaction.commandName === "rolecheck") {
+      return rolecheck.execute(interaction);
     }
     if (interaction.commandName === "purge") {
       return purge.execute(interaction);
