@@ -5,6 +5,24 @@ const VERIFY_CATEGORY_ID = "1405195809057669271";
 const NEW_MEMBER_ROLE_ID = "1419812379692367902";
 const WELCOME_CHANNEL_ID = "1471071557991272459";
 
+// ================= AUTO DM MESSAGE =================
+const WELCOME_DM = `👋 **Welcome to ZBD!**
+
+You cannot play tournaments or scrims until **ALL steps below are done**:
+
+1️⃣ Verify in https://discord.com/channels/1371615693392576580/1371647079935377418
+
+2️⃣ **FEMALE players** open a ticket in https://discord.com/channels/1371615693392576580/1371651766407532654 to verify
+
+3️⃣ React to the welcome message once finished *(roles are manual)*
+
+⚠ **REQUIRED SETUP**  
+Before playing, you **MUST** complete the in-game setup in https://discord.com/channels/1371615693392576580/1436327300915531867
+
+Skipping this = you **cannot queue into customs**
+
+Need help? Open a ticket **after verification**`;
+
 // ================= VERIFY COMMAND =================
 const verifyCommand = new SlashCommandBuilder()
   .setName("verify")
@@ -41,6 +59,14 @@ async function handleWelcome(member) {
       await member.roles.add(role);
     }
 
+    // ---------- AUTO DM (NEW, SAFE) ----------
+    try {
+      await member.send(WELCOME_DM);
+    } catch {
+      // DMs closed — ignore silently
+    }
+
+    // ---------- EXISTING WELCOME BATCH ----------
     welcomeQueue.push(member.id);
 
     if (!welcomeTimeout) {
