@@ -19,6 +19,7 @@ const roleclear = require("./commands/roleclear");
 const roletagged = require("./commands/roletagged");
 const rolecheck = require("./commands/rolecheck");
 const roleverifycheck = require("./commands/roleverifycheck");
+const newmemberage = require("./commands/newmemberage");
 
 // ================= PURGE =================
 const purge = require("./commands/purge");
@@ -64,13 +65,14 @@ client.once("ready", async () => {
     myBanCommand
   ];
 
-  if (dm.dmCommand) commands.push(dm.dmCommand);
+  if (dm?.dmCommand) commands.push(dm.dmCommand);
   if (whois?.data) commands.push(whois.data);
   if (chatperms?.data) commands.push(chatperms.data);
   if (roleclear?.data) commands.push(roleclear.data);
   if (roletagged?.data) commands.push(roletagged.data);
   if (rolecheck?.data) commands.push(rolecheck.data);
   if (roleverifycheck?.data) commands.push(roleverifycheck.data);
+  if (newmemberage?.data) commands.push(newmemberage.data);
   if (purge?.data) commands.push(purge.data);
 
   await rest.put(
@@ -88,34 +90,55 @@ client.once("ready", async () => {
 // ================= INTERACTIONS =================
 client.on("interactionCreate", async interaction => {
   if (interaction.isChatInputCommand()) {
-    if (interaction.commandName === "verify") return handleVerify(interaction);
-    if (interaction.commandName === "eventban") return handleEventBan(interaction);
-    if (interaction.commandName === "recentban") return handleRecentBan(interaction);
+    if (interaction.commandName === "verify") {
+      return handleVerify(interaction);
+    }
+
+    if (interaction.commandName === "eventban") {
+      return handleEventBan(interaction);
+    }
+
+    if (interaction.commandName === "recentban") {
+      return handleRecentBan(interaction);
+    }
+
     if (interaction.commandName === "myban") {
       await interaction.deferReply({ ephemeral: true });
       return handleMyBan(interaction);
     }
+
     if (interaction.commandName === "dm" && dm.handleDM) {
       return dm.handleDM(interaction);
     }
+
     if (interaction.commandName === "whois") {
       return whois.execute(interaction);
     }
+
     if (interaction.commandName === "chatperms") {
       return chatperms.execute(interaction);
     }
+
     if (interaction.commandName === "roleclear") {
       return roleclear.execute(interaction);
     }
+
     if (interaction.commandName === "roletagged") {
       return roletagged.execute(interaction);
     }
+
     if (interaction.commandName === "rolecheck") {
       return rolecheck.execute(interaction);
     }
+
     if (interaction.commandName === "roleverifycheck") {
       return roleverifycheck.execute(interaction);
     }
+
+    if (interaction.commandName === "newmemberage") {
+      return newmemberage.execute(interaction);
+    }
+
     if (interaction.commandName === "purge") {
       return purge.execute(interaction);
     }
