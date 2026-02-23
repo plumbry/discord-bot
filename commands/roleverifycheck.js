@@ -4,19 +4,20 @@ const {
 } = require("discord.js");
 
 // ================= CONFIG =================
+// These should already be correct in your server
 const NEW_MEMBER_ROLE_ID = "1419812379692367902";     // New Member
-const VERIFIED_ROLE_ID = "1371623256855154818";  // Yunite Verified
+const VERIFIED_ROLE_ID = "YUNITE_VERIFIED_ROLE_ID";  // Yunite Verified
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("roleverifycheck")
-    .setDescription("Check which new members are missing the verified role")
+    .setDescription("Check which new members also have the verified role")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
   async execute(interaction) {
     const guild = interaction.guild;
 
-    await interaction.reply("🔍 Checking verification status…");
+    await interaction.reply("🔍 Checking roles…");
 
     const newMemberRole = guild.roles.cache.get(NEW_MEMBER_ROLE_ID);
     const verifiedRole = guild.roles.cache.get(VERIFIED_ROLE_ID);
@@ -27,33 +28,32 @@ module.exports = {
       );
     }
 
-    // Use role.members to avoid gateway chunking
-    const members = [...newMemberRole.members.values()];
+    // IMPORTANT: use role.members (no guild-wide fetch)
+    const membersWithNewRole = [...newMemberRole.members.values()];
 
-    if (members.length === 0) {
+    if (membersWithNewRole.length === 0) {
       return interaction.editReply(
         "ℹ️ No members currently have the New Member role."
       );
     }
 
-    const missing = [];
+    const bothRoles = [];
 
-    for (const member of members) {
-      if (!member.roles.cache.has(verifiedRole.id)) {
-        missing.push(`<@${member.id}>`);
+    for (const member of membersWithNewRole) {
+      if (member.roles.cache.has(verifiedRole.id)) {
+        bothRoles.push(`<@${member.id}>`);
       }
     }
 
     let result =
-      `📋 **Verification Check**\n` +
-      `New Members checked: **${members.length}**\n`;
+      `📋 **Role Verification Check**\n` +
+      `New Member role holders: **${membersWithNewRole.length}**\n` +
+      `Have both roles: **${bothRoles.length}**\n\n`;
 
-    if (missing.length === 0) {
-      result += `✅ All new members are verified.`;
+    if (bothRoles.length === 0) {
+      result += "❌ No members currently have both roles.";
     } else {
-      result +=
-        `❌ Missing verified role: **${missing.length}**\n\n` +
-        missing.join("\n");
+      result += bothRoles.join("\n");
     }
 
     await interaction.editReply(result);
