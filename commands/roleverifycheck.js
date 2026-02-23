@@ -5,7 +5,7 @@ const {
 
 // ================= CONFIG =================
 const NEW_MEMBER_ROLE_ID = "1419812379692367902";     // New Member
-const VERIFIED_ROLE_ID = "YUNITE_VERIFIED_ROLE_ID";  // Yunite Verified
+const VERIFIED_ROLE_ID = "1371623256855154818";  // Yunite Verified
 
 module.exports = {
   data: new SlashCommandBuilder()
