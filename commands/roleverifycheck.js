@@ -4,9 +4,8 @@ const {
 } = require("discord.js");
 
 // ================= CONFIG =================
-// These should already be correct in your server
 const NEW_MEMBER_ROLE_ID = "1419812379692367902";     // New Member
-const VERIFIED_ROLE_ID = "1371623256855154818";  // Yunite Verified
+const VERIFIED_ROLE_ID = "YUNITE_VERIFIED_ROLE_ID";  // Yunite Verified
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -28,10 +27,12 @@ module.exports = {
       );
     }
 
-    // IMPORTANT: use role.members (no guild-wide fetch)
-    const membersWithNewRole = [...newMemberRole.members.values()];
+    // ✅ SAFE, ROLE-SCOPED FETCH (no full guild chunk)
+    const membersWithNewRole = await guild.members.fetch({
+      withRoles: [NEW_MEMBER_ROLE_ID]
+    });
 
-    if (membersWithNewRole.length === 0) {
+    if (membersWithNewRole.size === 0) {
       return interaction.editReply(
         "ℹ️ No members currently have the New Member role."
       );
@@ -39,7 +40,7 @@ module.exports = {
 
     const bothRoles = [];
 
-    for (const member of membersWithNewRole) {
+    for (const member of membersWithNewRole.values()) {
       if (member.roles.cache.has(verifiedRole.id)) {
         bothRoles.push(`<@${member.id}>`);
       }
@@ -47,7 +48,7 @@ module.exports = {
 
     let result =
       `📋 **Role Verification Check**\n` +
-      `New Member role holders: **${membersWithNewRole.length}**\n` +
+      `New Member role holders: **${membersWithNewRole.size}**\n` +
       `Have both roles: **${bothRoles.length}**\n\n`;
 
     if (bothRoles.length === 0) {
