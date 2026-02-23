@@ -82,6 +82,9 @@ module.exports = {
       });
     }
 
+    // ✅ FETCH ALL MEMBERS (prevents stale role.members)
+    await guild.members.fetch();
+
     const members = [...role.members.values()].filter(m => !m.user.bot);
 
     if (members.length === 0) {
@@ -91,13 +94,19 @@ module.exports = {
       });
     }
 
-    await interaction.reply(`⏳ Removing ${role} from **${members.length}** members…`);
+    // ✅ DEFER TO PREVENT TIMEOUT
+    await interaction.deferReply({ ephemeral: true });
+
+    await interaction.editReply(
+      `⏳ Removing ${role} from **${members.length}** members…`
+    );
 
     let removed = 0;
     let failed = 0;
 
     for (const member of members) {
       try {
+        if (!member.roles.cache.has(role.id)) continue;
         await member.roles.remove(role);
         removed++;
       } catch {
