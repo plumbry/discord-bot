@@ -4,30 +4,23 @@ const {
 } = require("discord.js");
 
 // ================= CONFIG =================
-const NEW_MEMBER_ROLE_ID = "1419812379692367902";     // New Member
-const VERIFIED_ROLE_ID = "1371623256855154818";  // Yunite Verified
+const NEW_MEMBER_ROLE_ID = "1419812379692367902"; // New Member
+const VERIFIED_ROLE_ID = "1371623256855154818";   // Yunite Verified
+
+const MAX_LISTED_USERS = 20;
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("roleverifycheck")
-    .setDescription("Check which new members also have the verified role")
+    .setDescription("Check which New Members also have the Yunite Verified role")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
   async execute(interaction) {
     const guild = interaction.guild;
 
-    await interaction.reply("🔍 Checking roles…");
+    await interaction.reply("🔍 Checking New Members…");
 
-    const newMemberRole = guild.roles.cache.get(NEW_MEMBER_ROLE_ID);
-    const verifiedRole = guild.roles.cache.get(VERIFIED_ROLE_ID);
-
-    if (!newMemberRole || !verifiedRole) {
-      return interaction.editReply(
-        "❌ Required roles not found. Check role IDs."
-      );
-    }
-
-    // ✅ SAFE, ROLE-SCOPED FETCH (no full guild chunk)
+    // Fetch ONLY members with New Member role
     const membersWithNewRole = await guild.members.fetch({
       withRoles: [NEW_MEMBER_ROLE_ID]
     });
@@ -38,25 +31,32 @@ module.exports = {
       );
     }
 
-    const bothRoles = [];
+    const verifiedMembers = [];
 
     for (const member of membersWithNewRole.values()) {
-      if (member.roles.cache.has(verifiedRole.id)) {
-        bothRoles.push(`<@${member.id}>`);
+      if (member.roles.cache.has(VERIFIED_ROLE_ID)) {
+        verifiedMembers.push(`<@${member.id}>`);
       }
     }
 
-    let result =
-      `📋 **Role Verification Check**\n` +
-      `New Member role holders: **${membersWithNewRole.size}**\n` +
-      `Have both roles: **${bothRoles.length}**\n\n`;
+    const shown = verifiedMembers.slice(0, MAX_LISTED_USERS);
+    const remaining = verifiedMembers.length - shown.length;
 
-    if (bothRoles.length === 0) {
-      result += "❌ No members currently have both roles.";
+    let message =
+      `📋 **Role Verification Check**\n` +
+      `New Members: **${membersWithNewRole.size}**\n` +
+      `Have Yunite Verified: **${verifiedMembers.length}**\n\n`;
+
+    if (verifiedMembers.length === 0) {
+      message += "❌ No New Members currently have the verified role.";
     } else {
-      result += bothRoles.join("\n");
+      message += shown.join("\n");
+
+      if (remaining > 0) {
+        message += `\n… and **${remaining}** more`;
+      }
     }
 
-    await interaction.editReply(result);
+    await interaction.editReply(message);
   }
 };
