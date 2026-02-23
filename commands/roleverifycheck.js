@@ -20,12 +20,15 @@ module.exports = {
 
     await interaction.reply("🔍 Checking New Members…");
 
-    // Fetch ONLY members with New Member role
-    const membersWithNewRole = await guild.members.fetch({
-      withRoles: [NEW_MEMBER_ROLE_ID]
-    });
+    // ✅ REQUIRED: fetch ALL members (only reliable method)
+    const allMembers = await guild.members.fetch();
 
-    if (membersWithNewRole.size === 0) {
+    // Filter to New Member role ONLY
+    const newMembers = allMembers.filter(m =>
+      m.roles.cache.has(NEW_MEMBER_ROLE_ID)
+    );
+
+    if (newMembers.size === 0) {
       return interaction.editReply(
         "ℹ️ No members currently have the New Member role."
       );
@@ -33,7 +36,7 @@ module.exports = {
 
     const verifiedMembers = [];
 
-    for (const member of membersWithNewRole.values()) {
+    for (const member of newMembers.values()) {
       if (member.roles.cache.has(VERIFIED_ROLE_ID)) {
         verifiedMembers.push(`<@${member.id}>`);
       }
@@ -44,7 +47,7 @@ module.exports = {
 
     let message =
       `📋 **Role Verification Check**\n` +
-      `New Members: **${membersWithNewRole.size}**\n` +
+      `New Members: **${newMembers.size}**\n` +
       `Have Yunite Verified: **${verifiedMembers.length}**\n\n`;
 
     if (verifiedMembers.length === 0) {
