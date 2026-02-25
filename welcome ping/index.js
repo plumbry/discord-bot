@@ -1,27 +1,43 @@
 const { SlashCommandBuilder } = require("discord.js");
+const { google } = require("googleapis");
 
 // ================= CONFIG =================
 const VERIFY_CATEGORY_ID = "1405195809057669271";
 const NEW_MEMBER_ROLE_ID = "1419812379692367902";
 const WELCOME_CHANNEL_ID = "1471071557991272459";
 
-// ================= AUTO DM MESSAGE =================
-const WELCOME_DM = `👋 **Welcome to ZBD!**
+// ================= GOOGLE SHEETS =================
+const credentials = JSON.parse(
+  Buffer.from(
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
+    "base64"
+  ).toString("utf8")
+);
 
-You cannot play tournaments or scrims until **ALL steps below are done**:
+const auth = new google.auth.GoogleAuth({
+  credentials,
+  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+});
 
-1️⃣ Verify in https://discord.com/channels/1371615693392576580/1371647079935377418
+const sheets = google.sheets({ version: "v4", auth });
 
-2️⃣ **FEMALE players** open a ticket in https://discord.com/channels/1371615693392576580/1371651766407532654 to verify
+const SPREADSHEET_ID = "1K5BcAIM-Of9buZVmBzdtGRvjJO2XP9ZAPbFIzE5j1ZM";
+const WELCOME_DM_RANGE = "Welcome DMs!A:E";
 
-3️⃣ React to the welcome message once finished *(roles are manual)*
+// ================= AUTO DM MESSAGE (VERBATIM) =================
+const WELCOME_DM = `:wave: Welcome to ZBD!
 
-⚠ **REQUIRED SETUP**  
-Before playing, you **MUST** complete the in-game setup in https://discord.com/channels/1371615693392576580/1436327300915531867
+You cannot play tournaments or scrims until ALL steps below are done:
 
-Skipping this = you **cannot queue into customs**
+:one: Verify in [#yunite-verify](https://discord.com/channels/1371615693392576580/1371647079935377418)
+:two: FEMALE players: open a ticket in [#create-ticket](https://discord.com/channels/1371615693392576580/1371651766407532654)
+:three: React to the welcome message once finished (roles are manual)
 
-Need help? Open a ticket **after verification**`;
+⚠ REQUIRED SETUP
+Before playing, you MUST complete the in-game setup in [#frequently-asked](https://discord.com/channels/1371615693392576580/1436327300915531867)
+Skipping this = you cannot queue into customs!
+
+Need help? Open a ticket after verification`;
 
 // ================= VERIFY COMMAND =================
 const verifyCommand = new SlashCommandBuilder()
@@ -34,7 +50,7 @@ const verifyCommand = new SlashCommandBuilder()
       .setRequired(true)
   );
 
-// ================= ORIGINAL VERIFY MESSAGE =================
+// ================= VERIFY MESSAGE (UNCHANGED) =================
 const VERIFY_MESSAGE = memberMention =>
 `Hi ${memberMention}, we need to woman verify you if possible please! We have 2 ways we can do this:
 
@@ -48,9 +64,26 @@ Your personal info can be crossed out. If you are 25+ and wish to "boomer verify
 
 Let us know which option you prefer and we will get started!`;
 
-// ================= ORIGINAL WELCOME LOGIC =================
+// ================= WELCOME BATCHING =================
 let welcomeQueue = [];
 let welcomeTimeout = null;
+
+async function logWelcomeDM(member, status, error = "") {
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range: WELCOME_DM_RANGE,
+    valueInputOption: "RAW",
+    requestBody: {
+      values: [[
+        new Date().toISOString(),
+        member.id,
+        member.user.tag,
+        status,
+        error
+      ]]
+    }
+  });
+}
 
 async function handleWelcome(member) {
   try {
@@ -59,14 +92,19 @@ async function handleWelcome(member) {
       await member.roles.add(role);
     }
 
-    // ---------- AUTO DM (NEW, SAFE) ----------
+    // ---------- AUTO DM + LOG ----------
     try {
       await member.send(WELCOME_DM);
-    } catch {
-      // DMs closed — ignore silently
+      await logWelcomeDM(member, "SENT");
+    } catch (err) {
+      await logWelcomeDM(
+        member,
+        "FAILED",
+        err?.message || "DM blocked"
+      );
     }
 
-    // ---------- EXISTING WELCOME BATCH ----------
+    // ---------- EXISTING PUBLIC WELCOME ----------
     welcomeQueue.push(member.id);
 
     if (!welcomeTimeout) {
@@ -93,10 +131,9 @@ async function handleWelcome(member) {
   }
 }
 
-// ================= VERIFY HANDLER (SAFE) =================
+// ================= VERIFY HANDLER =================
 async function handleVerify(interaction) {
   try {
-    // MUST defer or reply before editReply (v14 requirement)
     if (!interaction.deferred && !interaction.replied) {
       await interaction.deferReply({ ephemeral: false });
     }
@@ -115,14 +152,6 @@ async function handleVerify(interaction) {
     );
   } catch (err) {
     console.error("handleVerify error:", err);
-
-    // Final safety net
-    if (!interaction.replied) {
-      await interaction.reply({
-        content: "Something went wrong while sending the verification message.",
-        ephemeral: true,
-      });
-    }
   }
 }
 
@@ -130,5 +159,5 @@ async function handleVerify(interaction) {
 module.exports = {
   verifyCommand,
   handleVerify,
-  handleWelcome,
+  handleWelcome
 };
