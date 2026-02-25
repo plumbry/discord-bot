@@ -11,7 +11,7 @@ const LINK_REGEX = /(https?:\/\/[^\s]+)/gi;
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("pulllinks")
-    .setDescription("Pull all links from this channel into a text file")
+    .setDescription("Pull all links from this channel into a CSV file")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
 
   async execute(interaction) {
@@ -47,11 +47,18 @@ module.exports = {
       return interaction.editReply("ℹ️ No links found in this channel.");
     }
 
-    // Build text file
-    const content = [...links].join("\n");
-    const buffer = Buffer.from(content, "utf8");
+    // Build CSV
+    const csvRows = ["link"];
+    for (const link of links) {
+      // Escape double quotes for CSV safety
+      const escaped = link.replace(/"/g, '""');
+      csvRows.push(`"${escaped}"`);
+    }
 
-    const filename = `links-${channel.id}.txt`;
+    const csvContent = csvRows.join("\n");
+    const buffer = Buffer.from(csvContent, "utf8");
+
+    const filename = `links-${channel.id}.csv`;
     const attachment = new AttachmentBuilder(buffer, { name: filename });
 
     await interaction.editReply({
