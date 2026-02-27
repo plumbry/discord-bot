@@ -172,42 +172,6 @@ async function handleEventBan(interaction) {
     const rows = await getRows();
     const channel = await interaction.client.channels.fetch(BAN_CHANNEL_ID);
 
-    if (sub === "summary") {
-      const activeEvents = rows.filter(
-        r => r[2] !== "Probation" && Number(r[4]) > 0
-      );
-
-      const probations = rows.filter(
-        r => r[2] === "Probation" && r[9] !== "ENDED"
-      );
-
-      const uniquePlayers = [...new Set(activeEvents.map(r => r[1]))];
-      const playerList = uniquePlayers.length ? uniquePlayers.join(", ") : "None";
-
-      return interaction.editReply(
-        `📊 **Event Ban Summary**\n\n` +
-        `Active Event Bans: **${activeEvents.length}**\n` +
-        `Active Probations: **${probations.length}**\n\n` +
-        `👥 **Banned Players:**\n${playerList}`
-      );
-    }
-
-    if (sub === "history") {
-      const u = interaction.options.getUser("user");
-      const history = rows.filter(r => r[0] === u.id);
-
-      if (!history.length)
-        return interaction.editReply({ content: "No history found.", ephemeral: true });
-
-      const out = history.reverse().map(r =>
-        r[2] === "Probation"
-          ? formatProbation(r)
-          : formatEventBan(r)
-      ).join("\n\n");
-
-      return interaction.editReply({ content: out, ephemeral: true });
-    }
-
     if (sub === "apply") {
       const u = interaction.options.getUser("user");
       const type = interaction.options.getString("type");
@@ -282,6 +246,42 @@ async function handleEventBan(interaction) {
       );
 
       return interaction.editReply("Event bans updated.");
+    }
+
+    if (sub === "summary") {
+      const activeEvents = rows.filter(
+        r => r[2] !== "Probation" && Number(r[4]) > 0
+      );
+
+      const probations = rows.filter(
+        r => r[2] === "Probation" && r[9] !== "ENDED"
+      );
+
+      const uniquePlayers = [...new Set(activeEvents.map(r => r[1]))];
+      const playerList = uniquePlayers.length ? uniquePlayers.join(", ") : "None";
+
+      return interaction.editReply(
+        `📊 **Event Ban Summary**\n\n` +
+        `Active Event Bans: **${activeEvents.length}**\n` +
+        `Active Probations: **${probations.length}**\n\n` +
+        `👥 **Banned Players:**\n${playerList}`
+      );
+    }
+
+    if (sub === "history") {
+      const u = interaction.options.getUser("user");
+      const history = rows.filter(r => r[0] === u.id);
+
+      if (!history.length)
+        return interaction.editReply({ content: "No history found.", ephemeral: true });
+
+      const out = history.reverse().map(r =>
+        r[2] === "Probation"
+          ? formatProbation(r)
+          : formatEventBan(r)
+      ).join("\n\n");
+
+      return interaction.editReply({ content: out, ephemeral: true });
     }
 
     if (sub === "removelast") {
