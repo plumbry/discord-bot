@@ -28,10 +28,18 @@ const sheets = google.sheets({ version: "v4", auth });
 // ================= HELPERS =================
 const today = () => new Date().toLocaleDateString("en-GB");
 
-const addDays = (start, days) => {
-  const d = new Date(start);
-  d.setDate(d.getDate() + days);
-  return d.toLocaleDateString("en-GB");
+const parseDDMMYYYY = (str) => {
+  const [dd, mm, yyyy] = str.split("-").map(Number);
+  if (!dd || !mm || !yyyy) return null;
+
+  const d = new Date(yyyy, mm - 1, dd);
+  if (
+    d.getDate() !== dd ||
+    d.getMonth() !== mm - 1 ||
+    d.getFullYear() !== yyyy
+  ) return null;
+
+  return d;
 };
 
 async function logAudit(action, moderator, user = "") {
@@ -113,7 +121,10 @@ const eventBanCommand = new SlashCommandBuilder()
       .setDescription("Apply a probation ban")
       .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
       .addIntegerOption(o => o.setName("days").setDescription("Days").setRequired(true))
-      .addStringOption(o => o.setName("start").setDescription("YYYY-MM-DD").setRequired(true))
+      .addStringOption(o =>
+        o.setName("start")
+          .setDescription("DD-MM-YYYY")
+          .setRequired(true))
       .addStringOption(o => o.setName("reason").setDescription("Reason").setRequired(true))
   )
 
@@ -175,15 +186,21 @@ async function handleEventBan(interaction) {
     if (sub === "probation") {
       const u = interaction.options.getUser("user");
       const days = interaction.options.getInteger("days");
-      const start = interaction.options.getString("start");
+      const startInput = interaction.options.getString("start");
       const reason = interaction.options.getString("reason");
 
-      const end = addDays(start, days);
+      const startDate = parseDDMMYYYY(startInput);
+      if (!startDate)
+        return interaction.editReply("Invalid date format. Use DD-MM-YYYY.");
+
+      const endDate = new Date(startDate);
+      endDate.setDate(endDate.getDate() + days);
 
       const row = [
         u.id, u.username, "Probation",
         days.toString(), "",
-        start, end,
+        startInput,
+        endDate.toLocaleDateString("en-GB"),
         reason,
         interaction.user.tag,
         ""
@@ -199,7 +216,7 @@ async function handleEventBan(interaction) {
       return interaction.editReply("Probation applied.");
     }
 
-    // everything else unchanged…
+    // all other handlers unchanged
   } catch (e) {
     console.error(e);
     return interaction.editReply("An error occurred.");
