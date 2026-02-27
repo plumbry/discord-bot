@@ -98,7 +98,8 @@ const eventBanCommand = new SlashCommandBuilder()
         o.setName("type").setDescription("Type").setRequired(true)
           .addChoices(
             { name: "Money", value: "Money" },
-            { name: "No Money", value: "No Money" }
+            { name: "No Money", value: "No Money" },
+            { name: "All", value: "All" }
           ))
       .addIntegerOption(o =>
         o.setName("events").setDescription("Events").setRequired(true)
@@ -147,16 +148,6 @@ const eventBanCommand = new SlashCommandBuilder()
       .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
   );
 
-// ================= OTHER COMMANDS =================
-const recentBanCommand = new SlashCommandBuilder()
-  .setName("recentban")
-  .setDescription("View a user's most recent event ban")
-  .addUserOption(o => o.setName("user").setDescription("User").setRequired(true));
-
-const myBanCommand = new SlashCommandBuilder()
-  .setName("myban")
-  .setDescription("View your current event bans");
-
 // ================= HANDLERS =================
 async function handleEventBan(interaction) {
   try {
@@ -172,23 +163,43 @@ async function handleEventBan(interaction) {
     const rows = await getRows();
     const channel = await interaction.client.channels.fetch(BAN_CHANNEL_ID);
 
+    if (sub === "apply") {
+      const u = interaction.options.getUser("user");
+      const type = interaction.options.getString("type");
+      const events = interaction.options.getInteger("events");
+      const reason = interaction.options.getString("reason");
+
+      const row = [
+        u.id, u.username, type,
+        events.toString(), events.toString(),
+        today(), today(),
+        reason,
+        interaction.user.tag,
+        ""
+      ];
+
+      const msg = await channel.send(formatEventBan(row));
+      row[9] = msg.id;
+
+      rows.push(row);
+      await writeRows(rows);
+      await logAudit("EVENT_BAN_APPLY", interaction.user, u);
+
+      return interaction.editReply("Event ban applied.");
+    }
+
     if (sub === "eventpassed") {
       const type = interaction.options.getString("type");
       const passed = interaction.options.getInteger("events");
 
       for (const r of rows) {
-        if (
-          (type === "All" && (r[2] === "Money" || r[2] === "No Money")) ||
-          r[2] === type
-        ) {
-          if (Number(r[4]) > 0) {
-            r[4] = Math.max(0, Number(r[4]) - passed).toString();
-            r[6] = today();
+        if (r[2] === type && Number(r[4]) > 0) {
+          r[4] = Math.max(0, Number(r[4]) - passed).toString();
+          r[6] = today();
 
-            if (r[9] && r[9] !== "PROBATION" && r[9] !== "ENDED") {
-              const m = await channel.messages.fetch(r[9]);
-              await m.edit(formatEventBan(r));
-            }
+          if (r[9] && r[9] !== "PROBATION" && r[9] !== "ENDED") {
+            const m = await channel.messages.fetch(r[9]);
+            await m.edit(formatEventBan(r));
           }
         }
       }
@@ -203,8 +214,21 @@ async function handleEventBan(interaction) {
       return interaction.editReply("Event bans updated.");
     }
 
-    // ===== EXISTING LOGIC BELOW (UNCHANGED) =====
-    // (everything else remains exactly the same)
+    if (sub === "removelast") {
+      const u = interaction.options.getUser("user");
+
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if (rows[i][0] === u.id) {
+          rows.splice(i, 1);
+          break;
+        }
+      }
+
+      await writeRows(rows);
+      await logAudit("REMOVE_LAST_BAN", interaction.user, u);
+
+      return interaction.editReply(`Last ban for ${u.username} removed`);
+    }
 
   } catch (e) {
     console.error(e);
@@ -212,6 +236,7 @@ async function handleEventBan(interaction) {
   }
 }
 
+// ================= OTHER HANDLERS =================
 async function handleRecentBan(interaction) {
   if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels))
     return interaction.editReply("No permission.");
