@@ -254,8 +254,12 @@ async function handleEventBan(interaction) {
           r[6] = today();
 
           if (r[9]) {
-            const m = await channel.messages.fetch(r[9]);
-            await m.edit(formatEventBan(r));
+            try {
+              const m = await channel.messages.fetch(r[9]);
+              await m.edit(formatEventBan(r));
+            } catch {
+              // Message missing or deleted — update sheet only
+            }
           }
         }
       }
@@ -289,9 +293,7 @@ async function handleEventBan(interaction) {
         r => r[2] !== "Probation" && Number(r[4]) > 0
       );
 
-      const probations = rows.filter(
-        r => r[2] === "Probation"
-      );
+      const probations = rows.filter(r => r[2] === "Probation");
 
       return interaction.editReply(
         `📊 **Event Ban Summary**\n\n` +
