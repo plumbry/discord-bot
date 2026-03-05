@@ -27,6 +27,9 @@ const pulllinks = require("./commands/pulllinks");
 // ================= PURGE =================
 const purge = require("./commands/purge");
 
+// ================= REPORT =================
+const report = require("./commands/report");
+
 // ================= VERIFY / WELCOME =================
 const {
   verifyCommand,
@@ -79,6 +82,7 @@ client.once("ready", async () => {
   if (newmemberage?.data) commands.push(newmemberage.data);
   if (pulllinks?.data) commands.push(pulllinks.data);
   if (purge?.data) commands.push(purge.data);
+  if (report?.data) commands.push(report.data);
 
   await rest.put(
     Routes.applicationGuildCommands(client.user.id, GUILD_ID),
@@ -102,6 +106,7 @@ client.on("interactionCreate", async interaction => {
       await interaction.deferReply({ ephemeral: true });
       return handleMyBan(interaction);
     }
+
     if (interaction.commandName === "dm" && dm.handleDM) return dm.handleDM(interaction);
     if (interaction.commandName === "whois") return whois.execute(interaction);
     if (interaction.commandName === "chatperms") return chatperms.execute(interaction);
@@ -112,6 +117,7 @@ client.on("interactionCreate", async interaction => {
     if (interaction.commandName === "newmemberage") return newmemberage.execute(interaction);
     if (interaction.commandName === "pulllinks") return pulllinks.execute(interaction);
     if (interaction.commandName === "purge") return purge.execute(interaction);
+    if (interaction.commandName === "report") return report.execute(interaction);
   }
 
   if (interaction.isButton() && dm.handleDMButton) {
