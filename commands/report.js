@@ -15,12 +15,11 @@ module.exports = {
 • Stream clips or VOD timestamps  
 • Fortnite replay footage  
 • Screenshots  
-• Match IDs or lobby details  
 
 **Your evidence should clearly show:**
-• The **player's name**
-• The **rule break occurring**
-• Enough context for staff to understand what happened
+• **PLAYER NAME**
+• **RULE BREAK OCCURRING**
+• **CONTEXT**
 
 Reports without evidence are very difficult for staff to review and may not be actioned.
 
