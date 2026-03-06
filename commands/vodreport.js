@@ -2,21 +2,24 @@ const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 const { google } = require("googleapis");
 const fetch = require("node-fetch");
 
+const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME = "VOD Report";
 
+const credentials = JSON.parse(
+  Buffer.from(
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
+    "base64"
+  ).toString("utf8")
+);
+
 const auth = new google.auth.GoogleAuth({
-  credentials: JSON.parse(
-    Buffer.from(
-      process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
-      "base64"
-    ).toString("utf8")
-  ),
+  credentials,
   scopes: ["https://www.googleapis.com/auth/spreadsheets"]
 });
 
 const sheets = google.sheets({ version: "v4", auth });
 
-const TWITCH_REGEX = /twitch\.tv\/(videos\/(\d+)|([a-zA-Z0-9_]+))/gi;
+const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)/gi;
 
 function parseDuration(duration) {
 
@@ -33,9 +36,7 @@ function parseDuration(duration) {
 function vodOverlaps(vod, start, end) {
 
   const vodStart = new Date(vod.created_at);
-
   const duration = parseDuration(vod.duration);
-
   const vodEnd = new Date(vodStart.getTime() + duration * 1000);
 
   return vodStart < end && vodEnd > start;
@@ -54,7 +55,6 @@ async function getAccessToken() {
   });
 
   const data = await res.json();
-
   return data.access_token;
 
 }
@@ -72,7 +72,6 @@ async function getUserId(username, token) {
   );
 
   const data = await res.json();
-
   return data.data?.[0]?.id;
 
 }
@@ -90,7 +89,6 @@ async function getRecentVods(userId, token) {
   );
 
   const data = await res.json();
-
   return data.data || [];
 
 }
@@ -107,7 +105,6 @@ async function getTwitchUsers(channel) {
     if (lastId) options.before = lastId;
 
     const messages = await channel.messages.fetch(options);
-
     if (!messages.size) break;
 
     messages.forEach(msg => {
@@ -115,11 +112,7 @@ async function getTwitchUsers(channel) {
       const matches = [...msg.content.matchAll(TWITCH_REGEX)];
 
       matches.forEach(match => {
-
-        const username = match[4];
-
-        if (username) users.add(username.toLowerCase());
-
+        users.add(match[1].toLowerCase());
       });
 
     });
@@ -135,7 +128,7 @@ async function getTwitchUsers(channel) {
 async function writeRow(row) {
 
   await sheets.spreadsheets.values.append({
-    spreadsheetId: process.env.SPREADSHEET_ID,
+    spreadsheetId: SPREADSHEET_ID,
     range: `${SHEET_NAME}!A:F`,
     valueInputOption: "RAW",
     requestBody: { values: [row] }
@@ -151,14 +144,12 @@ module.exports = {
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
     .addStringOption(o =>
       o.setName("start")
-        .setDescription("Event start (UTC ISO)")
-        .setRequired(true)
-    )
+        .setDescription("Event start time (ISO UTC)")
+        .setRequired(true))
     .addStringOption(o =>
       o.setName("end")
-        .setDescription("Event end (UTC ISO)")
-        .setRequired(true)
-    ),
+        .setDescription("Event end time (ISO UTC)")
+        .setRequired(true)),
 
   async execute(interaction) {
 
@@ -166,12 +157,11 @@ module.exports = {
     const end = new Date(interaction.options.getString("end"));
 
     await interaction.reply({
-      content: "Scanning channel for Twitch links...",
+      content: "Scanning Twitch streams...",
       ephemeral: true
     });
 
     const users = await getTwitchUsers(interaction.channel);
-
     const token = await getAccessToken();
 
     for (const username of users) {
@@ -180,7 +170,7 @@ module.exports = {
       let vodStart = "";
       let vodEnd = "";
       let valid = false;
-      let note = "No VOD";
+      let note = "No public VOD";
 
       const userId = await getUserId(username, token);
 
@@ -194,19 +184,20 @@ module.exports = {
 
           for (const vod of vods) {
 
+            // Only allow PUBLIC VODs
+            if (vod.viewable !== "public") continue;
+
             if (vodOverlaps(vod, start, end)) {
 
               const startDate = new Date(vod.created_at);
-
               const duration = parseDuration(vod.duration);
-
               const endDate = new Date(startDate.getTime() + duration * 1000);
 
               vodStart = startDate.toISOString();
               vodEnd = endDate.toISOString();
 
               valid = true;
-              note = "Event footage detected";
+              note = "Public VOD overlaps event";
 
               break;
 
@@ -214,13 +205,13 @@ module.exports = {
 
           }
 
-          if (!valid) note = "Stream outside event";
+          if (!valid) note = "Stream outside event window";
 
         }
 
       } else {
 
-        note = "User not found";
+        note = "Twitch user not found";
 
       }
 
