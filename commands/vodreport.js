@@ -3,7 +3,7 @@ const { google } = require("googleapis");
 const fetch = require("node-fetch");
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-const SHEET_NAME = "'VOD Report'"; // quotes required because of space
+const SHEET_NAME = "'VOD Report'";
 
 const credentials = JSON.parse(
   Buffer.from(
@@ -168,6 +168,9 @@ module.exports = {
     const start = new Date(`${date}T${startTime}:00Z`);
     const end = new Date(`${date}T${endTime}:00Z`);
 
+    const categoryName =
+      interaction.channel.parent?.name || "No Category";
+
     await interaction.reply({
       content: "Scanning Twitch streams...",
       ephemeral: true
@@ -227,6 +230,7 @@ module.exports = {
       }
 
       await writeRow([
+        categoryName,
         username,
         lastStream,
         vodStart,
