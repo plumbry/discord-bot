@@ -5,30 +5,8 @@ const {
   Routes
 } = require("discord.js");
 
-// ================= DM SYSTEM =================
-const dm = require("./commands/dm");
-
-// ================= WHOIS =================
-const whois = require("./commands/whois");
-
-// ================= CHAT PERMS =================
-const chatperms = require("./commands/chatperms");
-
-// ================= ROLE UTILITIES =================
-const roleclear = require("./commands/roleclear");
-const roletagged = require("./commands/roletagged");
-const rolecheck = require("./commands/rolecheck");
-const roleverifycheck = require("./commands/roleverifycheck");
-const newmemberage = require("./commands/newmemberage");
-
-// ================= LINKS =================
-const pulllinks = require("./commands/pulllinks");
-
-// ================= PURGE =================
-const purge = require("./commands/purge");
-
-// ================= REPORT =================
-const report = require("./commands/report");
+const fs = require("fs");
+const path = require("path");
 
 // ================= VERIFY / WELCOME =================
 const {
@@ -47,6 +25,9 @@ const {
   handleMyBan
 } = require("./event bans/eventBans");
 
+// ================= DM SYSTEM =================
+const dm = require("./commands/dm");
+
 // ================= CONSTANTS =================
 const GUILD_ID = "1371615693392576580";
 
@@ -60,8 +41,29 @@ const client = new Client({
   ]
 });
 
+// ================= COMMAND COLLECTION =================
+client.commands = new Map();
+
+// ================= LOAD COMMAND FILES =================
+const commandsPath = path.join(__dirname, "commands");
+
+const commandFiles = fs
+  .readdirSync(commandsPath)
+  .filter(file => file.endsWith(".js"));
+
+for (const file of commandFiles) {
+
+  const command = require(`./commands/${file}`);
+
+  if (command.data && command.execute) {
+    client.commands.set(command.data.name, command);
+  }
+
+}
+
 // ================= READY =================
 client.once("ready", async () => {
+
   const rest = new REST({ version: "10" })
     .setToken(process.env.DISCORD_TOKEN);
 
@@ -72,17 +74,10 @@ client.once("ready", async () => {
     myBanCommand
   ];
 
-  if (dm?.dmCommand) commands.push(dm.dmCommand);
-  if (whois?.data) commands.push(whois.data);
-  if (chatperms?.data) commands.push(chatperms.data);
-  if (roleclear?.data) commands.push(roleclear.data);
-  if (roletagged?.data) commands.push(roletagged.data);
-  if (rolecheck?.data) commands.push(rolecheck.data);
-  if (roleverifycheck?.data) commands.push(roleverifycheck.data);
-  if (newmemberage?.data) commands.push(newmemberage.data);
-  if (pulllinks?.data) commands.push(pulllinks.data);
-  if (purge?.data) commands.push(purge.data);
-  if (report?.data) commands.push(report.data);
+  // add dynamically loaded commands
+  for (const command of client.commands.values()) {
+    commands.push(command.data);
+  }
 
   await rest.put(
     Routes.applicationGuildCommands(client.user.id, GUILD_ID),
@@ -94,35 +89,73 @@ client.once("ready", async () => {
   if (dm.startDMScheduler) {
     dm.startDMScheduler(client);
   }
+
 });
 
 // ================= INTERACTIONS =================
 client.on("interactionCreate", async interaction => {
+
   if (interaction.isChatInputCommand()) {
-    if (interaction.commandName === "verify") return handleVerify(interaction);
-    if (interaction.commandName === "eventban") return handleEventBan(interaction);
-    if (interaction.commandName === "recentban") return handleRecentBan(interaction);
+
+    // ===== SPECIAL COMMANDS =====
+
+    if (interaction.commandName === "verify")
+      return handleVerify(interaction);
+
+    if (interaction.commandName === "eventban")
+      return handleEventBan(interaction);
+
+    if (interaction.commandName === "recentban")
+      return handleRecentBan(interaction);
+
     if (interaction.commandName === "myban") {
       await interaction.deferReply({ ephemeral: true });
       return handleMyBan(interaction);
     }
 
-    if (interaction.commandName === "dm" && dm.handleDM) return dm.handleDM(interaction);
-    if (interaction.commandName === "whois") return whois.execute(interaction);
-    if (interaction.commandName === "chatperms") return chatperms.execute(interaction);
-    if (interaction.commandName === "roleclear") return roleclear.execute(interaction);
-    if (interaction.commandName === "roletagged") return roletagged.execute(interaction);
-    if (interaction.commandName === "rolecheck") return rolecheck.execute(interaction);
-    if (interaction.commandName === "roleverifycheck") return roleverifycheck.execute(interaction);
-    if (interaction.commandName === "newmemberage") return newmemberage.execute(interaction);
-    if (interaction.commandName === "pulllinks") return pulllinks.execute(interaction);
-    if (interaction.commandName === "purge") return purge.execute(interaction);
-    if (interaction.commandName === "report") return report.execute(interaction);
+    if (interaction.commandName === "dm" && dm.handleDM)
+      return dm.handleDM(interaction);
+
+    // ===== DYNAMIC COMMANDS =====
+
+    const command = client.commands.get(interaction.commandName);
+
+    if (!command) return;
+
+    try {
+
+      await command.execute(interaction);
+
+    } catch (error) {
+
+      console.error(error);
+
+      if (interaction.replied || interaction.deferred) {
+
+        await interaction.followUp({
+          content: "There was an error executing this command.",
+          ephemeral: true
+        });
+
+      } else {
+
+        await interaction.reply({
+          content: "There was an error executing this command.",
+          ephemeral: true
+        });
+
+      }
+
+    }
+
   }
+
+  // ===== BUTTON HANDLING =====
 
   if (interaction.isButton() && dm.handleDMButton) {
     return dm.handleDMButton(interaction);
   }
+
 });
 
 // ================= WELCOME =================
