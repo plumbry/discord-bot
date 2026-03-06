@@ -3,7 +3,7 @@ const { google } = require("googleapis");
 const fetch = require("node-fetch");
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-const SHEET_NAME = "VOD Report";
+const SHEET_NAME = "'VOD Report'"; // quotes required because of space
 
 const credentials = JSON.parse(
   Buffer.from(
@@ -112,7 +112,9 @@ async function getTwitchUsers(channel) {
 
       const matches = [...msg.content.matchAll(TWITCH_REGEX)];
 
-      matches.forEach(match => users.add(match[1].toLowerCase()));
+      matches.forEach(match => {
+        users.add(match[1].toLowerCase());
+      });
 
     });
 
@@ -128,7 +130,7 @@ async function writeRow(row) {
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A:F`,
+    range: `${SHEET_NAME}!A1`,
     valueInputOption: "RAW",
     requestBody: { values: [row] }
   });
@@ -140,7 +142,6 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName("vodreport")
     .setDescription("Check Twitch streams for event VODs")
-
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
 
     .addStringOption(o =>
