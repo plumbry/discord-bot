@@ -19,7 +19,7 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: "v4", auth });
 
-const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)/gi;
+const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)(?:\/|$)/gi;
 
 function parseDuration(duration) {
 
@@ -59,6 +59,44 @@ async function getAccessToken() {
 
 }
 
+async function getTwitchUsers(channel) {
+
+  let lastId;
+  const users = new Map();
+
+  while (true) {
+
+    const options = { limit: 100 };
+    if (lastId) options.before = lastId;
+
+    const messages = await channel.messages.fetch(options);
+    if (!messages.size) break;
+
+    messages.forEach(msg => {
+
+      const matches = [...msg.content.matchAll(TWITCH_REGEX)];
+
+      matches.forEach(match => {
+
+        const twitch = match[1].toLowerCase();
+
+        users.set(twitch, {
+          twitch,
+          discordTag: `<@${msg.author.id}>`
+        });
+
+      });
+
+    });
+
+    lastId = messages.last().id;
+
+  }
+
+  return [...users.values()];
+
+}
+
 async function getUserId(username, token) {
 
   const res = await fetch(
@@ -93,35 +131,6 @@ async function getRecentVods(userId, token) {
 
 }
 
-async function getTwitchUsers(channel) {
-
-  let lastId;
-  const users = new Set();
-
-  while (true) {
-
-    const options = { limit: 100 };
-    if (lastId) options.before = lastId;
-
-    const messages = await channel.messages.fetch(options);
-    if (!messages.size) break;
-
-    messages.forEach(msg => {
-
-      const matches = [...msg.content.matchAll(TWITCH_REGEX)];
-
-      matches.forEach(match => users.add(match[1].toLowerCase()));
-
-    });
-
-    lastId = messages.last().id;
-
-  }
-
-  return [...users];
-
-}
-
 async function appendRows(rows) {
 
   await sheets.spreadsheets.values.append({
@@ -137,7 +146,7 @@ module.exports = {
 
   data: new SlashCommandBuilder()
     .setName("vodreport")
-    .setDescription("Check Twitch streams for event VODs")
+    .setDescription("Check Twitch VOD compliance for event")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
 
     .addStringOption(o =>
@@ -167,23 +176,23 @@ module.exports = {
     const categoryName =
       interaction.channel.parent?.name || "No Category";
 
-    await interaction.reply({
-      content: "Scanning Twitch streams...",
-      ephemeral: true
-    });
+    const checkedBy = `<@${interaction.user.id}>`;
+    const checkedAt = new Date().toISOString();
+
+    await interaction.reply("Scanning Twitch VODs...");
 
     const users = await getTwitchUsers(interaction.channel);
     const token = await getAccessToken();
 
     const rows = [];
-    const missingVods = [];
+    const missing = [];
 
-    rows.push([categoryName, date]);
-    rows.push(["Event Category","Twitch","Last Stream","VOD Start","VOD End","Overlap","Notes"]);
+    for (const user of users) {
 
-    for (const username of users) {
+      const username = user.twitch;
+      const discordUser = user.discordTag;
 
-      let lastStream = "None";
+      let lastStream = "";
       let vodStart = "";
       let vodEnd = "";
       let valid = false;
@@ -221,59 +230,49 @@ module.exports = {
 
           }
 
-          if (!valid) {
-            note = "Stream outside event window";
-            missingVods.push(username);
-          }
+          if (!valid) missing.push(`${discordUser} (${username})`);
 
         } else {
 
-          missingVods.push(username);
+          missing.push(`${discordUser} (${username})`);
 
         }
-
-      } else {
-
-        note = "Twitch user not found";
-        missingVods.push(username);
 
       }
 
       rows.push([
         categoryName,
+        discordUser,
         username,
         lastStream,
         vodStart,
         vodEnd,
         valid ? "YES" : "NO",
-        note
+        note,
+        checkedAt,
+        checkedBy
       ]);
 
       await new Promise(r => setTimeout(r, 400));
 
     }
 
-    rows.push([""]);
-
     await appendRows(rows);
 
-    let summary = `Finished scanning ${users.length} Twitch channels.`;
+    let summary = `VOD Report Complete\n\n`;
 
-    if (missingVods.length) {
+    if (missing.length) {
 
-      summary += `\n\nMissing Public VODs (${missingVods.length})\n`;
-      summary += missingVods.join("\n");
+      summary += `Missing Public VODs (${missing.length})\n`;
+      summary += missing.join("\n");
 
     } else {
 
-      summary += "\n\nAll streamers have valid VODs.";
+      summary += "All submitted streams have valid VODs.";
 
     }
 
-    await interaction.followUp({
-      content: summary,
-      ephemeral: true
-    });
+    await interaction.followUp(summary);
 
   }
 

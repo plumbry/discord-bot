@@ -1,5 +1,23 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { google } = require("googleapis");
 const fetch = require("node-fetch");
+
+const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
+const SHEET_NAME = "'Live Check'";
+
+const credentials = JSON.parse(
+  Buffer.from(
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
+    "base64"
+  ).toString("utf8")
+);
+
+const auth = new google.auth.GoogleAuth({
+  credentials,
+  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+});
+
+const sheets = google.sheets({ version: "v4", auth });
 
 const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)(?:\/|$)/gi;
 
@@ -22,12 +40,11 @@ async function getAccessToken() {
 async function getTwitchUsers(channel) {
 
   let lastId;
-  const users = new Set();
+  const users = new Map();
 
   while (true) {
 
     const options = { limit: 100 };
-
     if (lastId) options.before = lastId;
 
     const messages = await channel.messages.fetch(options);
@@ -38,7 +55,14 @@ async function getTwitchUsers(channel) {
       const matches = [...msg.content.matchAll(TWITCH_REGEX)];
 
       matches.forEach(match => {
-        users.add(match[1].toLowerCase());
+
+        const twitch = match[1].toLowerCase();
+
+        users.set(twitch, {
+          twitch,
+          discordTag: `<@${msg.author.id}>`
+        });
+
       });
 
     });
@@ -47,17 +71,15 @@ async function getTwitchUsers(channel) {
 
   }
 
-  return [...users];
+  return [...users.values()];
 
 }
 
 async function checkLiveStatus(users, token) {
 
-  if (!users.length) return { live: [], offline: [] };
-
   const url =
     "https://api.twitch.tv/helix/streams?" +
-    users.map(u => `user_login=${u}`).join("&");
+    users.map(u => `user_login=${u.twitch}`).join("&");
 
   const res = await fetch(url, {
     headers: {
@@ -68,22 +90,24 @@ async function checkLiveStatus(users, token) {
 
   const data = await res.json();
 
-  const liveUsers = data.data.map(stream => stream.user_login.toLowerCase());
+  const liveMap = {};
 
-  const live = [];
-  const offline = [];
-
-  users.forEach(user => {
-
-    if (liveUsers.includes(user)) {
-      live.push(user);
-    } else {
-      offline.push(user);
-    }
-
+  data.data.forEach(stream => {
+    liveMap[stream.user_login.toLowerCase()] = stream;
   });
 
-  return { live, offline };
+  return liveMap;
+
+}
+
+async function appendRows(rows) {
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_NAME}!A1`,
+    valueInputOption: "RAW",
+    requestBody: { values: rows }
+  });
 
 }
 
@@ -91,49 +115,82 @@ module.exports = {
 
   data: new SlashCommandBuilder()
     .setName("checklive")
-    .setDescription("Check which submitted Twitch links are live")
+    .setDescription("Check which submitted Twitch links are currently live")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
   async execute(interaction) {
 
+    const categoryName =
+      interaction.channel.parent?.name || "No Category";
+
+    const checkedBy = `<@${interaction.user.id}>`;
+    const checkedAt = new Date().toISOString();
+
     await interaction.reply({
-      content: "Checking Twitch streams...",
-      ephemeral: true
+      content: "Checking Twitch streams..."
     });
 
     const users = await getTwitchUsers(interaction.channel);
 
     if (!users.length) {
 
-      await interaction.followUp({
-        content: "No Twitch links found in this channel.",
-        ephemeral: true
-      });
-
+      await interaction.followUp("No Twitch links found in this channel.");
       return;
 
     }
 
     const token = await getAccessToken();
+    const liveMap = await checkLiveStatus(users, token);
 
-    const { live, offline } = await checkLiveStatus(users, token);
+    const rows = [];
+    const liveList = [];
+    const offlineList = [];
 
-    let output = `Checked ${users.length} Twitch channels\n\n`;
+    for (const user of users) {
 
-    if (live.length) {
-      output += `🟢 LIVE (${live.length})\n`;
-      output += live.join("\n") + "\n\n";
+      const stream = liveMap[user.twitch];
+
+      const live = !!stream;
+
+      const title = stream?.title || "";
+
+      rows.push([
+        categoryName,
+        user.discordTag,
+        user.twitch,
+        live ? "YES" : "NO",
+        title,
+        checkedAt,
+        checkedBy
+      ]);
+
+      if (live) {
+        liveList.push(`${user.discordTag} (${user.twitch})`);
+      } else {
+        offlineList.push(`${user.discordTag} (${user.twitch})`);
+      }
+
     }
 
-    if (offline.length) {
-      output += `🔴 OFFLINE (${offline.length})\n`;
-      output += offline.join("\n");
+    await appendRows(rows);
+
+    let message = `Live Check Results\n\n`;
+
+    if (liveList.length) {
+
+      message += `🟢 LIVE (${liveList.length})\n`;
+      message += liveList.join("\n") + "\n\n";
+
     }
 
-    await interaction.followUp({
-      content: output,
-      ephemeral: true
-    });
+    if (offlineList.length) {
+
+      message += `🔴 OFFLINE (${offlineList.length})\n`;
+      message += offlineList.join("\n");
+
+    }
+
+    await interaction.followUp(message);
 
   }
 
