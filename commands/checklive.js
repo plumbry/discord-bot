@@ -77,6 +77,8 @@ async function getTwitchUsers(channel) {
 
 async function checkLiveStatus(users, token) {
 
+  if (!users.length) return {};
+
   const url =
     "https://api.twitch.tv/helix/streams?" +
     users.map(u => `user_login=${u.twitch}`).join("&");
@@ -126,9 +128,7 @@ module.exports = {
     const checkedBy = `<@${interaction.user.id}>`;
     const checkedAt = new Date().toISOString();
 
-    await interaction.reply({
-      content: "Checking Twitch streams..."
-    });
+    await interaction.reply("Checking Twitch streams...");
 
     const users = await getTwitchUsers(interaction.channel);
 
@@ -143,15 +143,12 @@ module.exports = {
     const liveMap = await checkLiveStatus(users, token);
 
     const rows = [];
-    const liveList = [];
     const offlineList = [];
 
     for (const user of users) {
 
       const stream = liveMap[user.twitch];
-
       const live = !!stream;
-
       const title = stream?.title || "";
 
       rows.push([
@@ -164,9 +161,7 @@ module.exports = {
         checkedBy
       ]);
 
-      if (live) {
-        liveList.push(`${user.discordTag} (${user.twitch})`);
-      } else {
+      if (!live) {
         offlineList.push(`${user.discordTag} (${user.twitch})`);
       }
 
@@ -174,19 +169,16 @@ module.exports = {
 
     await appendRows(rows);
 
-    let message = `Live Check Results\n\n`;
-
-    if (liveList.length) {
-
-      message += `🟢 LIVE (${liveList.length})\n`;
-      message += liveList.join("\n") + "\n\n";
-
-    }
+    let message = `Live Check Complete\n\n`;
 
     if (offlineList.length) {
 
-      message += `🔴 OFFLINE (${offlineList.length})\n`;
+      message += `⚠️ NOT LIVE (${offlineList.length})\n`;
       message += offlineList.join("\n");
+
+    } else {
+
+      message += `All submitted players are currently live.`;
 
     }
 
