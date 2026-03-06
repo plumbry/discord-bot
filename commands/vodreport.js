@@ -105,15 +105,14 @@ async function getTwitchUsers(channel) {
     if (lastId) options.before = lastId;
 
     const messages = await channel.messages.fetch(options);
+
     if (!messages.size) break;
 
     messages.forEach(msg => {
 
       const matches = [...msg.content.matchAll(TWITCH_REGEX)];
 
-      matches.forEach(match => {
-        users.add(match[1].toLowerCase());
-      });
+      matches.forEach(match => users.add(match[1].toLowerCase()));
 
     });
 
@@ -140,21 +139,33 @@ module.exports = {
 
   data: new SlashCommandBuilder()
     .setName("vodreport")
-    .setDescription("Scan this channel for Twitch streams during an event")
+    .setDescription("Check Twitch streams for event VODs")
+
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+
+    .addStringOption(o =>
+      o.setName("date")
+        .setDescription("Event date (YYYY-MM-DD)")
+        .setRequired(true))
+
     .addStringOption(o =>
       o.setName("start")
-        .setDescription("Event start time (ISO UTC)")
+        .setDescription("Start time UTC (HH:MM)")
         .setRequired(true))
+
     .addStringOption(o =>
       o.setName("end")
-        .setDescription("Event end time (ISO UTC)")
+        .setDescription("End time UTC (HH:MM)")
         .setRequired(true)),
 
   async execute(interaction) {
 
-    const start = new Date(interaction.options.getString("start"));
-    const end = new Date(interaction.options.getString("end"));
+    const date = interaction.options.getString("date");
+    const startTime = interaction.options.getString("start");
+    const endTime = interaction.options.getString("end");
+
+    const start = new Date(`${date}T${startTime}:00Z`);
+    const end = new Date(`${date}T${endTime}:00Z`);
 
     await interaction.reply({
       content: "Scanning Twitch streams...",
@@ -184,7 +195,6 @@ module.exports = {
 
           for (const vod of vods) {
 
-            // Only allow PUBLIC VODs
             if (vod.viewable !== "public") continue;
 
             if (vodOverlaps(vod, start, end)) {
