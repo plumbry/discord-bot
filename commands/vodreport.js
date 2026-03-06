@@ -22,6 +22,7 @@ const sheets = google.sheets({ version: "v4", auth });
 const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)/gi;
 
 function parseDuration(duration) {
+
   const match = duration.match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/);
 
   const h = parseInt(match?.[1] || 0);
@@ -29,17 +30,21 @@ function parseDuration(duration) {
   const s = parseInt(match?.[3] || 0);
 
   return h * 3600 + m * 60 + s;
+
 }
 
 function vodOverlaps(vod, start, end) {
+
   const vodStart = new Date(vod.created_at);
   const duration = parseDuration(vod.duration);
   const vodEnd = new Date(vodStart.getTime() + duration * 1000);
 
   return vodStart < end && vodEnd > start;
+
 }
 
 async function getAccessToken() {
+
   const res = await fetch("https://id.twitch.tv/oauth2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -51,9 +56,11 @@ async function getAccessToken() {
 
   const data = await res.json();
   return data.access_token;
+
 }
 
 async function getUserId(username, token) {
+
   const res = await fetch(
     `https://api.twitch.tv/helix/users?login=${username}`,
     {
@@ -66,9 +73,11 @@ async function getUserId(username, token) {
 
   const data = await res.json();
   return data.data?.[0]?.id;
+
 }
 
 async function getRecentVods(userId, token) {
+
   const res = await fetch(
     `https://api.twitch.tv/helix/videos?user_id=${userId}&type=archive&first=5`,
     {
@@ -81,6 +90,7 @@ async function getRecentVods(userId, token) {
 
   const data = await res.json();
   return data.data || [];
+
 }
 
 async function getTwitchUsers(channel) {
@@ -100,9 +110,7 @@ async function getTwitchUsers(channel) {
 
       const matches = [...msg.content.matchAll(TWITCH_REGEX)];
 
-      matches.forEach(match => {
-        users.add(match[1].toLowerCase());
-      });
+      matches.forEach(match => users.add(match[1].toLowerCase()));
 
     });
 
@@ -111,6 +119,7 @@ async function getTwitchUsers(channel) {
   }
 
   return [...users];
+
 }
 
 async function appendRows(rows) {
@@ -167,9 +176,10 @@ module.exports = {
     const token = await getAccessToken();
 
     const rows = [];
+    const missingVods = [];
 
     rows.push([categoryName, date]);
-    rows.push(["Event Category", "Twitch", "Last Stream", "VOD Start", "VOD End", "Overlap", "Notes"]);
+    rows.push(["Event Category","Twitch","Last Stream","VOD Start","VOD End","Overlap","Notes"]);
 
     for (const username of users) {
 
@@ -206,14 +216,27 @@ module.exports = {
               note = "Public VOD overlaps event";
 
               break;
+
             }
+
           }
 
-          if (!valid) note = "Stream outside event window";
+          if (!valid) {
+            note = "Stream outside event window";
+            missingVods.push(username);
+          }
+
+        } else {
+
+          missingVods.push(username);
+
         }
 
       } else {
+
         note = "Twitch user not found";
+        missingVods.push(username);
+
       }
 
       rows.push([
@@ -227,14 +250,28 @@ module.exports = {
       ]);
 
       await new Promise(r => setTimeout(r, 400));
+
     }
 
-    rows.push([""]); // spacer row
+    rows.push([""]);
 
     await appendRows(rows);
 
+    let summary = `Finished scanning ${users.length} Twitch channels.`;
+
+    if (missingVods.length) {
+
+      summary += `\n\nMissing Public VODs (${missingVods.length})\n`;
+      summary += missingVods.join("\n");
+
+    } else {
+
+      summary += "\n\nAll streamers have valid VODs.";
+
+    }
+
     await interaction.followUp({
-      content: `Finished scanning ${users.length} Twitch channels.`,
+      content: summary,
       ephemeral: true
     });
 
