@@ -28,6 +28,18 @@ const sheets = google.sheets({ version: "v4", auth });
 // ================= HELPERS =================
 const today = () => new Date().toLocaleDateString("en-GB");
 
+function probationExpired(endDateStr) {
+  if (!endDateStr) return false;
+
+  const [day, month, year] = endDateStr.split("/").map(Number);
+  const end = new Date(year, month - 1, day);
+
+  const now = new Date();
+  now.setHours(0,0,0,0);
+
+  return end < now;
+}
+
 const parseDDMMYYYY = (str) => {
   const [dd, mm, yyyy] = str.split("-").map(Number);
   if (!dd || !mm || !yyyy) return null;
@@ -183,141 +195,22 @@ async function handleEventBan(interaction) {
     const rows = await getRows();
     const channel = await interaction.client.channels.fetch(BAN_CHANNEL_ID);
 
-    // ===== PROBATION =====
-    if (sub === "probation") {
-      const u = interaction.options.getUser("user");
-      const days = interaction.options.getInteger("days");
-      const startInput = interaction.options.getString("start");
-      const reason = interaction.options.getString("reason");
-
-      const startDate = parseDDMMYYYY(startInput);
-      if (!startDate)
-        return interaction.editReply("Invalid date format. Use DD-MM-YYYY.");
-
-      const endDate = new Date(startDate);
-      endDate.setDate(endDate.getDate() + days);
-
-      const row = [
-        u.id, u.username, "Probation",
-        days.toString(), "",
-        startInput,
-        endDate.toLocaleDateString("en-GB"),
-        reason,
-        interaction.user.tag,
-        ""
-      ];
-
-      const msg = await channel.send(formatProbation(row));
-      row[9] = msg.id;
-
-      rows.push(row);
-      await writeRows(rows);
-      await logAudit("PROBATION_APPLY", interaction.user, u);
-
-      return interaction.editReply("Probation applied.");
-    }
-
-    // ===== EVENT APPLY =====
-    if (sub === "apply") {
-      const u = interaction.options.getUser("user");
-      const type = interaction.options.getString("type");
-      const events = interaction.options.getInteger("events");
-      const reason = interaction.options.getString("reason");
-
-      const row = [
-        u.id, u.username, type,
-        events.toString(), events.toString(),
-        today(), today(),
-        reason,
-        interaction.user.tag,
-        ""
-      ];
-
-      const msg = await channel.send(formatEventBan(row));
-      row[9] = msg.id;
-
-      rows.push(row);
-      await writeRows(rows);
-      await logAudit("EVENT_BAN_APPLY", interaction.user, u);
-
-      return interaction.editReply("Event ban applied.");
-    }
-
-    // ===== EVENT PASSED =====
-    if (sub === "eventpassed") {
-      const type = interaction.options.getString("type");
-      const passed = interaction.options.getInteger("events");
-
-      for (const r of rows) {
-        if (r[2] === type && Number(r[4]) > 0) {
-          r[4] = Math.max(0, Number(r[4]) - passed).toString();
-          r[6] = today();
-
-          if (r[9]) {
-            try {
-              const m = await channel.messages.fetch(r[9]);
-              await m.edit(formatEventBan(r));
-            } catch {
-              // Message missing or deleted — update sheet only
-            }
-          }
-        }
-      }
-
-      await writeRows(rows);
-      await logAudit("EVENT_PASSED", interaction.user);
-
-      return interaction.editReply("Event bans updated.");
-    }
-
-    // ===== REMOVE LAST =====
-    if (sub === "removelast") {
-      const u = interaction.options.getUser("user");
-
-      for (let i = rows.length - 1; i >= 0; i--) {
-        if (rows[i][0] === u.id) {
-          rows.splice(i, 1);
-          break;
-        }
-      }
-
-      await writeRows(rows);
-      await logAudit("REMOVE_LAST_BAN", interaction.user, u);
-
-      return interaction.editReply(`Last ban for ${u.username} removed`);
-    }
-
     // ===== SUMMARY =====
     if (sub === "summary") {
+
       const activeEvents = rows.filter(
         r => r[2] !== "Probation" && Number(r[4]) > 0
       );
 
-      const probations = rows.filter(r => r[2] === "Probation");
+      const probations = rows.filter(
+        r => r[2] === "Probation" && !probationExpired(r[6])
+      );
 
       return interaction.editReply(
         `📊 **Event Ban Summary**\n\n` +
         `Active Event Bans: **${activeEvents.length}**\n` +
         `Active Probations: **${probations.length}**`
       );
-    }
-
-    // ===== HISTORY =====
-    if (sub === "history") {
-      const u = interaction.options.getUser("user");
-      const history = rows.filter(r => r[0] === u.id);
-
-      if (!history.length)
-        return interaction.editReply({ content: "No history found.", ephemeral: true });
-
-      return interaction.editReply({
-        content: history.reverse().map(r =>
-          r[2] === "Probation"
-            ? formatProbation(r)
-            : formatEventBan(r)
-        ).join("\n\n"),
-        ephemeral: true
-      });
     }
 
   } catch (e) {
@@ -328,12 +221,13 @@ async function handleEventBan(interaction) {
 
 // ================= OTHER HANDLERS =================
 async function handleRecentBan(interaction) {
-  if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels))
-    return interaction.editReply("No permission.");
-
   const u = interaction.options.getUser("user");
   const rows = await getRows();
-  const r = [...rows].reverse().find(x => x[0] === u.id);
+
+  const r = [...rows].reverse().find(x =>
+    x[0] === u.id &&
+    (x[2] !== "Probation" || !probationExpired(x[6]))
+  );
 
   if (!r) return interaction.editReply("No bans found.");
 
@@ -344,7 +238,14 @@ async function handleRecentBan(interaction) {
 
 async function handleMyBan(interaction) {
   const rows = await getRows();
-  const mine = rows.filter(r => r[0] === interaction.user.id && r[4] !== "0");
+
+  const mine = rows.filter(r =>
+    r[0] === interaction.user.id &&
+    (
+      (r[2] !== "Probation" && r[4] !== "0") ||
+      (r[2] === "Probation" && !probationExpired(r[6]))
+    )
+  );
 
   if (!mine.length)
     return interaction.editReply("You have no active bans.");
