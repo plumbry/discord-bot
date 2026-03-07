@@ -2,6 +2,7 @@ const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 
 const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)(?:\/|$)/i;
 
+// ================= GET TEAMS =================
 async function getTeams(signupChannel) {
 
   let lastId;
@@ -20,6 +21,7 @@ async function getTeams(signupChannel) {
 
   }
 
+  // Ensure teams follow signup order
   messages.reverse();
 
   const teams = [];
@@ -43,6 +45,7 @@ async function getTeams(signupChannel) {
 
 }
 
+// ================= GET STREAM POSTERS =================
 async function getStreamPosters(streamChannel) {
 
   let lastId;
@@ -59,7 +62,13 @@ async function getStreamPosters(streamChannel) {
     batch.forEach(msg => {
 
       if (msg.content.toLowerCase().includes("twitch.tv")) {
+
+        // Message author counts
         posters.add(msg.author.id);
+
+        // Tagged users also count
+        msg.mentions.users.forEach(u => posters.add(u.id));
+
       }
 
     });
@@ -72,6 +81,7 @@ async function getStreamPosters(streamChannel) {
 
 }
 
+// ================= COMMAND =================
 module.exports = {
 
   data: new SlashCommandBuilder()
@@ -84,21 +94,26 @@ module.exports = {
     const category = interaction.channel.parent;
 
     if (!category) {
+
       return interaction.reply({
-        content: "Command must be used inside an event category.",
+        content: "This command must be used inside an event category.",
         ephemeral: true
       });
+
     }
 
+    // Locate sign-ups channel
     const signupChannel = category.children.cache.find(
       c => c.isTextBased() && c.name.toLowerCase().includes("sign-ups")
     );
 
     if (!signupChannel) {
+
       return interaction.reply({
         content: "Could not find a sign-ups channel in this category.",
         ephemeral: true
       });
+
     }
 
     await interaction.reply("Scanning teams and stream submissions...");
