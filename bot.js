@@ -37,7 +37,8 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.DirectMessages
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.MessageContent
   ]
 });
 
@@ -88,6 +89,28 @@ client.once("ready", async () => {
 
   if (dm.startDMScheduler) {
     dm.startDMScheduler(client);
+  }
+
+});
+
+// ================= DM BLOCK =================
+client.on("messageCreate", async message => {
+
+  if (message.author.bot) return;
+
+  // If message is a DM
+  if (!message.guild) {
+
+    try {
+      await message.reply(
+        "❌ This bot does not accept direct messages. Please contact a server moderator instead."
+      );
+    } catch (err) {
+      console.error("Failed to reply to DM:", err);
+    }
+
+    return;
+
   }
 
 });
