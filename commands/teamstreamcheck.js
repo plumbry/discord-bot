@@ -1,7 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 
-const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)(?:\/|$)/i;
-
 // ================= GET TEAMS =================
 async function getTeams(signupChannel) {
 
@@ -21,20 +19,21 @@ async function getTeams(signupChannel) {
 
   }
 
-  // Ensure teams follow signup order
+  // oldest first
   messages.reverse();
 
   const teams = [];
 
   messages.forEach(msg => {
 
-    const users = [...msg.mentions.users.values()].map(u => u.id);
+    const users = [...msg.mentions.users.values()];
 
-    if (users.length) {
+    // Only count valid team messages (exactly 2 players)
+    if (users.length === 2) {
 
       teams.push({
         number: teams.length + 1,
-        members: users
+        members: users.map(u => u.id)
       });
 
     }
@@ -63,10 +62,8 @@ async function getStreamPosters(streamChannel) {
 
       if (msg.content.toLowerCase().includes("twitch.tv")) {
 
-        // Message author counts
         posters.add(msg.author.id);
 
-        // Tagged users also count
         msg.mentions.users.forEach(u => posters.add(u.id));
 
       }
@@ -102,7 +99,6 @@ module.exports = {
 
     }
 
-    // Locate sign-ups channel
     const signupChannel = category.children.cache.find(
       c => c.isTextBased() && c.name.toLowerCase().includes("sign-ups")
     );
