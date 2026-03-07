@@ -20,11 +20,12 @@ async function getTeams(signupChannel) {
 
   }
 
-  messages.reverse(); // oldest first
+  // oldest message first so team numbers match signup order
+  messages.reverse();
 
   const teams = [];
 
-  messages.forEach((msg, index) => {
+  messages.forEach(msg => {
 
     const users = [...msg.mentions.users.values()].map(u => u.id);
 
@@ -84,17 +85,28 @@ module.exports = {
     const category = interaction.channel.parent;
 
     if (!category) {
-      await interaction.reply("Command must be used inside an event category.");
-      return;
+
+      return interaction.reply({
+        content: "This command must be used inside an event category.",
+        ephemeral: true
+      });
+
     }
 
+    // find sign-ups channel automatically
     const signupChannel = category.children.cache.find(
-      c => c.name.includes("sign")
+      c =>
+        c.isTextBased() &&
+        c.name.toLowerCase().includes("sign-ups")
     );
 
     if (!signupChannel) {
-      await interaction.reply("Could not find sign-ups channel in this category.");
-      return;
+
+      return interaction.reply({
+        content: "Could not find a sign-ups channel in this category.",
+        ephemeral: true
+      });
+
     }
 
     await interaction.reply("Checking teams for stream submissions...");
@@ -114,7 +126,7 @@ module.exports = {
 
     });
 
-    let message = `Team Stream Check\n\n`;
+    let message = `📺 **Team Stream Check**\n\n`;
 
     if (missingTeams.length) {
 
