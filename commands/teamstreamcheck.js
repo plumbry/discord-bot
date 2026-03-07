@@ -1,23 +1,33 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 
-// ================= GET TEAMS =================
-async function getTeams(signupChannel) {
+async function fetchAllMessages(channel) {
 
+  let all = [];
   let lastId;
-  const messages = [];
 
   while (true) {
 
     const options = { limit: 100 };
     if (lastId) options.before = lastId;
 
-    const batch = await signupChannel.messages.fetch(options);
-    if (!batch.size) break;
+    const batch = await channel.messages.fetch(options);
 
-    messages.push(...batch.values());
+    if (batch.size === 0) break;
+
+    all.push(...batch.values());
+
     lastId = batch.last().id;
 
   }
+
+  return all;
+
+}
+
+// ================= GET TEAMS =================
+async function getTeams(signupChannel) {
+
+  const messages = await fetchAllMessages(signupChannel);
 
   messages.reverse();
 
@@ -45,30 +55,19 @@ async function getTeams(signupChannel) {
 // ================= GET STREAM POSTERS =================
 async function getStreamPosters(streamChannel) {
 
-  let lastId;
+  const messages = await fetchAllMessages(streamChannel);
+
   const posters = new Set();
 
-  while (true) {
+  messages.forEach(msg => {
 
-    const options = { limit: 100 };
-    if (lastId) options.before = lastId;
+    if (msg.content.toLowerCase().includes("twitch.tv")) {
 
-    const batch = await streamChannel.messages.fetch(options);
-    if (!batch.size) break;
+      posters.add(msg.author.id);
 
-    batch.forEach(msg => {
+    }
 
-      if (msg.content.toLowerCase().includes("twitch.tv")) {
-
-        posters.add(msg.author.id);
-
-      }
-
-    });
-
-    lastId = batch.last().id;
-
-  }
+  });
 
   return posters;
 
@@ -117,7 +116,7 @@ module.exports = {
 
     teams.forEach(team => {
 
-      const hasStream = team.members.some(id => posters.has(id));
+      const hasStream = team.members.some(member => posters.has(member));
 
       if (!hasStream) {
         missingTeams.push(team.number);
