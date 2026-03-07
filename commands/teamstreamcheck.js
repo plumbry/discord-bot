@@ -97,9 +97,17 @@ module.exports = {
 
     const signupChannel = category.children.cache.find(
       c => {
+
         if (!c.isTextBased()) return false;
+
         const name = c.name.toLowerCase();
-        return name.includes("sign-ups") || name.includes("signups");
+
+        return (
+          name.includes("sign-ups") ||
+          name.includes("signups") ||
+          name.includes("teams")
+        );
+
       }
     );
 
