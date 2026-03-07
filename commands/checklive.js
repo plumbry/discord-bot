@@ -118,7 +118,7 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName("checklive")
     .setDescription("Check which submitted Twitch links are currently live")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
 
   async execute(interaction) {
 

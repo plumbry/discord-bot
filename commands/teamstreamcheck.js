@@ -80,7 +80,7 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName("teamstreamcheck")
     .setDescription("Check which accepted teams have not submitted a stream")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
 
   async execute(interaction) {
 
