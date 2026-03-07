@@ -1,18 +1,23 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 
+// ================= FETCH ALL MESSAGES =================
 async function fetchAllMessages(channel) {
+
   let messages = [];
   let lastId;
 
   while (true) {
+
     const options = { limit: 100 };
     if (lastId) options.before = lastId;
 
     const batch = await channel.messages.fetch(options);
-    if (batch.size === 0) break;
+
+    if (!batch.size) break;
 
     messages.push(...batch.values());
     lastId = batch.last().id;
+
   }
 
   return messages.reverse();
@@ -28,9 +33,15 @@ async function getTeams(signupChannel) {
 
     if (msg.author.bot) continue;
 
+    const accepted = msg.reactions.cache.some(
+      r => r.emoji.name === "ZBDACCEPTED"
+    );
+
+    if (!accepted) continue;
+
     const members = [...msg.mentions.users.values()].map(u => u.id);
 
-    if (members.length >= 2) {
+    if (members.length >= 1) {
 
       teams.push({
         number: teams.length + 1,
@@ -68,7 +79,7 @@ module.exports = {
 
   data: new SlashCommandBuilder()
     .setName("teamstreamcheck")
-    .setDescription("Check which teams have not submitted a stream")
+    .setDescription("Check which accepted teams have not submitted a stream")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
   async execute(interaction) {
@@ -76,46 +87,47 @@ module.exports = {
     const category = interaction.channel.parent;
 
     if (!category) {
+
       return interaction.reply({
-        content: "Command must be used inside an event category.",
+        content: "This command must be used inside an event category.",
         ephemeral: true
       });
+
     }
 
     const signupChannel = category.children.cache.find(
-      c => c.isTextBased() && c.name.toLowerCase().includes("sign-ups")
+      c => {
+        if (!c.isTextBased()) return false;
+        const name = c.name.toLowerCase();
+        return name.includes("sign-ups") || name.includes("signups");
+      }
     );
 
     if (!signupChannel) {
+
       return interaction.reply({
         content: "Could not find a sign-ups channel in this category.",
         ephemeral: true
       });
+
     }
 
-    await interaction.reply("Scanning teams and stream submissions...");
+    await interaction.reply("Scanning accepted teams and stream submissions...");
 
     const teams = await getTeams(signupChannel);
     const posters = await getStreamPosters(interaction.channel);
 
     const missingTeams = [];
-    const debug = [];
 
-    for (const team of teams) {
+    teams.forEach(team => {
 
-      const hasStream = team.members.some(id => posters.has(id));
-
-      debug.push(`Team ${team.number} members: ${team.members.join(", ")}`);
+      const hasStream = team.members.some(member => posters.has(member));
 
       if (!hasStream) {
         missingTeams.push(team.number);
       }
 
-    }
-
-    console.log("Team Debug:");
-    console.log(debug.join("\n"));
-    console.log("Stream Posters:", [...posters]);
+    });
 
     let message = `📺 **Team Stream Check**\n\n`;
 
@@ -129,7 +141,7 @@ module.exports = {
 
     } else {
 
-      message += `All teams have at least one stream submitted.`;
+      message += `All accepted teams have at least one stream submitted.`;
 
     }
 
