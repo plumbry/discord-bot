@@ -1,5 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 
+const TWITCH_REGEX = /twitch\.tv/i;
+
 // ================= GET TEAMS =================
 async function getTeams(signupChannel) {
 
@@ -19,7 +21,6 @@ async function getTeams(signupChannel) {
 
   }
 
-  // oldest first
   messages.reverse();
 
   const teams = [];
@@ -28,7 +29,6 @@ async function getTeams(signupChannel) {
 
     const users = [...msg.mentions.users.values()];
 
-    // Only count valid team messages (exactly 2 players)
     if (users.length === 2) {
 
       teams.push({
@@ -45,10 +45,10 @@ async function getTeams(signupChannel) {
 }
 
 // ================= GET STREAM POSTERS =================
-async function getStreamPosters(streamChannel) {
+async function getStreamMessages(streamChannel) {
 
   let lastId;
-  const posters = new Set();
+  const messages = [];
 
   while (true) {
 
@@ -60,12 +60,8 @@ async function getStreamPosters(streamChannel) {
 
     batch.forEach(msg => {
 
-      if (msg.content.toLowerCase().includes("twitch.tv")) {
-
-        posters.add(msg.author.id);
-
-        msg.mentions.users.forEach(u => posters.add(u.id));
-
+      if (TWITCH_REGEX.test(msg.content)) {
+        messages.push(msg);
       }
 
     });
@@ -74,7 +70,7 @@ async function getStreamPosters(streamChannel) {
 
   }
 
-  return posters;
+  return messages;
 
 }
 
@@ -91,12 +87,10 @@ module.exports = {
     const category = interaction.channel.parent;
 
     if (!category) {
-
       return interaction.reply({
         content: "This command must be used inside an event category.",
         ephemeral: true
       });
-
     }
 
     const signupChannel = category.children.cache.find(
@@ -104,24 +98,24 @@ module.exports = {
     );
 
     if (!signupChannel) {
-
       return interaction.reply({
         content: "Could not find a sign-ups channel in this category.",
         ephemeral: true
       });
-
     }
 
     await interaction.reply("Scanning teams and stream submissions...");
 
     const teams = await getTeams(signupChannel);
-    const posters = await getStreamPosters(interaction.channel);
+    const streamMessages = await getStreamMessages(interaction.channel);
 
     const missingTeams = [];
 
     teams.forEach(team => {
 
-      const hasStream = team.members.some(id => posters.has(id));
+      const hasStream = streamMessages.some(msg =>
+        team.members.includes(msg.author.id)
+      );
 
       if (!hasStream) {
         missingTeams.push(team.number);
