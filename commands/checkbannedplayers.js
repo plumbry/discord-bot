@@ -1,48 +1,6 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
-const { google } = require("googleapis");
 
-const EVENT_BAN_SHEET = "Event Bans";
-
-const credentials = JSON.parse(
-  Buffer.from(
-    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
-    "base64"
-  ).toString("utf8")
-);
-
-const auth = new google.auth.GoogleAuth({
-  credentials,
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-});
-
-const sheets = google.sheets({ version: "v4", auth });
-
-async function getEventBans() {
-
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: process.env.SPREADSHEET_ID,
-    range: `${EVENT_BAN_SHEET}!A2:J`
-  });
-
-  const rows = res.data.values || [];
-
-  const banned = new Map();
-
-  for (const r of rows) {
-
-    const userId = r[0];
-    const type = r[2];
-    const remaining = Number(r[4]);
-
-    if (type !== "Probation" && remaining > 0) {
-      banned.set(userId, true);
-    }
-
-  }
-
-  return banned;
-
-}
+const EVENT_BAN_ROLE = "1463660686231207956";
 
 async function fetchAllMessages(channel) {
 
@@ -71,19 +29,16 @@ module.exports = {
 
   data: new SlashCommandBuilder()
     .setName("checkbannedplayers")
-    .setDescription("Check if signed up players have active event bans")
+    .setDescription("Check if signed up players have the Event Ban role")
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
 
   async execute(interaction) {
 
-    await interaction.reply("Scanning signups and event bans...");
-
-    const bannedUsers = await getEventBans();
+    await interaction.reply("Scanning signups for banned players...");
 
     const messages = await fetchAllMessages(interaction.channel);
 
     const bannedTeams = [];
-
     let teamNumber = 1;
 
     for (const msg of messages) {
@@ -98,9 +53,17 @@ module.exports = {
 
       const members = [...msg.mentions.users.values()];
 
-      const bannedPlayers = members.filter(m =>
-        bannedUsers.has(m.id)
-      );
+      const bannedPlayers = [];
+
+      for (const user of members) {
+
+        const member = await interaction.guild.members.fetch(user.id);
+
+        if (member.roles.cache.has(EVENT_BAN_ROLE)) {
+          bannedPlayers.push(member.user.tag);
+        }
+
+      }
 
       if (bannedPlayers.length) {
 
@@ -118,19 +81,19 @@ module.exports = {
     if (!bannedTeams.length) {
 
       return interaction.followUp(
-        "✅ No signed up players currently have active event bans."
+        "✅ No signed up players currently have the Event Ban role."
       );
 
     }
 
-    let message = "🚫 **Players With Active Event Bans**\n\n";
+    let message = "🚫 Players With Event Ban Role\n\n";
 
     for (const team of bannedTeams) {
 
       message += `Team ${team.team}\n`;
 
       for (const player of team.players) {
-        message += `<@${player.id}>\n`;
+        message += `${player}\n`;
       }
 
       message += "\n";
