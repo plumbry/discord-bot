@@ -40,20 +40,6 @@ function probationExpired(endDateStr) {
   return end < now;
 }
 
-const parseDDMMYYYY = (str) => {
-  const [dd, mm, yyyy] = str.split("-").map(Number);
-  if (!dd || !mm || !yyyy) return null;
-
-  const d = new Date(yyyy, mm - 1, dd);
-  if (
-    d.getDate() !== dd ||
-    d.getMonth() !== mm - 1 ||
-    d.getFullYear() !== yyyy
-  ) return null;
-
-  return d;
-};
-
 async function logAudit(action, moderator, user = "") {
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
@@ -129,46 +115,8 @@ const eventBanCommand = new SlashCommandBuilder()
   )
 
   .addSubcommand(s =>
-    s.setName("probation")
-      .setDescription("Apply a probation ban")
-      .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
-      .addIntegerOption(o => o.setName("days").setDescription("Days").setRequired(true))
-      .addStringOption(o =>
-        o.setName("start")
-          .setDescription("DD-MM-YYYY")
-          .setRequired(true))
-      .addStringOption(o => o.setName("reason").setDescription("Reason").setRequired(true))
-  )
-
-  .addSubcommand(s =>
-    s.setName("eventpassed")
-      .setDescription("Reduce remaining bans")
-      .addStringOption(o =>
-        o.setName("type").setDescription("Type").setRequired(true)
-          .addChoices(
-            { name: "Money", value: "Money" },
-            { name: "No Money", value: "No Money" },
-            { name: "All", value: "All" }
-          ))
-      .addIntegerOption(o =>
-        o.setName("events").setDescription("Events passed").setRequired(true))
-  )
-
-  .addSubcommand(s =>
-    s.setName("removelast")
-      .setDescription("Remove last ban")
-      .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
-  )
-
-  .addSubcommand(s =>
     s.setName("summary")
       .setDescription("View summary of active event bans")
-  )
-
-  .addSubcommand(s =>
-    s.setName("history")
-      .setDescription("View full event ban history for a user")
-      .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
   );
 
 const recentBanCommand = new SlashCommandBuilder()
@@ -180,9 +128,10 @@ const myBanCommand = new SlashCommandBuilder()
   .setName("myban")
   .setDescription("View your current event bans");
 
-// ================= HANDLERS =================
+// ================= HANDLER =================
 async function handleEventBan(interaction) {
   try {
+
     await interaction.deferReply({ ephemeral: false });
 
     if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels))
@@ -193,7 +142,40 @@ async function handleEventBan(interaction) {
 
     const sub = interaction.options.getSubcommand();
     const rows = await getRows();
-    const channel = await interaction.client.channels.fetch(BAN_CHANNEL_ID);
+
+    // ===== APPLY =====
+    if (sub === "apply") {
+
+      const user = interaction.options.getUser("user");
+      const type = interaction.options.getString("type");
+      const events = interaction.options.getInteger("events");
+      const reason = interaction.options.getString("reason");
+
+      const newRow = [
+        user.id,
+        user.tag,
+        type,
+        events,
+        events,
+        today(),
+        "",
+        reason
+      ];
+
+      rows.push(newRow);
+
+      await writeRows(rows);
+
+      await logAudit(
+        `Applied ${events}-event ${type} ban`,
+        interaction.user,
+        user
+      );
+
+      return interaction.editReply(
+        `✅ Event ban applied\n\n${formatEventBan(newRow)}`
+      );
+    }
 
     // ===== SUMMARY =====
     if (sub === "summary") {
@@ -221,6 +203,9 @@ async function handleEventBan(interaction) {
 
 // ================= OTHER HANDLERS =================
 async function handleRecentBan(interaction) {
+
+  await interaction.deferReply();
+
   const u = interaction.options.getUser("user");
   const rows = await getRows();
 
@@ -237,6 +222,7 @@ async function handleRecentBan(interaction) {
 }
 
 async function handleMyBan(interaction) {
+
   const rows = await getRows();
 
   const mine = rows.filter(r =>
@@ -252,7 +238,9 @@ async function handleMyBan(interaction) {
 
   return interaction.editReply(
     mine.map(r =>
-      r[2] === "Probation" ? formatProbation(r) : formatEventBan(r)
+      r[2] === "Probation"
+        ? formatProbation(r)
+        : formatEventBan(r)
     ).join("\n\n")
   );
 }
