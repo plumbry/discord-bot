@@ -72,7 +72,8 @@ client.once("ready", async () => {
     verifyCommand,
     eventBanCommand,
     recentBanCommand,
-    myBanCommand
+    myBanCommand,
+    dm.dmCommand // ✅ FIX: register DM command correctly
   ];
 
   // add dynamically loaded commands
