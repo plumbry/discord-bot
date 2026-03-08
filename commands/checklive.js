@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 const { google } = require("googleapis");
-const fetch = require("node-fetch");
+const { getAccessToken, getLiveStreams } = require("../twitchBatch");
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME = "'Live Check'";
@@ -20,22 +20,6 @@ const auth = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: "v4", auth });
 
 const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)/gi;
-
-async function getAccessToken() {
-
-  const res = await fetch("https://id.twitch.tv/oauth2/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body:
-      `client_id=${process.env.TWITCH_CLIENT_ID}` +
-      `&client_secret=${process.env.TWITCH_CLIENT_SECRET}` +
-      `&grant_type=client_credentials`
-  });
-
-  const data = await res.json();
-  return data.access_token;
-
-}
 
 async function getTwitchUsers(channel) {
 
@@ -76,34 +60,6 @@ async function getTwitchUsers(channel) {
   }
 
   return [...users.values()];
-
-}
-
-async function checkLiveStatus(users, token) {
-
-  if (!users.length) return {};
-
-  const url =
-    "https://api.twitch.tv/helix/streams?" +
-    users.map(u => `user_login=${u.twitch}`).join("&");
-
-  const res = await fetch(url, {
-    headers: {
-      "Client-ID": process.env.TWITCH_CLIENT_ID,
-      Authorization: `Bearer ${token}`
-    }
-  });
-
-  const data = await res.json();
-
-  const liveMap = {};
-
-  data.data.forEach(stream => {
-    liveMap[stream.user_login.toLowerCase()] = stream;
-  });
-
-  return liveMap;
-
 }
 
 async function appendRows(rows) {
@@ -144,7 +100,10 @@ module.exports = {
     }
 
     const token = await getAccessToken();
-    const liveMap = await checkLiveStatus(users, token);
+
+    const usernames = users.map(u => u.twitch);
+
+    const liveMap = await getLiveStreams(usernames, token);
 
     const rows = [];
     const offlineList = [];
@@ -165,9 +124,7 @@ module.exports = {
         checkedBy
       ]);
 
-      if (!live) {
-        offlineList.push(user.twitch);
-      }
+      if (!live) offlineList.push(user.twitch);
 
     }
 
