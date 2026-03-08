@@ -45,6 +45,7 @@ const parseDDMMYYYY = (str) => {
   if (!dd || !mm || !yyyy) return null;
 
   const d = new Date(yyyy, mm - 1, dd);
+
   if (
     d.getDate() !== dd ||
     d.getMonth() !== mm - 1 ||
@@ -75,10 +76,12 @@ async function getRows() {
     spreadsheetId: SHEET_ID,
     range: `${EVENT_SHEET}!A2:J`
   });
+
   return res.data.values || [];
 }
 
 async function writeRows(rows) {
+
   await sheets.spreadsheets.values.clear({
     spreadsheetId: SHEET_ID,
     range: `${EVENT_SHEET}!A2:J`
@@ -92,6 +95,7 @@ async function writeRows(rows) {
       requestBody: { values: rows }
     });
   }
+
 }
 
 // ================= FORMATTERS =================
@@ -113,66 +117,104 @@ const eventBanCommand = new SlashCommandBuilder()
   .addSubcommand(s =>
     s.setName("apply")
       .setDescription("Apply an event ban")
-      .addUserOption(o => o.setName("user").setRequired(true))
+      .addUserOption(o =>
+        o.setName("user")
+          .setDescription("User to ban")
+          .setRequired(true))
       .addStringOption(o =>
-        o.setName("type").setRequired(true)
+        o.setName("type")
+          .setDescription("Ban type")
+          .setRequired(true)
           .addChoices(
             { name: "Money", value: "Money" },
             { name: "No Money", value: "No Money" },
             { name: "All", value: "All" }
           ))
       .addIntegerOption(o =>
-        o.setName("events").setRequired(true).setMinValue(1).setMaxValue(5))
-      .addStringOption(o => o.setName("reason").setRequired(true))
+        o.setName("events")
+          .setDescription("Number of events")
+          .setRequired(true)
+          .setMinValue(1)
+          .setMaxValue(5))
+      .addStringOption(o =>
+        o.setName("reason")
+          .setDescription("Reason for the ban")
+          .setRequired(true))
   )
 
   .addSubcommand(s =>
     s.setName("probation")
       .setDescription("Apply probation")
-      .addUserOption(o => o.setName("user").setRequired(true))
-      .addIntegerOption(o => o.setName("days").setRequired(true))
-      .addStringOption(o => o.setName("start").setRequired(true))
-      .addStringOption(o => o.setName("reason").setRequired(true))
+      .addUserOption(o =>
+        o.setName("user")
+          .setDescription("User to place on probation")
+          .setRequired(true))
+      .addIntegerOption(o =>
+        o.setName("days")
+          .setDescription("Length of probation")
+          .setRequired(true))
+      .addStringOption(o =>
+        o.setName("start")
+          .setDescription("Start date (DD-MM-YYYY)")
+          .setRequired(true))
+      .addStringOption(o =>
+        o.setName("reason")
+          .setDescription("Reason for probation")
+          .setRequired(true))
   )
 
   .addSubcommand(s =>
     s.setName("eventpassed")
-      .setDescription("Reduce remaining bans")
+      .setDescription("Reduce remaining bans after an event")
       .addStringOption(o =>
-        o.setName("type").setRequired(true)
+        o.setName("type")
+          .setDescription("Event type")
+          .setRequired(true)
           .addChoices(
             { name: "Money", value: "Money" },
             { name: "No Money", value: "No Money" },
             { name: "All", value: "All" }
           ))
-      .addIntegerOption(o => o.setName("events").setRequired(true))
+      .addIntegerOption(o =>
+        o.setName("events")
+          .setDescription("Number of events passed")
+          .setRequired(true))
   )
 
   .addSubcommand(s =>
     s.setName("removelast")
-      .setDescription("Remove last ban")
-      .addUserOption(o => o.setName("user").setRequired(true))
+      .setDescription("Remove the most recent ban for a user")
+      .addUserOption(o =>
+        o.setName("user")
+          .setDescription("User whose last ban should be removed")
+          .setRequired(true))
   )
 
   .addSubcommand(s =>
     s.setName("summary")
-      .setDescription("View active bans summary")
+      .setDescription("View summary of active bans")
   )
 
   .addSubcommand(s =>
     s.setName("history")
-      .setDescription("View ban history")
-      .addUserOption(o => o.setName("user").setRequired(true))
+      .setDescription("View ban history for a user")
+      .addUserOption(o =>
+        o.setName("user")
+          .setDescription("User to view history for")
+          .setRequired(true))
   );
 
 const recentBanCommand = new SlashCommandBuilder()
   .setName("recentban")
-  .setDescription("View most recent ban")
-  .addUserOption(o => o.setName("user").setRequired(true));
+  .setDescription("View a user's most recent event ban")
+  .addUserOption(o =>
+    o.setName("user")
+      .setDescription("User to check")
+      .setRequired(true));
 
 const myBanCommand = new SlashCommandBuilder()
   .setName("myban")
-  .setDescription("View your bans");
+  .setDescription("View your active bans");
 
 // ================= MAIN HANDLER =================
 async function handleEventBan(interaction) {
@@ -210,9 +252,10 @@ async function handleEventBan(interaction) {
     rows.push(row);
 
     await writeRows(rows);
+
     await logAudit(`Applied ${events}-event ${type} ban`, interaction.user, user);
 
-    return interaction.editReply(`✅ Ban applied\n\n${formatEventBan(row)}`);
+    return interaction.editReply(`✅ Event ban applied\n\n${formatEventBan(row)}`);
   }
 
   // PROBATION
@@ -226,12 +269,10 @@ async function handleEventBan(interaction) {
     const startDate = parseDDMMYYYY(start);
 
     if (!startDate)
-      return interaction.editReply("Invalid date. Use DD-MM-YYYY.");
+      return interaction.editReply("Invalid date format. Use DD-MM-YYYY.");
 
     const end = new Date(startDate);
     end.setDate(end.getDate() + days);
-
-    const endStr = end.toLocaleDateString("en-GB");
 
     const row = [
       user.id,
@@ -240,7 +281,7 @@ async function handleEventBan(interaction) {
       days,
       "",
       startDate.toLocaleDateString("en-GB"),
-      endStr,
+      end.toLocaleDateString("en-GB"),
       reason
     ];
 
@@ -329,7 +370,7 @@ async function handleEventBan(interaction) {
 
 }
 
-// ================= OTHER COMMANDS =================
+// ================= OTHER HANDLERS =================
 async function handleRecentBan(interaction) {
 
   await interaction.deferReply();
@@ -339,7 +380,8 @@ async function handleRecentBan(interaction) {
 
   const r = [...rows].reverse().find(x => x[0] === user.id);
 
-  if (!r) return interaction.editReply("No bans found.");
+  if (!r)
+    return interaction.editReply("No bans found.");
 
   return interaction.editReply(
     r[2] === "Probation"
