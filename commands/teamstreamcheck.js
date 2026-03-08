@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 
-// ================= FETCH ALL MESSAGES =================
+const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)/gi;
+
 async function fetchAllMessages(channel) {
 
   let messages = [];
@@ -21,9 +22,9 @@ async function fetchAllMessages(channel) {
   }
 
   return messages.reverse();
+
 }
 
-// ================= GET TEAMS =================
 async function getTeams(signupChannel) {
 
   const messages = await fetchAllMessages(signupChannel);
@@ -53,9 +54,9 @@ async function getTeams(signupChannel) {
   }
 
   return teams;
+
 }
 
-// ================= GET STREAM POSTERS =================
 async function getStreamPosters(streamChannel) {
 
   const messages = await fetchAllMessages(streamChannel);
@@ -65,16 +66,22 @@ async function getStreamPosters(streamChannel) {
 
     if (msg.author.bot) continue;
 
-    if (msg.content.toLowerCase().includes("twitch.tv")) {
+    const matches = msg.content.match(TWITCH_REGEX);
+    if (!matches) continue;
+
+    const isStaff = msg.member?.permissions?.has(PermissionFlagsBits.ManageRoles);
+    const batchMode = isStaff && matches.length > 5;
+
+    if (!batchMode) {
       posters.add(msg.author.id);
     }
 
   }
 
   return posters;
+
 }
 
-// ================= COMMAND =================
 module.exports = {
 
   data: new SlashCommandBuilder()

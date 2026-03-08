@@ -19,7 +19,7 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: "v4", auth });
 
-const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)(?:\/|$)/gi;
+const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)/gi;
 
 async function getAccessToken() {
 
@@ -50,22 +50,26 @@ async function getTwitchUsers(channel) {
     const messages = await channel.messages.fetch(options);
     if (!messages.size) break;
 
-    messages.forEach(msg => {
+    for (const msg of messages.values()) {
 
-      const matches = [...msg.content.matchAll(TWITCH_REGEX)];
+      const matches = msg.content.match(TWITCH_REGEX);
+      if (!matches) continue;
 
-      matches.forEach(match => {
+      const isStaff = msg.member?.permissions?.has(PermissionFlagsBits.ManageRoles);
+      const batchMode = isStaff && matches.length > 5;
 
-        const twitch = match[1].toLowerCase();
+      for (const link of matches) {
+
+        const twitch = link.split("twitch.tv/")[1].toLowerCase();
 
         users.set(twitch, {
           twitch,
-          discordTag: `<@${msg.author.id}>`
+          discordTag: batchMode ? "" : `<@${msg.author.id}>`
         });
 
-      });
+      }
 
-    });
+    }
 
     lastId = messages.last().id;
 
@@ -162,7 +166,7 @@ module.exports = {
       ]);
 
       if (!live) {
-        offlineList.push(`${user.discordTag} (${user.twitch})`);
+        offlineList.push(user.twitch);
       }
 
     }
