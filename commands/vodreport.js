@@ -3,7 +3,7 @@ const { google } = require("googleapis");
 const fetch = require("node-fetch");
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-const SHEET_NAME = "'Live Check'";
+const SHEET_NAME = "'VOD Report'";
 
 const credentials = JSON.parse(
   Buffer.from(
@@ -20,6 +20,28 @@ const auth = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: "v4", auth });
 
 const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)(?:\/|$)/gi;
+
+function parseDuration(duration) {
+
+  const match = duration.match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/);
+
+  const h = parseInt(match?.[1] || 0);
+  const m = parseInt(match?.[2] || 0);
+  const s = parseInt(match?.[3] || 0);
+
+  return h * 3600 + m * 60 + s;
+
+}
+
+function vodOverlaps(vod, start, end) {
+
+  const vodStart = new Date(vod.created_at);
+  const duration = parseDuration(vod.duration);
+  const vodEnd = new Date(vodStart.getTime() + duration * 1000);
+
+  return vodStart < end && vodEnd > start;
+
+}
 
 async function getAccessToken() {
 
@@ -75,30 +97,37 @@ async function getTwitchUsers(channel) {
 
 }
 
-async function checkLiveStatus(users, token) {
+async function getUserId(username, token) {
 
-  if (!users.length) return {};
-
-  const url =
-    "https://api.twitch.tv/helix/streams?" +
-    users.map(u => `user_login=${u.twitch}`).join("&");
-
-  const res = await fetch(url, {
-    headers: {
-      "Client-ID": process.env.TWITCH_CLIENT_ID,
-      Authorization: `Bearer ${token}`
+  const res = await fetch(
+    `https://api.twitch.tv/helix/users?login=${username}`,
+    {
+      headers: {
+        "Client-ID": process.env.TWITCH_CLIENT_ID,
+        Authorization: `Bearer ${token}`
+      }
     }
-  });
+  );
 
   const data = await res.json();
+  return data.data?.[0]?.id;
 
-  const liveMap = {};
+}
 
-  data.data.forEach(stream => {
-    liveMap[stream.user_login.toLowerCase()] = stream;
-  });
+async function getRecentVods(userId, token) {
 
-  return liveMap;
+  const res = await fetch(
+    `https://api.twitch.tv/helix/videos?user_id=${userId}&type=archive&first=5`,
+    {
+      headers: {
+        "Client-ID": process.env.TWITCH_CLIENT_ID,
+        Authorization: `Bearer ${token}`
+      }
+    }
+  );
+
+  const data = await res.json();
+  return data.data || [];
 
 }
 
@@ -116,11 +145,33 @@ async function appendRows(rows) {
 module.exports = {
 
   data: new SlashCommandBuilder()
-    .setName("checklive")
-    .setDescription("Check which submitted Twitch links are currently live")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+    .setName("vodreport")
+    .setDescription("Check Twitch VOD compliance for event")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
+
+    .addStringOption(o =>
+      o.setName("date")
+        .setDescription("Event date (YYYY-MM-DD)")
+        .setRequired(true))
+
+    .addStringOption(o =>
+      o.setName("start")
+        .setDescription("Start time UTC (HH:MM)")
+        .setRequired(true))
+
+    .addStringOption(o =>
+      o.setName("end")
+        .setDescription("End time UTC (HH:MM)")
+        .setRequired(true)),
 
   async execute(interaction) {
+
+    const date = interaction.options.getString("date");
+    const startTime = interaction.options.getString("start");
+    const endTime = interaction.options.getString("end");
+
+    const start = new Date(`${date}T${startTime}:00Z`);
+    const end = new Date(`${date}T${endTime}:00Z`);
 
     const categoryName =
       interaction.channel.parent?.name || "No Category";
@@ -128,61 +179,100 @@ module.exports = {
     const checkedBy = `<@${interaction.user.id}>`;
     const checkedAt = new Date().toISOString();
 
-    await interaction.reply("Checking Twitch streams...");
+    await interaction.reply("Scanning Twitch VODs...");
 
     const users = await getTwitchUsers(interaction.channel);
-
-    if (!users.length) {
-
-      await interaction.followUp("No Twitch links found in this channel.");
-      return;
-
-    }
-
     const token = await getAccessToken();
-    const liveMap = await checkLiveStatus(users, token);
 
     const rows = [];
-    const offlineList = [];
+    const missing = [];
 
     for (const user of users) {
 
-      const stream = liveMap[user.twitch];
-      const live = !!stream;
-      const title = stream?.title || "";
+      const username = user.twitch;
+      const discordUser = user.discordTag;
+
+      let lastStream = "";
+      let vodStart = "";
+      let vodEnd = "";
+      let valid = false;
+      let note = "No public VOD";
+
+      const userId = await getUserId(username, token);
+
+      if (userId) {
+
+        const vods = await getRecentVods(userId, token);
+
+        if (vods.length) {
+
+          lastStream = vods[0].created_at;
+
+          for (const vod of vods) {
+
+            if (vod.viewable !== "public") continue;
+
+            if (vodOverlaps(vod, start, end)) {
+
+              const startDate = new Date(vod.created_at);
+              const duration = parseDuration(vod.duration);
+              const endDate = new Date(startDate.getTime() + duration * 1000);
+
+              vodStart = startDate.toISOString();
+              vodEnd = endDate.toISOString();
+
+              valid = true;
+              note = "Public VOD overlaps event";
+
+              break;
+
+            }
+
+          }
+
+          if (!valid) missing.push(`${discordUser} (${username})`);
+
+        } else {
+
+          missing.push(`${discordUser} (${username})`);
+
+        }
+
+      }
 
       rows.push([
         categoryName,
-        user.discordTag,
-        user.twitch,
-        live ? "YES" : "NO",
-        title,
+        discordUser,
+        username,
+        lastStream,
+        vodStart,
+        vodEnd,
+        valid ? "YES" : "NO",
+        note,
         checkedAt,
         checkedBy
       ]);
 
-      if (!live) {
-        offlineList.push(`${user.discordTag} (${user.twitch})`);
-      }
+      await new Promise(r => setTimeout(r, 400));
 
     }
 
     await appendRows(rows);
 
-    let message = `Live Check Complete\n\n`;
+    let summary = `VOD Report Complete\n\n`;
 
-    if (offlineList.length) {
+    if (missing.length) {
 
-      message += `⚠️ NOT LIVE (${offlineList.length})\n`;
-      message += offlineList.join("\n");
+      summary += `Missing Public VODs (${missing.length})\n`;
+      summary += missing.join("\n");
 
     } else {
 
-      message += `All submitted players are currently live.`;
+      summary += "All submitted streams have valid VODs.";
 
     }
 
-    await interaction.followUp(message);
+    await interaction.followUp(summary);
 
   }
 
