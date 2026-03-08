@@ -8,6 +8,15 @@ const {
 const fs = require("fs");
 const path = require("path");
 
+// ================= ERROR HANDLING =================
+process.on("unhandledRejection", error => {
+  console.error("Unhandled promise rejection:", error);
+});
+
+process.on("uncaughtException", error => {
+  console.error("Uncaught exception:", error);
+});
+
 // ================= VERIFY / WELCOME =================
 const {
   verifyCommand,
@@ -45,7 +54,7 @@ const client = new Client({
 // ================= COMMAND COLLECTION =================
 client.commands = new Map();
 
-// ================= LOAD COMMAND FILES =================
+// ================= LOAD COMMAND FILES SAFELY =================
 const commandsPath = path.join(__dirname, "commands");
 
 const commandFiles = fs
@@ -54,10 +63,23 @@ const commandFiles = fs
 
 for (const file of commandFiles) {
 
-  const command = require(`./commands/${file}`);
+  try {
 
-  if (command.data && command.execute) {
+    const command = require(`./commands/${file}`);
+
+    if (!command.data || !command.execute) {
+      console.log(`⚠️ Command missing data or execute: ${file}`);
+      continue;
+    }
+
     client.commands.set(command.data.name, command);
+    console.log(`✅ Loaded command: ${command.data.name}`);
+
+  } catch (err) {
+
+    console.error(`❌ Failed to load command: ${file}`);
+    console.error(err);
+
   }
 
 }
@@ -73,7 +95,7 @@ client.once("ready", async () => {
     eventBanCommand,
     recentBanCommand,
     myBanCommand,
-    dm.dmCommand // ✅ FIX: register DM command correctly
+    dm.dmCommand
   ];
 
   // add dynamically loaded commands
@@ -81,10 +103,21 @@ client.once("ready", async () => {
     commands.push(command.data);
   }
 
-  await rest.put(
-    Routes.applicationGuildCommands(client.user.id, GUILD_ID),
-    { body: commands.map(c => c.toJSON()) }
-  );
+  try {
+
+    await rest.put(
+      Routes.applicationGuildCommands(client.user.id, GUILD_ID),
+      { body: commands.map(c => c.toJSON()) }
+    );
+
+    console.log("✅ Slash commands registered");
+
+  } catch (err) {
+
+    console.error("❌ Failed to register slash commands");
+    console.error(err);
+
+  }
 
   console.log(`🤖 Logged in as ${client.user.tag}`);
 
@@ -99,15 +132,18 @@ client.on("messageCreate", async message => {
 
   if (message.author.bot) return;
 
-  // If message is a DM
   if (!message.guild) {
 
     try {
+
       await message.reply(
         "❌ This bot does not accept direct messages. Please contact a server moderator instead."
       );
+
     } catch (err) {
+
       console.error("Failed to reply to DM:", err);
+
     }
 
     return;
@@ -152,7 +188,7 @@ client.on("interactionCreate", async interaction => {
 
     } catch (error) {
 
-      console.error(error);
+      console.error(`Command error (${interaction.commandName}):`, error);
 
       if (interaction.replied || interaction.deferred) {
 
