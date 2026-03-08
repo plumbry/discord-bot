@@ -7,6 +7,7 @@ const {
 
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 // ================= ERROR HANDLING =================
 process.on("unhandledRejection", error => {
@@ -39,6 +40,7 @@ const dm = require("./commands/dm");
 
 // ================= CONSTANTS =================
 const GUILD_ID = "1371615693392576580";
+const HASH_FILE = "./commandHash.json";
 
 // ================= DISCORD CLIENT =================
 const client = new Client({
@@ -51,10 +53,9 @@ const client = new Client({
   ]
 });
 
-// ================= COMMAND COLLECTION =================
 client.commands = new Map();
 
-// ================= LOAD COMMAND FILES SAFELY =================
+// ================= LOAD COMMAND FILES =================
 const commandsPath = path.join(__dirname, "commands");
 
 const commandFiles = fs
@@ -98,24 +99,51 @@ client.once("ready", async () => {
     dm.dmCommand
   ];
 
-  // add dynamically loaded commands
   for (const command of client.commands.values()) {
     commands.push(command.data);
   }
 
-  try {
+  const commandJSON = commands.map(c => c.toJSON());
 
-    await rest.put(
-      Routes.applicationGuildCommands(client.user.id, GUILD_ID),
-      { body: commands.map(c => c.toJSON()) }
-    );
+  const newHash = crypto
+    .createHash("sha256")
+    .update(JSON.stringify(commandJSON))
+    .digest("hex");
 
-    console.log("✅ Slash commands registered");
+  let oldHash = null;
 
-  } catch (err) {
+  if (fs.existsSync(HASH_FILE)) {
+    oldHash = JSON.parse(fs.readFileSync(HASH_FILE)).hash;
+  }
 
-    console.error("❌ Failed to register slash commands");
-    console.error(err);
+  if (newHash !== oldHash) {
+
+    console.log("🔄 Command changes detected. Updating Discord commands...");
+
+    try {
+
+      await rest.put(
+        Routes.applicationGuildCommands(client.user.id, GUILD_ID),
+        { body: commandJSON }
+      );
+
+      fs.writeFileSync(
+        HASH_FILE,
+        JSON.stringify({ hash: newHash }, null, 2)
+      );
+
+      console.log("✅ Slash commands updated");
+
+    } catch (err) {
+
+      console.error("❌ Failed to update slash commands");
+      console.error(err);
+
+    }
+
+  } else {
+
+    console.log("⚡ Commands unchanged. Skipping Discord update.");
 
   }
 
@@ -146,8 +174,6 @@ client.on("messageCreate", async message => {
 
     }
 
-    return;
-
   }
 
 });
@@ -156,8 +182,6 @@ client.on("messageCreate", async message => {
 client.on("interactionCreate", async interaction => {
 
   if (interaction.isChatInputCommand()) {
-
-    // ===== SPECIAL COMMANDS =====
 
     if (interaction.commandName === "verify")
       return handleVerify(interaction);
@@ -175,8 +199,6 @@ client.on("interactionCreate", async interaction => {
 
     if (interaction.commandName === "dm" && dm.handleDM)
       return dm.handleDM(interaction);
-
-    // ===== DYNAMIC COMMANDS =====
 
     const command = client.commands.get(interaction.commandName);
 
@@ -209,8 +231,6 @@ client.on("interactionCreate", async interaction => {
     }
 
   }
-
-  // ===== BUTTON HANDLING =====
 
   if (interaction.isButton() && dm.handleDMButton) {
     return dm.handleDMButton(interaction);
