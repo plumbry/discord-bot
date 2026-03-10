@@ -90,7 +90,7 @@ for (const file of commandFiles) {
 
 }
 
-// ================= READY EVENT =================
+// ================= READY =================
 
 client.once("clientReady", async () => {
 
@@ -110,7 +110,6 @@ client.once("clientReady", async () => {
     commands.push(command.data);
   }
 
-  // Remove duplicate command names
   const uniqueCommands = [];
   const seen = new Set();
 
@@ -118,10 +117,7 @@ client.once("clientReady", async () => {
 
     if (!c || typeof c.toJSON !== "function") continue;
 
-    if (seen.has(c.name)) {
-      console.log(`⚠️ Skipping duplicate command: ${c.name}`);
-      continue;
-    }
+    if (seen.has(c.name)) continue;
 
     seen.add(c.name);
     uniqueCommands.push(c);
@@ -132,14 +128,21 @@ client.once("clientReady", async () => {
 
   try {
 
-    console.log("🔄 Refreshing slash commands...");
+    console.log("🧹 Clearing existing commands...");
+
+    await rest.put(
+      Routes.applicationGuildCommands(client.user.id, GUILD_ID),
+      { body: [] }
+    );
+
+    console.log("🔄 Registering slash commands...");
 
     await rest.put(
       Routes.applicationGuildCommands(client.user.id, GUILD_ID),
       { body: commandJSON }
     );
 
-    console.log("✅ Slash commands updated");
+    console.log("✅ Slash commands rebuilt");
 
   } catch (err) {
 
@@ -165,7 +168,7 @@ client.on("messageCreate", async message => {
     try {
 
       await message.reply(
-        "❌ This bot does not accept direct messages. Please contact a server moderator instead."
+        "❌ This bot does not accept direct messages."
       );
 
     } catch (err) {
@@ -178,7 +181,7 @@ client.on("messageCreate", async message => {
 
 });
 
-// ================= INTERACTION HANDLER =================
+// ================= INTERACTIONS =================
 
 client.on("interactionCreate", async interaction => {
 
