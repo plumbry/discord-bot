@@ -102,9 +102,25 @@ client.once("clientReady", async () => {
     commands.push(command.data);
   }
 
-  const commandJSON = commands
-    .filter(c => c && typeof c.toJSON === "function")
-    .map(c => c.toJSON());
+  // Remove duplicates + invalid commands
+  const uniqueCommands = [];
+  const seen = new Set();
+
+  for (const c of commands) {
+
+    if (!c || typeof c.toJSON !== "function") continue;
+
+    if (seen.has(c.name)) {
+      console.log(`⚠️ Skipping duplicate command: ${c.name}`);
+      continue;
+    }
+
+    seen.add(c.name);
+    uniqueCommands.push(c);
+
+  }
+
+  const commandJSON = uniqueCommands.map(c => c.toJSON());
 
   try {
 
