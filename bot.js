@@ -86,7 +86,7 @@ for (const file of commandFiles) {
 }
 
 // ================= READY =================
-client.once("ready", async () => {
+client.once("clientReady", async () => {
 
   const rest = new REST({ version: "10" })
     .setToken(process.env.DISCORD_TOKEN);
@@ -96,14 +96,17 @@ client.once("ready", async () => {
     eventBanCommand,
     recentBanCommand,
     myBanCommand,
-    dm.dmCommand
+    dm?.dmCommand
   ];
 
   for (const command of client.commands.values()) {
     commands.push(command.data);
   }
 
-  const commandJSON = commands.map(c => c.toJSON());
+  // Remove undefined commands safely
+  const commandJSON = commands
+    .filter(c => c && typeof c.toJSON === "function")
+    .map(c => c.toJSON());
 
   const newHash = crypto
     .createHash("sha256")
