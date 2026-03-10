@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 
 const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)/gi;
+const ACCEPTED_EMOJI_ID = "1405510864496361482";
 
 async function fetchAllMessages(channel) {
 
@@ -34,8 +35,11 @@ async function getTeams(signupChannel) {
 
     if (msg.author.bot) continue;
 
-    const accepted = msg.reactions.cache.some(
-      r => r.emoji.name === "ZBDACCEPTED"
+    await msg.fetch();
+    const reactions = await msg.reactions.fetch();
+
+    const accepted = reactions.some(
+      r => r.emoji.id === ACCEPTED_EMOJI_ID && r.count > 0
     );
 
     if (!accepted) continue;
@@ -72,9 +76,7 @@ async function getStreamPosters(streamChannel) {
     const isStaff = msg.member?.permissions?.has(PermissionFlagsBits.ManageRoles);
     const batchMode = isStaff && matches.length > 5;
 
-    if (!batchMode) {
-      posters.add(msg.author.id);
-    }
+    if (!batchMode) posters.add(msg.author.id);
 
   }
 
@@ -83,7 +85,6 @@ async function getStreamPosters(streamChannel) {
 }
 
 module.exports = {
-
   data: new SlashCommandBuilder()
     .setName("teamstreamcheck")
     .setDescription("Check which accepted teams have not submitted a stream")
@@ -94,37 +95,31 @@ module.exports = {
     const category = interaction.channel.parent;
 
     if (!category) {
-
       return interaction.reply({
         content: "This command must be used inside an event category.",
         ephemeral: true
       });
-
     }
 
-    const signupChannel = category.children.cache.find(
-      c => {
+    const signupChannel = category.children.cache.find(c => {
 
-        if (!c.isTextBased()) return false;
+      if (!c.isTextBased()) return false;
 
-        const name = c.name.toLowerCase();
+      const name = c.name.toLowerCase();
 
-        return (
-          name.includes("sign-ups") ||
-          name.includes("signups") ||
-          name.includes("teams")
-        );
+      return (
+        name.includes("sign-ups") ||
+        name.includes("signups") ||
+        name.includes("teams")
+      );
 
-      }
-    );
+    });
 
     if (!signupChannel) {
-
       return interaction.reply({
         content: "Could not find a sign-ups channel in this category.",
         ephemeral: true
       });
-
     }
 
     await interaction.reply("Scanning accepted teams and stream submissions...");
@@ -138,9 +133,7 @@ module.exports = {
 
       const hasStream = team.members.some(member => posters.has(member));
 
-      if (!hasStream) {
-        missingTeams.push(team.number);
-      }
+      if (!hasStream) missingTeams.push(team.number);
 
     });
 
@@ -163,5 +156,4 @@ module.exports = {
     await interaction.followUp(message);
 
   }
-
 };

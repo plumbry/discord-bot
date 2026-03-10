@@ -4,6 +4,7 @@ const fetch = require("node-fetch");
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME = "'VOD Report'";
+const ACCEPTED_EMOJI_ID = "1405510864496361482";
 
 const credentials = JSON.parse(
   Buffer.from(
@@ -22,6 +23,7 @@ const sheets = google.sheets({ version: "v4", auth });
 const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)/gi;
 
 function parseDuration(duration) {
+
   const match = duration.match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/);
 
   const h = parseInt(match?.[1] || 0);
@@ -29,17 +31,21 @@ function parseDuration(duration) {
   const s = parseInt(match?.[3] || 0);
 
   return h * 3600 + m * 60 + s;
+
 }
 
 function vodOverlaps(vod, start, end) {
+
   const vodStart = new Date(vod.created_at);
   const duration = parseDuration(vod.duration);
   const vodEnd = new Date(vodStart.getTime() + duration * 1000);
 
   return vodStart < end && vodEnd > start;
+
 }
 
 async function getAccessToken() {
+
   const res = await fetch("https://id.twitch.tv/oauth2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -51,6 +57,7 @@ async function getAccessToken() {
 
   const data = await res.json();
   return data.access_token;
+
 }
 
 async function getTwitchUsers(channel) {
@@ -67,6 +74,18 @@ async function getTwitchUsers(channel) {
     if (!messages.size) break;
 
     for (const msg of messages.values()) {
+
+      if (msg.author.bot) continue;
+
+      // Fetch reactions and verify accepted signup
+      await msg.fetch();
+      const reactions = await msg.reactions.fetch();
+
+      const accepted = reactions.some(
+        r => r.emoji.id === ACCEPTED_EMOJI_ID && r.count > 0
+      );
+
+      if (!accepted) continue;
 
       const matches = msg.content.match(TWITCH_REGEX);
       if (!matches) continue;
@@ -92,9 +111,11 @@ async function getTwitchUsers(channel) {
   }
 
   return [...users.values()];
+
 }
 
 async function getUserId(username, token) {
+
   const res = await fetch(
     `https://api.twitch.tv/helix/users?login=${username}`,
     {
@@ -107,9 +128,11 @@ async function getUserId(username, token) {
 
   const data = await res.json();
   return data.data?.[0]?.id;
+
 }
 
 async function getRecentVods(userId, token) {
+
   const res = await fetch(
     `https://api.twitch.tv/helix/videos?user_id=${userId}&type=archive&first=5`,
     {
@@ -122,15 +145,18 @@ async function getRecentVods(userId, token) {
 
   const data = await res.json();
   return data.data || [];
+
 }
 
 async function appendRows(rows) {
+
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
     range: `${SHEET_NAME}!A1`,
     valueInputOption: "RAW",
     requestBody: { values: rows }
   });
+
 }
 
 module.exports = {

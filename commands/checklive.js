@@ -4,6 +4,7 @@ const { getAccessToken, getLiveStreams } = require("../twitchBatch");
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME = "'Live Check'";
+const ACCEPTED_EMOJI_ID = "1405510864496361482";
 
 const credentials = JSON.parse(
   Buffer.from(
@@ -35,6 +36,15 @@ async function getTwitchUsers(channel) {
     if (!messages.size) break;
 
     for (const msg of messages.values()) {
+
+      await msg.fetch();
+      const reactions = await msg.reactions.fetch();
+
+      const accepted = reactions.some(
+        r => r.emoji.id === ACCEPTED_EMOJI_ID && r.count > 0
+      );
+
+      if (!accepted) continue;
 
       const matches = msg.content.match(TWITCH_REGEX);
       if (!matches) continue;
