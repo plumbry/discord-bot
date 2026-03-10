@@ -7,7 +7,6 @@ const {
 
 const fs = require("fs");
 const path = require("path");
-const crypto = require("crypto");
 
 // ================= ERROR HANDLING =================
 process.on("unhandledRejection", error => {
@@ -40,7 +39,6 @@ const dm = require("./commands/dm");
 
 // ================= CONSTANTS =================
 const GUILD_ID = "1371615693392576580";
-const HASH_FILE = "./commandHash.json";
 
 // ================= DISCORD CLIENT =================
 const client = new Client({
@@ -88,6 +86,8 @@ for (const file of commandFiles) {
 // ================= READY =================
 client.once("clientReady", async () => {
 
+  console.log(`🤖 Logged in as ${client.user.tag}`);
+
   const rest = new REST({ version: "10" })
     .setToken(process.env.DISCORD_TOKEN);
 
@@ -103,54 +103,27 @@ client.once("clientReady", async () => {
     commands.push(command.data);
   }
 
-  // Remove undefined commands safely
   const commandJSON = commands
     .filter(c => c && typeof c.toJSON === "function")
     .map(c => c.toJSON());
 
-  const newHash = crypto
-    .createHash("sha256")
-    .update(JSON.stringify(commandJSON))
-    .digest("hex");
+  try {
 
-  let oldHash = null;
+    console.log("🔄 Refreshing slash commands...");
 
-  if (fs.existsSync(HASH_FILE)) {
-    oldHash = JSON.parse(fs.readFileSync(HASH_FILE)).hash;
-  }
+    await rest.put(
+      Routes.applicationGuildCommands(client.user.id, GUILD_ID),
+      { body: commandJSON }
+    );
 
-  if (newHash !== oldHash) {
+    console.log("✅ Slash commands updated");
 
-    console.log("🔄 Command changes detected. Updating Discord commands...");
+  } catch (err) {
 
-    try {
-
-      await rest.put(
-        Routes.applicationGuildCommands(client.user.id, GUILD_ID),
-        { body: commandJSON }
-      );
-
-      fs.writeFileSync(
-        HASH_FILE,
-        JSON.stringify({ hash: newHash }, null, 2)
-      );
-
-      console.log("✅ Slash commands updated");
-
-    } catch (err) {
-
-      console.error("❌ Failed to update slash commands");
-      console.error(err);
-
-    }
-
-  } else {
-
-    console.log("⚡ Commands unchanged. Skipping Discord update.");
+    console.error("❌ Failed to update slash commands");
+    console.error(err);
 
   }
-
-  console.log(`🤖 Logged in as ${client.user.tag}`);
 
   if (dm.startDMScheduler) {
     dm.startDMScheduler(client);
