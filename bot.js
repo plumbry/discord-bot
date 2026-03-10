@@ -1,251 +1,116 @@
-const {
-  Client,
-  GatewayIntentBits,
-  REST,
-  Routes
-} = require("discord.js");
+const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { google } = require("googleapis");
 
-const fs = require("fs");
-const path = require("path");
+// ================= CONFIG =================
 
-// ================= ERROR HANDLING =================
+const SHEET_ID = "1K5BcAIM-Of9buZVmBzdtGRvjJO2XP9ZAPbFIzE5j1ZM";
+const EVENT_SHEET = "Event Bans";
+const BAN_CHANNEL_ID = "1472795189515915466";
 
-process.on("unhandledRejection", error => {
-  console.error("Unhandled promise rejection:", error);
+// ================= GOOGLE AUTH =================
+
+const credentials = JSON.parse(
+  Buffer.from(
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
+    "base64"
+  ).toString("utf8")
+);
+
+const auth = new google.auth.GoogleAuth({
+  credentials,
+  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
 });
 
-process.on("uncaughtException", error => {
-  console.error("Uncaught exception:", error);
-});
+const sheets = google.sheets({ version: "v4", auth });
 
-// ================= VERIFY / WELCOME =================
+// ================= MESSAGE FORMATTERS =================
 
-const {
-  verifyCommand,
-  handleVerify,
-  handleWelcome
-} = require("./welcome ping");
+const formatEventBan = r =>
+`${r[1]} — ${r[3]}-Event ${r[2]} Ban Started ${r[5]}
+${r[4]} Events Remaining
+Reason: ${r[7] || "No reason provided"}`;
 
-// ================= EVENT BANS =================
+const formatProbation = r =>
+`${r[1]} — Probation Started ${r[5]}
+Ends: ${r[6]} (${r[3]} days)
+Reason: ${r[7] || "No reason provided"}`;
 
-const {
-  eventBanCommand,
-  recentBanCommand,
-  myBanCommand,
-  handleEventBan,
-  handleRecentBan,
-  handleMyBan
-} = require("./event bans/eventBans");
+// ================= COMMAND =================
 
-// ================= DM SYSTEM =================
+const data = new SlashCommandBuilder()
+  .setName("fixbans")
+  .setDescription("Repair event ban messages from the sheet")
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles);
 
-const dm = require("./commands/dm");
+// ================= EXECUTE =================
 
-// ================= CONSTANTS =================
+async function execute(interaction) {
 
-const GUILD_ID = "1371615693392576580";
+  await interaction.deferReply({ ephemeral: true });
 
-// ================= CREATE CLIENT =================
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.DirectMessages,
-    GatewayIntentBits.MessageContent
-  ]
-});
-
-client.commands = new Map();
-
-// ================= LOAD COMMAND FILES =================
-
-const commandsPath = path.join(__dirname, "commands");
-
-const commandFiles = fs
-  .readdirSync(commandsPath)
-  .filter(file => file.endsWith(".js"));
-
-for (const file of commandFiles) {
+  let channel;
 
   try {
+    channel = await interaction.guild.channels.fetch(BAN_CHANNEL_ID);
+  } catch {
+    return interaction.editReply("❌ Could not access the ban channel.");
+  }
 
-    const command = require(`./commands/${file}`);
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `${EVENT_SHEET}!A2:J`
+  });
 
-    if (!command.data || !command.execute) {
-      console.log(`⚠️ Command missing data or execute: ${file}`);
+  const rows = res.data.values || [];
+
+  let edited = 0;
+  let skipped = 0;
+
+  for (const r of rows) {
+
+    const messageId = r[9];
+
+    if (!messageId) {
+      skipped++;
       continue;
     }
 
-    client.commands.set(command.data.name, command);
-    console.log(`✅ Loaded command: ${command.data.name}`);
+    try {
 
-  } catch (err) {
+      const msg = await channel.messages.fetch(messageId);
 
-    console.error(`❌ Failed to load command: ${file}`);
-    console.error(err);
+      const text =
+        r[2] === "Probation"
+          ? formatProbation(r)
+          : formatEventBan(r);
+
+      await msg.edit(text);
+
+      edited++;
+
+      // small delay to avoid rate limits
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+    } catch {
+
+      skipped++;
+
+    }
 
   }
+
+  await interaction.editReply(
+`✅ Ban repair complete
+
+Messages updated: ${edited}
+Skipped (missing/deleted): ${skipped}`
+  );
 
 }
 
-// ================= READY =================
+// ================= EXPORT =================
 
-client.once("clientReady", async () => {
-
-  console.log(`🤖 Logged in as ${client.user.tag}`);
-
-  const rest = new REST({ version: "10" })
-    .setToken(process.env.DISCORD_TOKEN);
-
-  const commands = [
-    verifyCommand,
-    eventBanCommand,
-    recentBanCommand,
-    myBanCommand
-  ];
-
-  for (const command of client.commands.values()) {
-    commands.push(command.data);
-  }
-
-  const uniqueCommands = [];
-  const seen = new Set();
-
-  for (const c of commands) {
-
-    if (!c || typeof c.toJSON !== "function") continue;
-
-    if (seen.has(c.name)) continue;
-
-    seen.add(c.name);
-    uniqueCommands.push(c);
-
-  }
-
-  const commandJSON = uniqueCommands.map(c => c.toJSON());
-
-  try {
-
-    console.log("🧹 Clearing existing commands...");
-
-    await rest.put(
-      Routes.applicationGuildCommands(client.user.id, GUILD_ID),
-      { body: [] }
-    );
-
-    console.log("🔄 Registering slash commands...");
-
-    await rest.put(
-      Routes.applicationGuildCommands(client.user.id, GUILD_ID),
-      { body: commandJSON }
-    );
-
-    console.log("✅ Slash commands rebuilt");
-
-  } catch (err) {
-
-    console.error("❌ Failed to update slash commands");
-    console.error(err);
-
-  }
-
-  if (dm.startDMScheduler) {
-    dm.startDMScheduler(client);
-  }
-
-});
-
-// ================= DM BLOCK =================
-
-client.on("messageCreate", async message => {
-
-  if (message.author.bot) return;
-
-  if (!message.guild) {
-
-    try {
-
-      await message.reply(
-        "❌ This bot does not accept direct messages."
-      );
-
-    } catch (err) {
-
-      console.error("Failed to reply to DM:", err);
-
-    }
-
-  }
-
-});
-
-// ================= INTERACTIONS =================
-
-client.on("interactionCreate", async interaction => {
-
-  if (interaction.isChatInputCommand()) {
-
-    if (interaction.commandName === "verify")
-      return handleVerify(interaction);
-
-    if (interaction.commandName === "eventban")
-      return handleEventBan(interaction);
-
-    if (interaction.commandName === "recentban")
-      return handleRecentBan(interaction);
-
-    if (interaction.commandName === "myban") {
-      await interaction.deferReply({ ephemeral: true });
-      return handleMyBan(interaction);
-    }
-
-    if (interaction.commandName === "dm" && dm.handleDM)
-      return dm.handleDM(interaction);
-
-    const command = client.commands.get(interaction.commandName);
-
-    if (!command) return;
-
-    try {
-
-      await command.execute(interaction);
-
-    } catch (error) {
-
-      console.error(`Command error (${interaction.commandName}):`, error);
-
-      if (interaction.replied || interaction.deferred) {
-
-        await interaction.followUp({
-          content: "There was an error executing this command.",
-          ephemeral: true
-        });
-
-      } else {
-
-        await interaction.reply({
-          content: "There was an error executing this command.",
-          ephemeral: true
-        });
-
-      }
-
-    }
-
-  }
-
-  if (interaction.isButton() && dm.handleDMButton) {
-    return dm.handleDMButton(interaction);
-  }
-
-});
-
-// ================= WELCOME =================
-
-client.on("guildMemberAdd", handleWelcome);
-
-// ================= LOGIN =================
-
-client.login(process.env.DISCORD_TOKEN);
+module.exports = {
+  data,
+  execute
+};
