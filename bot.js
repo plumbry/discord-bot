@@ -7,22 +7,6 @@ const SHEET_ID = "1K5BcAIM-Of9buZVmBzdtGRvjJO2XP9ZAPbFIzE5j1ZM";
 const EVENT_SHEET = "Event Bans";
 const BAN_CHANNEL_ID = "1472795189515915466";
 
-// ================= GOOGLE AUTH =================
-
-const credentials = JSON.parse(
-  Buffer.from(
-    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
-    "base64"
-  ).toString("utf8")
-);
-
-const auth = new google.auth.GoogleAuth({
-  credentials,
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-});
-
-const sheets = google.sheets({ version: "v4", auth });
-
 // ================= MESSAGE FORMATTERS =================
 
 const formatEventBan = r =>
@@ -47,6 +31,26 @@ const data = new SlashCommandBuilder()
 async function execute(interaction) {
 
   await interaction.deferReply({ ephemeral: true });
+
+  // ================= GOOGLE AUTH =================
+
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64) {
+    return interaction.editReply("❌ Google credentials missing.");
+  }
+
+  const credentials = JSON.parse(
+    Buffer.from(
+      process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
+      "base64"
+    ).toString("utf8")
+  );
+
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+  });
+
+  const sheets = google.sheets({ version: "v4", auth });
 
   let channel;
 
@@ -88,13 +92,10 @@ async function execute(interaction) {
 
       edited++;
 
-      // small delay to avoid rate limits
       await new Promise(resolve => setTimeout(resolve, 300));
 
     } catch {
-
       skipped++;
-
     }
 
   }
