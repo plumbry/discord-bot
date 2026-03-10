@@ -37,6 +37,10 @@ const {
   handleMyBan
 } = require("./event bans/eventBans");
 
+// ================= BAN EXPIRY CHECKER =================
+
+const { startBanExpiryChecker } = require("./banExpiryChecker");
+
 // ================= DM SYSTEM =================
 
 const dm = require("./commands/dm");
@@ -95,6 +99,9 @@ for (const file of commandFiles) {
 client.once("ready", async () => {
 
   console.log(`🤖 Logged in as ${client.user.tag}`);
+
+  // Start ban expiry monitoring
+  startBanExpiryChecker(client);
 
   const rest = new REST({ version: "10" })
     .setToken(process.env.DISCORD_TOKEN);
