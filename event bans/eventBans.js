@@ -28,33 +28,6 @@ const sheets = google.sheets({ version: "v4", auth });
 // ================= HELPERS =================
 const today = () => new Date().toLocaleDateString("en-GB");
 
-function probationExpired(endDateStr) {
-  if (!endDateStr) return false;
-
-  const [day, month, year] = endDateStr.split("/").map(Number);
-  const end = new Date(year, month - 1, day);
-
-  const now = new Date();
-  now.setHours(0,0,0,0);
-
-  return end < now;
-}
-
-const parseDDMMYYYY = (str) => {
-  const [dd, mm, yyyy] = str.split("-").map(Number);
-  if (!dd || !mm || !yyyy) return null;
-
-  const d = new Date(yyyy, mm - 1, dd);
-
-  if (
-    d.getDate() !== dd ||
-    d.getMonth() !== mm - 1 ||
-    d.getFullYear() !== yyyy
-  ) return null;
-
-  return d;
-};
-
 async function logAudit(action, moderator, user = "") {
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
@@ -95,7 +68,6 @@ async function writeRows(rows) {
       requestBody: { values: rows }
     });
   }
-
 }
 
 // ================= FORMATTERS =================
@@ -111,110 +83,56 @@ Reason: ${r[7] || "No reason provided"}`;
 
 // ================= COMMAND BUILDER =================
 const eventBanCommand = new SlashCommandBuilder()
-  .setName("eventban")
-  .setDescription("Event ban management")
+.setName("eventban")
+.setDescription("Event ban management")
 
-  .addSubcommand(s =>
-    s.setName("apply")
-      .setDescription("Apply an event ban")
-      .addUserOption(o =>
-        o.setName("user")
-          .setDescription("User to ban")
-          .setRequired(true))
-      .addStringOption(o =>
-        o.setName("type")
-          .setDescription("Ban type")
-          .setRequired(true)
-          .addChoices(
-            { name: "Money", value: "Money" },
-            { name: "No Money", value: "No Money" },
-            { name: "All", value: "All" }
-          ))
-      .addIntegerOption(o =>
-        o.setName("events")
-          .setDescription("Number of events")
-          .setRequired(true)
-          .setMinValue(1)
-          .setMaxValue(5))
-      .addStringOption(o =>
-        o.setName("reason")
-          .setDescription("Reason for the ban")
-          .setRequired(true))
-  )
+.addSubcommand(s =>
+  s.setName("apply")
+    .setDescription("Apply an event ban")
+    .addUserOption(o =>
+      o.setName("user")
+        .setDescription("User to ban")
+        .setRequired(true))
+    .addStringOption(o =>
+      o.setName("type")
+        .setDescription("Ban type")
+        .setRequired(true)
+        .addChoices(
+          { name: "Money", value: "Money" },
+          { name: "No Money", value: "No Money" },
+          { name: "All", value: "All" }
+        ))
+    .addIntegerOption(o =>
+      o.setName("events")
+        .setDescription("Number of events")
+        .setRequired(true))
+    .addStringOption(o =>
+      o.setName("reason")
+        .setDescription("Reason")
+        .setRequired(true))
+)
 
-  .addSubcommand(s =>
-    s.setName("probation")
-      .setDescription("Apply probation")
-      .addUserOption(o =>
-        o.setName("user")
-          .setDescription("User to place on probation")
-          .setRequired(true))
-      .addIntegerOption(o =>
-        o.setName("days")
-          .setDescription("Length of probation")
-          .setRequired(true))
-      .addStringOption(o =>
-        o.setName("start")
-          .setDescription("Start date (DD-MM-YYYY)")
-          .setRequired(true))
-      .addStringOption(o =>
-        o.setName("reason")
-          .setDescription("Reason for probation")
-          .setRequired(true))
-  )
+.addSubcommand(s =>
+  s.setName("eventpassed")
+    .setDescription("Reduce remaining bans")
+    .addStringOption(o =>
+      o.setName("type")
+        .setDescription("Event type")
+        .setRequired(true))
+    .addIntegerOption(o =>
+      o.setName("events")
+        .setDescription("Events passed")
+        .setRequired(true))
+)
 
-  .addSubcommand(s =>
-    s.setName("eventpassed")
-      .setDescription("Reduce remaining bans after an event")
-      .addStringOption(o =>
-        o.setName("type")
-          .setDescription("Event type")
-          .setRequired(true)
-          .addChoices(
-            { name: "Money", value: "Money" },
-            { name: "No Money", value: "No Money" },
-            { name: "All", value: "All" }
-          ))
-      .addIntegerOption(o =>
-        o.setName("events")
-          .setDescription("Number of events passed")
-          .setRequired(true))
-  )
-
-  .addSubcommand(s =>
-    s.setName("removelast")
-      .setDescription("Remove the most recent ban for a user")
-      .addUserOption(o =>
-        o.setName("user")
-          .setDescription("User whose last ban should be removed")
-          .setRequired(true))
-  )
-
-  .addSubcommand(s =>
-    s.setName("summary")
-      .setDescription("View summary of active bans")
-  )
-
-  .addSubcommand(s =>
-    s.setName("history")
-      .setDescription("View ban history for a user")
-      .addUserOption(o =>
-        o.setName("user")
-          .setDescription("User to view history for")
-          .setRequired(true))
-  );
-
-const recentBanCommand = new SlashCommandBuilder()
-  .setName("recentban")
-  .setDescription("View a user's most recent event ban")
-  .addUserOption(o =>
-    o.setName("user")
-      .setDescription("User to check")
-      .setRequired(true));
-
-const myBanCommand = new SlashCommandBuilder()
-  .setName("myban")
-  .setDescription("View your active bans");
+.addSubcommand(s =>
+  s.setName("removelast")
+    .setDescription("Remove most recent ban")
+    .addUserOption(o =>
+      o.setName("user")
+        .setDescription("User")
+        .setRequired(true))
+);
 
 // ================= MAIN HANDLER =================
 async function handleEventBan(interaction) {
@@ -229,8 +147,9 @@ async function handleEventBan(interaction) {
 
   const sub = interaction.options.getSubcommand();
   const rows = await getRows();
+  const banChannel = await interaction.guild.channels.fetch(BAN_CHANNEL_ID);
 
-  // APPLY
+  // APPLY BAN
   if (sub === "apply") {
 
     const user = interaction.options.getUser("user");
@@ -245,9 +164,15 @@ async function handleEventBan(interaction) {
       events,
       events,
       today(),
-      "",
-      reason
+      today(),
+      reason,
+      interaction.user.tag,
+      ""
     ];
+
+    const msg = await banChannel.send(formatEventBan(row));
+
+    row[9] = msg.id;
 
     rows.push(row);
 
@@ -255,42 +180,7 @@ async function handleEventBan(interaction) {
 
     await logAudit(`Applied ${events}-event ${type} ban`, interaction.user, user);
 
-    return interaction.editReply(`✅ Event ban applied\n\n${formatEventBan(row)}`);
-  }
-
-  // PROBATION
-  if (sub === "probation") {
-
-    const user = interaction.options.getUser("user");
-    const days = interaction.options.getInteger("days");
-    const start = interaction.options.getString("start");
-    const reason = interaction.options.getString("reason");
-
-    const startDate = parseDDMMYYYY(start);
-
-    if (!startDate)
-      return interaction.editReply("Invalid date format. Use DD-MM-YYYY.");
-
-    const end = new Date(startDate);
-    end.setDate(end.getDate() + days);
-
-    const row = [
-      user.id,
-      user.tag,
-      "Probation",
-      days,
-      "",
-      startDate.toLocaleDateString("en-GB"),
-      end.toLocaleDateString("en-GB"),
-      reason
-    ];
-
-    rows.push(row);
-
-    await writeRows(rows);
-    await logAudit("Applied probation", interaction.user, user);
-
-    return interaction.editReply(`⚠️ Probation applied\n\n${formatProbation(row)}`);
+    return interaction.editReply("✅ Event ban applied.");
   }
 
   // EVENT PASSED
@@ -300,12 +190,23 @@ async function handleEventBan(interaction) {
     const events = interaction.options.getInteger("events");
 
     for (const r of rows) {
+
       if (r[2] === type && Number(r[4]) > 0) {
+
         r[4] = Math.max(0, Number(r[4]) - events);
+        r[6] = today();
+
+        if (r[9]) {
+          try {
+            const msg = await banChannel.messages.fetch(r[9]);
+            await msg.edit(formatEventBan(r));
+          } catch {}
+        }
       }
     }
 
     await writeRows(rows);
+
     await logAudit(`Event passed (${events})`, interaction.user);
 
     return interaction.editReply("✅ Event bans updated.");
@@ -317,102 +218,32 @@ async function handleEventBan(interaction) {
     const user = interaction.options.getUser("user");
 
     const index = [...rows]
-      .map((r, i) => ({ r, i }))
+      .map((r,i)=>({r,i}))
       .reverse()
-      .find(x => x.r[0] === user.id);
+      .find(x=>x.r[0]===user.id);
 
     if (!index)
       return interaction.editReply("No bans found.");
 
-    const removed = rows.splice(index.i, 1)[0];
+    const removed = rows.splice(index.i,1)[0];
+
+    if (removed[9]) {
+      try {
+        const msg = await banChannel.messages.fetch(removed[9]);
+        await msg.delete();
+      } catch {}
+    }
 
     await writeRows(rows);
+
     await logAudit("Removed last ban", interaction.user, user);
 
-    return interaction.editReply(
-      `🗑️ Removed last ban\n\n${
-        removed[2] === "Probation"
-          ? formatProbation(removed)
-          : formatEventBan(removed)
-      }`
-    );
+    return interaction.editReply("🗑️ Last ban removed.");
   }
 
-  // SUMMARY
-  if (sub === "summary") {
-
-    const activeEvents = rows.filter(r => r[2] !== "Probation" && Number(r[4]) > 0);
-    const probations = rows.filter(r => r[2] === "Probation" && !probationExpired(r[6]));
-
-    return interaction.editReply(
-      `📊 Event Ban Summary\n\nActive Event Bans: **${activeEvents.length}**\nActive Probations: **${probations.length}**`
-    );
-  }
-
-  // HISTORY
-  if (sub === "history") {
-
-    const user = interaction.options.getUser("user");
-
-    const history = rows.filter(r => r[0] === user.id);
-
-    if (!history.length)
-      return interaction.editReply("No history found.");
-
-    return interaction.editReply(
-      history.map(r =>
-        r[2] === "Probation"
-          ? formatProbation(r)
-          : formatEventBan(r)
-      ).join("\n\n")
-    );
-  }
-
-}
-
-// ================= OTHER HANDLERS =================
-async function handleRecentBan(interaction) {
-
-  await interaction.deferReply();
-
-  const user = interaction.options.getUser("user");
-  const rows = await getRows();
-
-  const r = [...rows].reverse().find(x => x[0] === user.id);
-
-  if (!r)
-    return interaction.editReply("No bans found.");
-
-  return interaction.editReply(
-    r[2] === "Probation"
-      ? formatProbation(r)
-      : formatEventBan(r)
-  );
-}
-
-async function handleMyBan(interaction) {
-
-  const rows = await getRows();
-
-  const mine = rows.filter(r => r[0] === interaction.user.id);
-
-  if (!mine.length)
-    return interaction.editReply("You have no bans.");
-
-  return interaction.editReply(
-    mine.map(r =>
-      r[2] === "Probation"
-        ? formatProbation(r)
-        : formatEventBan(r)
-    ).join("\n\n")
-  );
 }
 
 module.exports = {
   eventBanCommand,
-  recentBanCommand,
-  myBanCommand,
-  handleEventBan,
-  handleRecentBan,
-  handleMyBan
+  handleEventBan
 };
