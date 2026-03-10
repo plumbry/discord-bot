@@ -45,12 +45,14 @@ async function logAudit(action, moderator, user = "") {
 }
 
 async function getRows() {
+
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
     range: `${EVENT_SHEET}!A2:J`
   });
 
   return res.data.values || [];
+
 }
 
 async function writeRows(rows) {
@@ -68,6 +70,7 @@ async function writeRows(rows) {
       requestBody: { values: rows }
     });
   }
+
 }
 
 // ================= FORMATTERS =================
@@ -132,6 +135,11 @@ const eventBanCommand = new SlashCommandBuilder()
       o.setName("user")
         .setDescription("User")
         .setRequired(true))
+)
+
+.addSubcommand(s =>
+  s.setName("summary")
+    .setDescription("Show active bans and probations")
 );
 
 // ================= MAIN HANDLER =================
@@ -142,14 +150,11 @@ async function handleEventBan(interaction) {
   if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels))
     return interaction.editReply("No permission.");
 
-  if (interaction.channelId !== BAN_CHANNEL_ID)
-    return interaction.editReply("Wrong channel.");
-
   const sub = interaction.options.getSubcommand();
   const rows = await getRows();
   const banChannel = await interaction.guild.channels.fetch(BAN_CHANNEL_ID);
 
-  // APPLY BAN
+  // ================= APPLY BAN =================
   if (sub === "apply") {
 
     const user = interaction.options.getUser("user");
@@ -183,7 +188,7 @@ async function handleEventBan(interaction) {
     return interaction.editReply("✅ Event ban applied.");
   }
 
-  // EVENT PASSED
+  // ================= EVENT PASSED =================
   if (sub === "eventpassed") {
 
     const type = interaction.options.getString("type");
@@ -202,7 +207,9 @@ async function handleEventBan(interaction) {
             await msg.edit(formatEventBan(r));
           } catch {}
         }
+
       }
+
     }
 
     await writeRows(rows);
@@ -212,7 +219,7 @@ async function handleEventBan(interaction) {
     return interaction.editReply("✅ Event bans updated.");
   }
 
-  // REMOVE LAST
+  // ================= REMOVE LAST =================
   if (sub === "removelast") {
 
     const user = interaction.options.getUser("user");
@@ -239,6 +246,35 @@ async function handleEventBan(interaction) {
     await logAudit("Removed last ban", interaction.user, user);
 
     return interaction.editReply("🗑️ Last ban removed.");
+  }
+
+  // ================= SUMMARY =================
+  if (sub === "summary") {
+
+    const activeBans = rows.filter(r => r[2] !== "Probation" && Number(r[4]) > 0);
+    const probations = rows.filter(r => r[2] === "Probation");
+
+    let text = "";
+
+    text += "**Active Event Bans**\n";
+
+    if (!activeBans.length)
+      text += "None\n";
+    else
+      text += activeBans
+        .map(r => `${r[1]} — ${r[2]} | ${r[4]} events remaining`)
+        .join("\n");
+
+    text += "\n\n**Active Probations**\n";
+
+    if (!probations.length)
+      text += "None";
+    else
+      text += probations
+        .map(r => `${r[1]} — ends ${r[6]}`)
+        .join("\n");
+
+    return interaction.editReply(text);
   }
 
 }
