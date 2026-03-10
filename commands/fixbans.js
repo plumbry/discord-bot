@@ -30,7 +30,7 @@ Ends: ${r[6]} (${r[3]} days)
 Reason: ${r[7] || "No reason provided"}`;
 
 const command = new SlashCommandBuilder()
-  .setName("fixeventbanmessages")
+  .setName("fixbans")
   .setDescription("Repair event ban messages from the sheet")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
