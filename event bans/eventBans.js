@@ -28,6 +28,13 @@ const sheets = google.sheets({ version: "v4", auth });
 // ================= HELPERS =================
 const today = () => new Date().toLocaleDateString("en-GB");
 
+function parseDateGB(str) {
+  if (!str) return null;
+  const [d, m, y] = str.split("/").map(Number);
+  if (!d || !m || !y) return null;
+  return new Date(y, m - 1, d);
+}
+
 async function logAudit(action, moderator, user = "") {
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
@@ -251,8 +258,17 @@ async function handleEventBan(interaction) {
   // ================= SUMMARY =================
   if (sub === "summary") {
 
-    const activeBans = rows.filter(r => r[2] !== "Probation" && Number(r[4]) > 0);
-    const probations = rows.filter(r => r[2] === "Probation");
+    const now = new Date();
+
+    const activeBans = rows.filter(
+      r => r[2] !== "Probation" && Number(r[4]) > 0
+    );
+
+    const probations = rows.filter(r => {
+      if (r[2] !== "Probation") return false;
+      const end = parseDateGB(r[6]);
+      return end && end >= now;
+    });
 
     let text = "";
 
