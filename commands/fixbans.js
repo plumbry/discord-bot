@@ -1,9 +1,13 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 const { google } = require("googleapis");
 
+// ================= CONFIG =================
+
 const SHEET_ID = "1K5BcAIM-Of9buZVmBzdtGRvjJO2XP9ZAPbFIzE5j1ZM";
 const EVENT_SHEET = "Event Bans";
 const BAN_CHANNEL_ID = "1472795189515915466";
+
+// ================= GOOGLE AUTH =================
 
 const credentials = JSON.parse(
   Buffer.from(
@@ -19,6 +23,8 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: "v4", auth });
 
+// ================= MESSAGE FORMATTERS =================
+
 const formatEventBan = r =>
 `${r[1]} — ${r[3]}-Event ${r[2]} Ban Started ${r[5]}
 ${r[4]} Events Remaining
@@ -29,16 +35,26 @@ const formatProbation = r =>
 Ends: ${r[6]} (${r[3]} days)
 Reason: ${r[7] || "No reason provided"}`;
 
-const command = new SlashCommandBuilder()
+// ================= COMMAND =================
+
+const data = new SlashCommandBuilder()
   .setName("fixbans")
   .setDescription("Repair event ban messages from the sheet")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
+// ================= EXECUTE =================
+
 async function execute(interaction) {
 
-  await interaction.deferReply();
+  await interaction.deferReply({ ephemeral: true });
 
-  const channel = await interaction.guild.channels.fetch(BAN_CHANNEL_ID);
+  let channel;
+
+  try {
+    channel = await interaction.guild.channels.fetch(BAN_CHANNEL_ID);
+  } catch {
+    return interaction.editReply("❌ Could not access the ban channel.");
+  }
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
@@ -72,7 +88,8 @@ async function execute(interaction) {
 
       edited++;
 
-      await new Promise(r => setTimeout(r, 300));
+      // small delay to avoid rate limits
+      await new Promise(resolve => setTimeout(resolve, 300));
 
     } catch {
 
@@ -83,7 +100,7 @@ async function execute(interaction) {
   }
 
   await interaction.editReply(
-`Repair complete.
+`✅ Ban repair complete
 
 Messages updated: ${edited}
 Skipped (missing/deleted): ${skipped}`
@@ -91,7 +108,9 @@ Skipped (missing/deleted): ${skipped}`
 
 }
 
+// ================= EXPORT =================
+
 module.exports = {
-  data: command,
+  data,
   execute
 };
