@@ -29,24 +29,25 @@ async function getRows() {
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: `${EVENT_SHEET}!A2:J`
+    range: `${EVENT_SHEET}!A2:K`
   });
 
   return res.data.values || [];
+
 }
 
 async function writeRows(rows) {
 
   await sheets.spreadsheets.values.clear({
     spreadsheetId: SHEET_ID,
-    range: `${EVENT_SHEET}!A2:J`
+    range: `${EVENT_SHEET}!A2:K`
   });
 
   if (rows.length) {
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
-      range: `${EVENT_SHEET}!A2:J`,
+      range: `${EVENT_SHEET}!A2:K`,
       valueInputOption: "RAW",
       requestBody: { values: rows }
     });
@@ -66,33 +67,50 @@ async function checkBanExpiries(client) {
   for (const r of rows) {
 
     const type = r[2];
-    const eventsRemaining = Number(r[4] || 0);
+    const remaining = Number(r[4] || 0);
     const endDate = parseDateGB(r[6]);
-    const alerted = r[9] === "ENDED";
+    const messageId = r[9];
+    const alerted = r[10] === "ENDED";
 
     if (alerted) continue;
 
-    // Event ban ended
-    if (type !== "Probation" && eventsRemaining === 0) {
+    let ended = false;
+    let label = "";
 
-      await channel.send(
-        `✅ **Event ban ended** for **${r[1]}** (${type})`
-      );
-
-      r[9] = "ENDED";
-      updated = true;
+    if (type !== "Probation" && remaining === 0) {
+      ended = true;
+      label = "BAN ENDED";
     }
 
-    // Probation ended
     if (type === "Probation" && endDate && endDate < now) {
+      ended = true;
+      label = "PROBATION ENDED";
+    }
+
+    if (!ended) continue;
+
+    try {
+
+      if (messageId) {
+
+        const msg = await channel.messages.fetch(messageId);
+
+        await msg.edit(
+          msg.content + `\n\n✅ **${label}**`
+        );
+
+      }
 
       await channel.send(
-        `✅ **Probation ended** for **${r[1]}**`
+        `🔔 **${label}** for **${r[1]}**`
       );
 
-      r[9] = "ENDED";
-      updated = true;
+    } catch (err) {
+      console.error("Failed updating message:", err);
     }
+
+    r[10] = "ENDED";
+    updated = true;
 
   }
 
@@ -105,7 +123,7 @@ function startBanExpiryChecker(client) {
 
   setInterval(() => {
     checkBanExpiries(client).catch(console.error);
-  }, 5 * 60 * 1000); // every 5 minutes
+  }, 5 * 60 * 1000);
 
 }
 
