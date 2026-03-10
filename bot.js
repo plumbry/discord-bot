@@ -45,7 +45,7 @@ const dm = require("./commands/dm");
 
 const GUILD_ID = "1371615693392576580";
 
-// ================= CLIENT =================
+// ================= CREATE CLIENT =================
 
 const client = new Client({
   intents: [
@@ -90,7 +90,7 @@ for (const file of commandFiles) {
 
 }
 
-// ================= READY =================
+// ================= READY EVENT =================
 
 client.once("clientReady", async () => {
 
@@ -110,6 +110,7 @@ client.once("clientReady", async () => {
     commands.push(command.data);
   }
 
+  // Remove duplicate command names
   const uniqueCommands = [];
   const seen = new Set();
 
@@ -177,7 +178,7 @@ client.on("messageCreate", async message => {
 
 });
 
-// ================= INTERACTIONS =================
+// ================= INTERACTION HANDLER =================
 
 client.on("interactionCreate", async interaction => {
 
