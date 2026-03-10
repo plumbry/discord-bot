@@ -95,8 +95,7 @@ client.once("clientReady", async () => {
     verifyCommand,
     eventBanCommand,
     recentBanCommand,
-    myBanCommand,
-    dm?.dmCommand
+    myBanCommand
   ];
 
   for (const command of client.commands.values()) {
