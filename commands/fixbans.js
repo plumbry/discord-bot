@@ -7,22 +7,6 @@ const SHEET_ID = "1K5BcAIM-Of9buZVmBzdtGRvjJO2XP9ZAPbFIzE5j1ZM";
 const EVENT_SHEET = "Event Bans";
 const BAN_CHANNEL_ID = "1472795189515915466";
 
-// ================= GOOGLE AUTH =================
-
-const credentials = JSON.parse(
-  Buffer.from(
-    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
-    "base64"
-  ).toString("utf8")
-);
-
-const auth = new google.auth.GoogleAuth({
-  credentials,
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-});
-
-const sheets = google.sheets({ version: "v4", auth });
-
 // ================= MESSAGE FORMATTERS =================
 
 const formatEventBan = r =>
@@ -40,13 +24,42 @@ Reason: ${r[7] || "No reason provided"}`;
 const data = new SlashCommandBuilder()
   .setName("fixbans")
   .setDescription("Repair event ban messages from the sheet")
-  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles);
 
 // ================= EXECUTE =================
 
 async function execute(interaction) {
 
   await interaction.deferReply({ ephemeral: true });
+
+  // ================= GOOGLE AUTH =================
+
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64) {
+    return interaction.editReply("❌ Google credentials are not configured.");
+  }
+
+  let credentials;
+
+  try {
+    credentials = JSON.parse(
+      Buffer.from(
+        process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
+        "base64"
+      ).toString("utf8")
+    );
+  } catch (err) {
+    console.error("Google credentials parse failed:", err);
+    return interaction.editReply("❌ Failed to load Google credentials.");
+  }
+
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+  });
+
+  const sheets = google.sheets({ version: "v4", auth });
+
+  // ================= CHANNEL =================
 
   let channel;
 
@@ -56,15 +69,30 @@ async function execute(interaction) {
     return interaction.editReply("❌ Could not access the ban channel.");
   }
 
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID,
-    range: `${EVENT_SHEET}!A2:J`
-  });
+  // ================= LOAD SHEET =================
 
-  const rows = res.data.values || [];
+  let rows;
+
+  try {
+
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `${EVENT_SHEET}!A2:J`
+    });
+
+    rows = res.data.values || [];
+
+  } catch (err) {
+
+    console.error("Sheet fetch failed:", err);
+    return interaction.editReply("❌ Failed to read the Google Sheet.");
+
+  }
 
   let edited = 0;
   let skipped = 0;
+
+  // ================= PROCESS ROWS =================
 
   for (const r of rows) {
 
@@ -88,7 +116,7 @@ async function execute(interaction) {
 
       edited++;
 
-      // small delay to avoid rate limits
+      // avoid rate limits
       await new Promise(resolve => setTimeout(resolve, 300));
 
     } catch {
@@ -98,6 +126,8 @@ async function execute(interaction) {
     }
 
   }
+
+  // ================= RESULT =================
 
   await interaction.editReply(
 `✅ Ban repair complete
