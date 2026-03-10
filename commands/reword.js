@@ -46,10 +46,9 @@ module.exports = {
     await interaction.reply("Updating names...");
 
     const regex = new RegExp(find, "gi");
-
     let changed = 0;
 
-    // Rename category
+    // Rename the category itself
     const newCategoryName = category.name.replace(regex, replace);
 
     if (newCategoryName !== category.name) {
@@ -57,10 +56,14 @@ module.exports = {
       changed++;
     }
 
-    // Rename channels inside category
-    const channels = category.children.cache;
+    // Fetch ALL guild channels
+    const allChannels = await interaction.guild.channels.fetch();
 
-    for (const channel of channels.values()) {
+    const channelsInCategory = allChannels.filter(
+      c => c.parentId === category.id
+    );
+
+    for (const channel of channelsInCategory.values()) {
 
       const newName = channel.name.replace(regex, replace);
 
@@ -69,7 +72,7 @@ module.exports = {
         await channel.setName(newName);
         changed++;
 
-        // avoid Discord rate limits
+        // Avoid Discord rename rate limits
         await new Promise(r => setTimeout(r, 500));
       }
     }
