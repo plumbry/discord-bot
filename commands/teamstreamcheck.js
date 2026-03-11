@@ -35,8 +35,7 @@ async function getTeams(signupChannel) {
 
     if (msg.author.bot) continue;
 
-    await msg.fetch();
-    const reactions = await msg.reactions.fetch();
+    const reactions = msg.reactions.cache;
 
     const accepted = reactions.some(
       r => r.emoji.id === ACCEPTED_EMOJI_ID && r.count > 0
