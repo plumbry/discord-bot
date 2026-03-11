@@ -55,7 +55,7 @@ module.exports = {
 
     // MESSAGE 1
     const message1 = await channel.send(
-`GAME ${game} ${region} ${code}
+`GAME ${game} ${region} CODE ${code}
 GAME ${game} START BY ${endtime}
 WHO IS NOT IN ${role}`
     );
