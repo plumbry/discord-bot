@@ -22,15 +22,13 @@ process.on("uncaughtException", error => {
   console.error("Uncaught exception:", error);
 });
 
-// ================= VERIFY / WELCOME =================
+// ================= IMPORT COMMAND MODULES =================
 
 const {
   verifyCommand,
   handleVerify,
   handleWelcome
 } = require("./welcome ping");
-
-// ================= EVENT BANS =================
 
 const {
   eventBanCommand,
@@ -41,11 +39,7 @@ const {
   handleMyBan
 } = require("./event bans/eventBans");
 
-// ================= BAN EXPIRY =================
-
 const { startBanExpiryChecker } = require("./banExpiryChecker");
-
-// ================= DM SYSTEM =================
 
 const dm = require("./commands/dm");
 
@@ -65,14 +59,14 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.DirectMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.DirectMessages
   ]
 });
 
 client.commands = new Map();
 
-// ================= LOAD COMMANDS =================
+// ================= LOAD COMMAND FILES =================
 
 const commandsPath = path.join(__dirname, "commands");
 
@@ -87,7 +81,7 @@ for (const file of commandFiles) {
     const command = require(`./commands/${file}`);
 
     if (!command?.data || !command?.execute) {
-      console.log(`Invalid command skipped: ${file}`);
+      console.log(`Skipping invalid command: ${file}`);
       continue;
     }
 
@@ -95,7 +89,7 @@ for (const file of commandFiles) {
 
   } catch (err) {
 
-    console.error(`Failed loading command: ${file}`);
+    console.error(`Error loading command: ${file}`);
     console.error(err);
 
   }
@@ -165,6 +159,7 @@ client.on("interactionCreate", async interaction => {
       return dm.handleDM(interaction);
 
     const command = client.commands.get(interaction.commandName);
+
     if (!command) return;
 
     try {
@@ -175,7 +170,7 @@ client.on("interactionCreate", async interaction => {
 
   }
 
-  // ===== BUTTONS =====
+  // ===== BUTTON HANDLING =====
 
   if (interaction.isButton()) {
 
@@ -188,7 +183,7 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // ===== CANCEL GAME =====
+    // ===== CANCEL GAMECALL =====
 
     if (interaction.customId === "gamecall_cancel") {
 
@@ -201,10 +196,10 @@ client.on("interactionCreate", async interaction => {
 
       const lines = msg.content.split("\n");
 
-      const match = lines[0].match(/^GAME\s+(\d+)\s+(\S+)/i);
+      const game = active.gameNumber;
 
-      const game = match[1];
-      const region = match[2];
+      const regionMatch = lines[0].match(/GAME\s+\d+\s+(\S+)/i);
+      const region = regionMatch ? regionMatch[1] : "";
 
       lines[0] = `GAME ${game} ${region} CODE CANCELLED`;
 
@@ -248,7 +243,7 @@ client.on("interactionCreate", async interaction => {
 
   }
 
-  // ===== MODAL SUBMIT =====
+  // ===== MODAL HANDLER =====
 
   if (interaction.isModalSubmit()) {
 
@@ -291,7 +286,7 @@ CODE ${newCode}`
 
 });
 
-// ================= WELCOME =================
+// ================= MEMBER JOIN =================
 
 client.on("guildMemberAdd", handleWelcome);
 
