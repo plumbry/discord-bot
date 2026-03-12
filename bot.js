@@ -87,7 +87,7 @@ for (const file of commandFiles) {
     const command = require(`./commands/${file}`);
 
     if (!command?.data || !command?.execute) {
-      console.log(`⚠️ Invalid command skipped: ${file}`);
+      console.log(`Invalid command skipped: ${file}`);
       continue;
     }
 
@@ -95,7 +95,7 @@ for (const file of commandFiles) {
 
   } catch (err) {
 
-    console.error(`❌ Failed loading command: ${file}`);
+    console.error(`Failed loading command: ${file}`);
     console.error(err);
 
   }
@@ -106,7 +106,7 @@ for (const file of commandFiles) {
 
 client.once("ready", async () => {
 
-  console.log(`🤖 Logged in as ${client.user.tag}`);
+  console.log(`Logged in as ${client.user.tag}`);
 
   startBanExpiryChecker(client);
 
@@ -128,42 +128,13 @@ client.once("ready", async () => {
     .filter(c => c && typeof c.toJSON === "function")
     .map(c => c.toJSON());
 
-  try {
-
-    console.log("Registering slash commands...");
-
-    await rest.put(
-      Routes.applicationGuildCommands(client.user.id, GUILD_ID),
-      { body: commandJSON }
-    );
-
-    console.log("Slash commands registered");
-
-  } catch (err) {
-
-    console.error("Command registration failed");
-    console.error(err);
-
-  }
+  await rest.put(
+    Routes.applicationGuildCommands(client.user.id, GUILD_ID),
+    { body: commandJSON }
+  );
 
   if (dm.startDMScheduler) {
     dm.startDMScheduler(client);
-  }
-
-});
-
-// ================= DM BLOCK =================
-
-client.on("messageCreate", async message => {
-
-  if (message.author.bot) return;
-
-  if (!message.guild) {
-
-    try {
-      await message.reply("❌ This bot does not accept direct messages.");
-    } catch {}
-
   }
 
 });
@@ -197,34 +168,14 @@ client.on("interactionCreate", async interaction => {
     if (!command) return;
 
     try {
-
       await command.execute(interaction);
-
     } catch (error) {
-
-      console.error(`Command error (${interaction.commandName}):`, error);
-
-      if (interaction.replied || interaction.deferred) {
-
-        await interaction.followUp({
-          content: "There was an error executing this command.",
-          ephemeral: true
-        });
-
-      } else {
-
-        await interaction.reply({
-          content: "There was an error executing this command.",
-          ephemeral: true
-        });
-
-      }
-
+      console.error(error);
     }
 
   }
 
-  // ===== GAMECALL BUTTONS =====
+  // ===== BUTTONS =====
 
   if (interaction.isButton()) {
 
@@ -237,6 +188,8 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
+    // ===== CANCEL GAME =====
+
     if (interaction.customId === "gamecall_cancel") {
 
       await interaction.deferReply({ ephemeral: true });
@@ -244,13 +197,34 @@ client.on("interactionCreate", async interaction => {
       clearTimeout(active.t1);
       clearTimeout(active.t2);
 
+      const msg = await interaction.channel.messages.fetch(active.messageId);
+
+      const lines = msg.content.split("\n");
+
+      const match = lines[0].match(/^GAME\s+(\d+)\s+(\S+)/i);
+
+      const game = match[1];
+      const region = match[2];
+
+      lines[0] = `GAME ${game} ${region} CODE CANCELLED`;
+
+      await msg.edit(lines.join("\n"));
+
+      const rolePing = `<@&${active.roleId}>`;
+
+      await interaction.channel.send(
+`🚨 **CODE CANCELLED** ${rolePing}`
+      );
+
       activeCalls.delete(interaction.channel.id);
 
       return interaction.editReply({
-        content: "Game call cancelled."
+        content: `Game ${game} cancelled.`
       });
 
     }
+
+    // ===== OVERRIDE CODE =====
 
     if (interaction.customId === "gamecall_override") {
 
@@ -284,12 +258,7 @@ client.on("interactionCreate", async interaction => {
 
       const active = activeCalls.get(interaction.channel.id);
 
-      if (!active) {
-        return interaction.reply({
-          content: "No active game call found.",
-          ephemeral: true
-        });
-      }
+      if (!active) return;
 
       const msg = await interaction.channel.messages.fetch(active.messageId);
 
@@ -320,12 +289,6 @@ CODE ${newCode}`
 
   }
 
-  // ===== DM BUTTONS =====
-
-  if (interaction.isButton() && dm.handleDMButton) {
-    return dm.handleDMButton(interaction);
-  }
-
 });
 
 // ================= WELCOME =================
@@ -334,7 +297,4 @@ client.on("guildMemberAdd", handleWelcome);
 
 // ================= LOGIN =================
 
-client.login(process.env.DISCORD_TOKEN)
-  .catch(err => {
-    console.error("Discord login failed:", err);
-  });
+client.login(process.env.DISCORD_TOKEN);
