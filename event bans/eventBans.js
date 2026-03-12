@@ -5,12 +5,14 @@ const {
 const { google } = require("googleapis");
 
 // ================= CONFIG =================
+
 const SHEET_ID = "1K5BcAIM-Of9buZVmBzdtGRvjJO2XP9ZAPbFIzE5j1ZM";
 const EVENT_SHEET = "Event Bans";
 const AUDIT_SHEET = "Audit Log";
 const BAN_CHANNEL_ID = "1472795189515915466";
 
 // ================= GOOGLE AUTH =================
+
 const credentials = JSON.parse(
   Buffer.from(
     process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
@@ -26,16 +28,23 @@ const auth = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: "v4", auth });
 
 // ================= HELPERS =================
+
 const today = () => new Date().toLocaleDateString("en-GB");
 
 function parseDateGB(str) {
+
   if (!str) return null;
+
   const [d, m, y] = str.split("/").map(Number);
+
   if (!d || !m || !y) return null;
+
   return new Date(y, m - 1, d);
+
 }
 
 async function logAudit(action, moderator, user = "") {
+
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
     range: `${AUDIT_SHEET}!A2:D`,
@@ -49,6 +58,7 @@ async function logAudit(action, moderator, user = "") {
       ]]
     }
   });
+
 }
 
 async function getRows() {
@@ -58,7 +68,9 @@ async function getRows() {
     range: `${EVENT_SHEET}!A2:J`
   });
 
-  return res.data.values || [];
+  const rows = res.data.values || [];
+
+  return rows.filter(r => r.length > 0);
 
 }
 
@@ -70,17 +82,20 @@ async function writeRows(rows) {
   });
 
   if (rows.length) {
+
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
       range: `${EVENT_SHEET}!A2:J`,
       valueInputOption: "RAW",
       requestBody: { values: rows }
     });
+
   }
 
 }
 
 // ================= FORMATTERS =================
+
 const formatEventBan = r =>
 `${r[1]} — ${r[3]}-Event ${r[2]} Ban Started ${r[5]}
 ${r[4]} Events Remaining
@@ -92,6 +107,7 @@ Ends: ${r[6]} (${r[3]} days)
 Reason: ${r[7] || "No reason provided"}`;
 
 // ================= COMMAND BUILDER =================
+
 const eventBanCommand = new SlashCommandBuilder()
 .setName("eventban")
 .setDescription("Event ban management")
@@ -128,7 +144,12 @@ const eventBanCommand = new SlashCommandBuilder()
     .addStringOption(o =>
       o.setName("type")
         .setDescription("Event type")
-        .setRequired(true))
+        .setRequired(true)
+        .addChoices(
+          { name: "Money", value: "Money" },
+          { name: "No Money", value: "No Money" },
+          { name: "All", value: "All" }
+        ))
     .addIntegerOption(o =>
       o.setName("events")
         .setDescription("Events passed")
@@ -150,6 +171,7 @@ const eventBanCommand = new SlashCommandBuilder()
 );
 
 // ================= MAIN HANDLER =================
+
 async function handleEventBan(interaction) {
 
   await interaction.deferReply();
@@ -162,6 +184,7 @@ async function handleEventBan(interaction) {
   const banChannel = await interaction.guild.channels.fetch(BAN_CHANNEL_ID);
 
   // ================= APPLY BAN =================
+
   if (sub === "apply") {
 
     const user = interaction.options.getUser("user");
@@ -196,23 +219,32 @@ async function handleEventBan(interaction) {
   }
 
   // ================= EVENT PASSED =================
+
   if (sub === "eventpassed") {
 
-    const type = interaction.options.getString("type");
+    const type = interaction.options.getString("type").trim().toLowerCase();
     const events = interaction.options.getInteger("events");
 
     for (const r of rows) {
 
-      if (r[2] === type && Number(r[4]) > 0) {
+      if (!r[2]) continue;
+
+      const rowType = r[2].trim().toLowerCase();
+
+      if ((type === "all" || rowType === type) && Number(r[4]) > 0) {
 
         r[4] = Math.max(0, Number(r[4]) - events);
         r[6] = today();
 
         if (r[9]) {
+
           try {
+
             const msg = await banChannel.messages.fetch(r[9]);
             await msg.edit(formatEventBan(r));
+
           } catch {}
+
         }
 
       }
@@ -224,9 +256,11 @@ async function handleEventBan(interaction) {
     await logAudit(`Event passed (${events})`, interaction.user);
 
     return interaction.editReply("✅ Event bans updated.");
+
   }
 
   // ================= REMOVE LAST =================
+
   if (sub === "removelast") {
 
     const user = interaction.options.getUser("user");
@@ -242,10 +276,14 @@ async function handleEventBan(interaction) {
     const removed = rows.splice(index.i,1)[0];
 
     if (removed[9]) {
+
       try {
+
         const msg = await banChannel.messages.fetch(removed[9]);
         await msg.delete();
+
       } catch {}
+
     }
 
     await writeRows(rows);
@@ -253,9 +291,11 @@ async function handleEventBan(interaction) {
     await logAudit("Removed last ban", interaction.user, user);
 
     return interaction.editReply("🗑️ Last ban removed.");
+
   }
 
   // ================= SUMMARY =================
+
   if (sub === "summary") {
 
     const now = new Date();
@@ -265,9 +305,13 @@ async function handleEventBan(interaction) {
     );
 
     const probations = rows.filter(r => {
+
       if (r[2] !== "Probation") return false;
+
       const end = parseDateGB(r[6]);
+
       return end && end >= now;
+
     });
 
     let text = "";
@@ -291,6 +335,7 @@ async function handleEventBan(interaction) {
         .join("\n");
 
     return interaction.editReply(text);
+
   }
 
 }
