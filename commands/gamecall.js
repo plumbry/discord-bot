@@ -25,7 +25,7 @@ function generateTimestamp(time, timezone) {
 
   const now = new Date();
 
-  const parts = new Intl.DateTimeFormat("en-CA", {
+  const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: tz,
     year: "numeric",
     month: "2-digit",
@@ -42,16 +42,18 @@ function generateTimestamp(time, timezone) {
     .toString()
     .padStart(2,"0")}:00`;
 
-  const local = new Date(
+  const zoned = new Date(
     new Date(iso).toLocaleString("en-US",{timeZone:tz})
   );
 
-  const utc = new Date(local.toLocaleString("en-US",{timeZone:"UTC"}));
+  const utc = new Date(
+    zoned.toLocaleString("en-US",{timeZone:"UTC"})
+  );
 
-  if (utc < now) local.setDate(local.getDate()+1);
+  if (utc < now) zoned.setDate(zoned.getDate() + 1);
 
   const finalUTC = new Date(
-    local.toLocaleString("en-US",{timeZone:"UTC"})
+    zoned.toLocaleString("en-US",{timeZone:"UTC"})
   );
 
   return Math.floor(finalUTC.getTime()/1000);
@@ -71,6 +73,7 @@ async function getNextGameNumber(channel){
     if(!match) continue;
 
     const num = parseInt(match[1]);
+
     if(num > highest) highest = num;
 
   }
