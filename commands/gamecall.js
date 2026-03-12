@@ -5,7 +5,12 @@ const ZBD_ERROR_ID = "1428748821160001617";
 
 function generateTimestamp(time, timezone) {
 
-  const [hour, minute] = time.split(":").map(Number);
+  const match = time.match(/^(\d{1,2}):(\d{2})$/);
+
+  if (!match) return null;
+
+  const hour = parseInt(match[1]);
+  const minute = parseInt(match[2]);
 
   const tz =
     timezone === "ET"
@@ -14,30 +19,34 @@ function generateTimestamp(time, timezone) {
 
   const now = new Date();
 
-  const parts = new Intl.DateTimeFormat("en-US", {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
     year: "numeric",
-    month: "numeric",
-    day: "numeric"
-  }).formatToParts(now);
+    month: "2-digit",
+    day: "2-digit"
+  });
+
+  const parts = formatter.formatToParts(now);
 
   const year = parts.find(p => p.type === "year").value;
   const month = parts.find(p => p.type === "month").value;
   const day = parts.find(p => p.type === "day").value;
 
-  const localDate = new Date(`${year}-${month}-${day}T${hour}:${minute}:00`);
+  const iso = `${year}-${month}-${day}T${hour
+    .toString()
+    .padStart(2, "0")}:${minute
+    .toString()
+    .padStart(2, "0")}:00`;
 
-  const utcDate = new Date(
-    localDate.toLocaleString("en-US", { timeZone: "UTC" })
-  );
+  const local = new Date(iso);
 
-  if (utcDate < now) {
-    localDate.setDate(localDate.getDate() + 1);
+  const utc = new Date(local.toLocaleString("en-US", { timeZone: "UTC" }));
+
+  if (utc < now) {
+    local.setDate(local.getDate() + 1);
   }
 
-  const finalUTC = new Date(
-    localDate.toLocaleString("en-US", { timeZone: "UTC" })
-  );
+  const finalUTC = new Date(local.toLocaleString("en-US", { timeZone: "UTC" }));
 
   return Math.floor(finalUTC.getTime() / 1000);
 }
@@ -46,7 +55,7 @@ async function getNextGameNumber(channel) {
 
   const messages = await channel.messages.fetch({ limit: 50 });
 
-  let highestGame = 0;
+  let highest = 0;
 
   const regex = /GAME\s+(\d+)/i;
 
@@ -58,11 +67,11 @@ async function getNextGameNumber(channel) {
 
     const num = parseInt(match[1]);
 
-    if (num > highestGame) highestGame = num;
+    if (num > highest) highest = num;
 
   }
 
-  return highestGame + 1;
+  return highest + 1;
 }
 
 module.exports = {
@@ -90,7 +99,7 @@ module.exports = {
 
     .addStringOption(option =>
       option.setName("time")
-        .setDescription("Start time (example: 20:07)")
+        .setDescription("Start time HH:MM (example 20:07)")
         .setRequired(true)
     )
 
@@ -117,6 +126,14 @@ module.exports = {
     const game = await getNextGameNumber(channel);
 
     const unix = generateTimestamp(time, timezone);
+
+    if (!unix) {
+      return interaction.reply({
+        content: "Invalid time format. Use HH:MM (example 20:07).",
+        ephemeral: true
+      });
+    }
+
     const discordTime = `<t:${unix}:t>`;
 
     await interaction.reply({
@@ -124,34 +141,34 @@ module.exports = {
       ephemeral: true
     });
 
-    const message1 = await channel.send(
+    const msg1 = await channel.send(
 `GAME ${game} ${region} CODE ${code}
 GAME ${game} START BY ${discordTime}
 WHO IS NOT IN ${role}`
     );
 
-    await message1.react(RAISE_HAND);
-    await message1.react(ZBD_ERROR_ID);
+    await msg1.react(RAISE_HAND);
+    await msg1.react(ZBD_ERROR_ID);
 
     setTimeout(async () => {
 
-      const message2 = await channel.send(
+      const msg2 = await channel.send(
 `WHO IS NOT IN ${role}`
       );
 
-      await message2.react(RAISE_HAND);
-      await message2.react(ZBD_ERROR_ID);
+      await msg2.react(RAISE_HAND);
+      await msg2.react(ZBD_ERROR_ID);
 
     }, 120000);
 
     setTimeout(async () => {
 
-      const message3 = await channel.send(
+      const msg3 = await channel.send(
 `WHO IS NOT IN ${role} (game starting in 2 min max)`
       );
 
-      await message3.react(RAISE_HAND);
-      await message3.react(ZBD_ERROR_ID);
+      await msg3.react(RAISE_HAND);
+      await msg3.react(ZBD_ERROR_ID);
 
     }, 240000);
 
