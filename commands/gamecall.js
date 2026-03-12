@@ -2,10 +2,7 @@ const {
   SlashCommandBuilder,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle
+  ButtonStyle
 } = require("discord.js");
 
 const RAISE_HAND = "✋";
@@ -45,12 +42,17 @@ function generateTimestamp(time, timezone) {
     .toString()
     .padStart(2,"0")}:00`;
 
-  const local = new Date(iso);
+  const local = new Date(
+    new Date(iso).toLocaleString("en-US",{timeZone:tz})
+  );
+
   const utc = new Date(local.toLocaleString("en-US",{timeZone:"UTC"}));
 
   if (utc < now) local.setDate(local.getDate()+1);
 
-  const finalUTC = new Date(local.toLocaleString("en-US",{timeZone:"UTC"}));
+  const finalUTC = new Date(
+    local.toLocaleString("en-US",{timeZone:"UTC"})
+  );
 
   return Math.floor(finalUTC.getTime()/1000);
 }
@@ -58,16 +60,20 @@ function generateTimestamp(time, timezone) {
 async function getNextGameNumber(channel){
 
   const messages = await channel.messages.fetch({limit:50});
+
   let highest = 0;
 
   const regex = /GAME\s+(\d+)/i;
 
   for(const msg of messages.values()){
+
     const match = msg.content.match(regex);
     if(!match) continue;
 
     const num = parseInt(match[1]);
+
     if(num > highest) highest = num;
+
   }
 
   return highest + 1;
@@ -121,6 +127,14 @@ module.exports = {
     const game = await getNextGameNumber(channel);
 
     const unix = generateTimestamp(time, timezone);
+
+    if(!unix){
+      return interaction.reply({
+        content:"Invalid time format. Use HH:MM.",
+        ephemeral:true
+      });
+    }
+
     const discordTime = `<t:${unix}:t>`;
 
     await interaction.reply({
@@ -140,6 +154,7 @@ WHO IS NOT IN ${role}`
     const t1 = setTimeout(async ()=>{
 
       const m = await channel.send(`WHO IS NOT IN ${role}`);
+
       await m.react(RAISE_HAND);
       await m.react(ZBD_ERROR_ID);
 
@@ -179,10 +194,13 @@ WHO IS NOT IN ${role}`
     );
 
     await interaction.followUp({
-      content:`Game ${game} controls:`,
+      content:`Game ${game} controls`,
       ephemeral:true,
       components:[controls]
     });
 
   }
+
 };
+
+module.exports.activeCalls = activeCalls;
