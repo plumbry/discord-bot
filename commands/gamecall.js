@@ -45,8 +45,12 @@ module.exports = {
 
     .addStringOption(o =>
       o.setName("region")
-        .setDescription("Region (NAC/EU)")
-        .setRequired(true))
+        .setDescription("Game region")
+        .setRequired(true)
+        .addChoices(
+          { name: "NAC", value: "NAC" },
+          { name: "EU", value: "EU" }
+        ))
 
     .addRoleOption(o =>
       o.setName("role")
@@ -131,6 +135,7 @@ WHO IS NOT IN ${role}`
     activeCalls.set(channel.id,{
       messageId:msg.id,
       roleId:role.id,
+      gameNumber:game,
       t1,
       t2
     });
