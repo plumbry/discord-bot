@@ -25,38 +25,37 @@ function generateTimestamp(time, timezone) {
 
   const now = new Date();
 
-  const parts = new Intl.DateTimeFormat("en-US", {
+  // Get current date in target timezone
+  const formatter = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
     year: "numeric",
     month: "2-digit",
     day: "2-digit"
-  }).formatToParts(now);
+  });
+
+  const parts = formatter.formatToParts(now);
 
   const year = parts.find(p => p.type === "year").value;
   const month = parts.find(p => p.type === "month").value;
   const day = parts.find(p => p.type === "day").value;
 
-  const iso = `${year}-${month}-${day}T${hour
-    .toString()
-    .padStart(2,"0")}:${minute
-    .toString()
-    .padStart(2,"0")}:00`;
+  // Construct local time in that timezone
+  const local = new Date(`${year}-${month}-${day}T${hour.toString().padStart(2,"0")}:${minute.toString().padStart(2,"0")}:00`);
 
-  const zoned = new Date(
-    new Date(iso).toLocaleString("en-US",{timeZone:tz})
-  );
-
+  // Convert to UTC timestamp
   const utc = new Date(
-    zoned.toLocaleString("en-US",{timeZone:"UTC"})
+    local.toLocaleString("en-US", { timeZone: "UTC" })
   );
 
-  if (utc < now) zoned.setDate(zoned.getDate() + 1);
+  if (utc < now) {
+    local.setDate(local.getDate() + 1);
+  }
 
   const finalUTC = new Date(
-    zoned.toLocaleString("en-US",{timeZone:"UTC"})
+    local.toLocaleString("en-US", { timeZone: "UTC" })
   );
 
-  return Math.floor(finalUTC.getTime()/1000);
+  return Math.floor(finalUTC.getTime() / 1000);
 }
 
 async function getNextGameNumber(channel){
