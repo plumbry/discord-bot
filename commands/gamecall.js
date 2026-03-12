@@ -71,7 +71,6 @@ async function getNextGameNumber(channel){
     if(!match) continue;
 
     const num = parseInt(match[1]);
-
     if(num > highest) highest = num;
 
   }
@@ -137,9 +136,24 @@ module.exports = {
 
     const discordTime = `<t:${unix}:t>`;
 
+    const controls = new ActionRowBuilder().addComponents(
+
+      new ButtonBuilder()
+        .setCustomId("gamecall_override")
+        .setLabel("Override Code")
+        .setStyle(ButtonStyle.Primary),
+
+      new ButtonBuilder()
+        .setCustomId("gamecall_cancel")
+        .setLabel("Cancel Game Call")
+        .setStyle(ButtonStyle.Danger)
+
+    );
+
     await interaction.reply({
       content:`Game ${game} call started.`,
-      ephemeral:true
+      ephemeral:true,
+      components:[controls]
     });
 
     const msg = await channel.send(
@@ -175,28 +189,9 @@ WHO IS NOT IN ${role}`
 
     activeCalls.set(channel.id,{
       messageId:msg.id,
+      roleId:role.id,
       t1,
       t2
-    });
-
-    const controls = new ActionRowBuilder().addComponents(
-
-      new ButtonBuilder()
-        .setCustomId("gamecall_override")
-        .setLabel("Override Code")
-        .setStyle(ButtonStyle.Primary),
-
-      new ButtonBuilder()
-        .setCustomId("gamecall_cancel")
-        .setLabel("Cancel Game Call")
-        .setStyle(ButtonStyle.Danger)
-
-    );
-
-    await interaction.followUp({
-      content:`Game ${game} controls`,
-      ephemeral:true,
-      components:[controls]
     });
 
   }
