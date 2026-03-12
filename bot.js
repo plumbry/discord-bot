@@ -52,7 +52,7 @@ const dm = require("./commands/dm");
 // ================= GAMECALL STATE =================
 
 const gamecallModule = require("./commands/gamecall");
-const activeCalls = gamecallModule.activeCalls;
+const activeCalls = gamecallModule.activeCalls || new Map();
 
 // ================= CONSTANTS =================
 
@@ -92,7 +92,6 @@ for (const file of commandFiles) {
     }
 
     client.commands.set(command.data.name, command);
-    console.log(`✅ Loaded command: ${command.data.name}`);
 
   } catch (err) {
 
@@ -131,18 +130,18 @@ client.once("ready", async () => {
 
   try {
 
-    console.log("🔄 Registering slash commands...");
+    console.log("Registering slash commands...");
 
     await rest.put(
       Routes.applicationGuildCommands(client.user.id, GUILD_ID),
       { body: commandJSON }
     );
 
-    console.log("✅ Slash commands registered");
+    console.log("Slash commands registered");
 
   } catch (err) {
 
-    console.error("❌ Slash command registration failed");
+    console.error("Command registration failed");
     console.error(err);
 
   }
@@ -162,16 +161,8 @@ client.on("messageCreate", async message => {
   if (!message.guild) {
 
     try {
-
-      await message.reply(
-        "❌ This bot does not accept direct messages."
-      );
-
-    } catch (err) {
-
-      console.error("DM reply failed:", err);
-
-    }
+      await message.reply("❌ This bot does not accept direct messages.");
+    } catch {}
 
   }
 
@@ -203,7 +194,6 @@ client.on("interactionCreate", async interaction => {
       return dm.handleDM(interaction);
 
     const command = client.commands.get(interaction.commandName);
-
     if (!command) return;
 
     try {
@@ -238,19 +228,26 @@ client.on("interactionCreate", async interaction => {
 
   if (interaction.isButton()) {
 
-    const active = activeCalls.get(interaction.channel.id);
-    if (!active) return;
+    const active = activeCalls?.get(interaction.channel.id);
+
+    if (!active) {
+      return interaction.reply({
+        content: "No active game call found.",
+        ephemeral: true
+      });
+    }
 
     if (interaction.customId === "gamecall_cancel") {
+
+      await interaction.deferReply({ ephemeral: true });
 
       clearTimeout(active.t1);
       clearTimeout(active.t2);
 
       activeCalls.delete(interaction.channel.id);
 
-      return interaction.reply({
-        content: "Game call cancelled.",
-        ephemeral: true
+      return interaction.editReply({
+        content: "Game call cancelled."
       });
 
     }
@@ -285,7 +282,7 @@ client.on("interactionCreate", async interaction => {
 
       const newCode = interaction.fields.getTextInputValue("new_code");
 
-      const active = activeCalls.get(interaction.channel.id);
+      const active = activeCalls?.get(interaction.channel.id);
       if (!active) return;
 
       const msg = await interaction.channel.messages.fetch(active.messageId);
@@ -339,5 +336,5 @@ client.on("guildMemberAdd", handleWelcome);
 
 client.login(process.env.DISCORD_TOKEN)
   .catch(err => {
-    console.error("❌ Discord login failed:", err);
+    console.error("Discord login failed:", err);
   });
