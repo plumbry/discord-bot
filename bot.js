@@ -49,7 +49,7 @@ const { startBanExpiryChecker } = require("./banExpiryChecker");
 
 const dm = require("./commands/dm");
 
-// ================= GAMECALL SHARED STATE =================
+// ================= GAMECALL STATE =================
 
 const gamecallModule = require("./commands/gamecall");
 const activeCalls = gamecallModule.activeCalls;
@@ -72,7 +72,7 @@ const client = new Client({
 
 client.commands = new Map();
 
-// ================= LOAD COMMAND FILES =================
+// ================= LOAD COMMANDS =================
 
 const commandsPath = path.join(__dirname, "commands");
 
@@ -92,7 +92,6 @@ for (const file of commandFiles) {
     }
 
     client.commands.set(command.data.name, command);
-    console.log(`✅ Loaded command: ${command.data.name}`);
 
   } catch (err) {
 
@@ -125,42 +124,20 @@ client.once("ready", async () => {
     commands.push(command.data);
   }
 
-  const uniqueCommands = [];
-  const seen = new Set();
-
-  for (const c of commands) {
-
-    if (!c || typeof c.toJSON !== "function") continue;
-    if (seen.has(c.name)) continue;
-
-    seen.add(c.name);
-    uniqueCommands.push(c);
-
-  }
-
-  const commandJSON = uniqueCommands.map(c => c.toJSON());
+  const commandJSON = commands.map(c => c.toJSON());
 
   try {
-
-    console.log("🧹 Clearing existing commands...");
-
-    await rest.put(
-      Routes.applicationGuildCommands(client.user.id, GUILD_ID),
-      { body: [] }
-    );
-
-    console.log("🔄 Registering slash commands...");
 
     await rest.put(
       Routes.applicationGuildCommands(client.user.id, GUILD_ID),
       { body: commandJSON }
     );
 
-    console.log("✅ Slash commands rebuilt");
+    console.log("✅ Slash commands registered");
 
   } catch (err) {
 
-    console.error("❌ Failed to update slash commands");
+    console.error("❌ Failed to update commands");
     console.error(err);
 
   }
@@ -199,7 +176,7 @@ client.on("messageCreate", async message => {
 
 client.on("interactionCreate", async interaction => {
 
-  // ================= SLASH COMMANDS =================
+  // ===== SLASH COMMANDS =====
 
   if (interaction.isChatInputCommand()) {
 
@@ -252,7 +229,7 @@ client.on("interactionCreate", async interaction => {
 
   }
 
-  // ================= GAMECALL BUTTONS =================
+  // ===== GAMECALL BUTTONS =====
 
   if (interaction.isButton()) {
 
@@ -295,7 +272,7 @@ client.on("interactionCreate", async interaction => {
 
   }
 
-  // ================= MODAL SUBMIT =================
+  // ===== MODAL SUBMIT =====
 
   if (interaction.isModalSubmit()) {
 
@@ -319,6 +296,14 @@ client.on("interactionCreate", async interaction => {
 
       await msg.edit(lines.join("\n"));
 
+      const roleMatch = msg.content.match(/<@&\d+>/);
+      const rolePing = roleMatch ? roleMatch[0] : "";
+
+      await interaction.channel.send(
+`🚨 **NEW CODE** ${rolePing}
+CODE ${newCode}`
+      );
+
       clearTimeout(active.t1);
       clearTimeout(active.t2);
 
@@ -333,7 +318,7 @@ client.on("interactionCreate", async interaction => {
 
   }
 
-  // ================= DM BUTTONS =================
+  // ===== DM BUTTON HANDLER =====
 
   if (interaction.isButton() && dm.handleDMButton) {
     return dm.handleDMButton(interaction);
