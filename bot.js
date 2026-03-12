@@ -228,7 +228,7 @@ client.on("interactionCreate", async interaction => {
 
   if (interaction.isButton()) {
 
-    const active = activeCalls?.get(interaction.channel.id);
+    const active = activeCalls.get(interaction.channel.id);
 
     if (!active) {
       return interaction.reply({
@@ -282,8 +282,14 @@ client.on("interactionCreate", async interaction => {
 
       const newCode = interaction.fields.getTextInputValue("new_code");
 
-      const active = activeCalls?.get(interaction.channel.id);
-      if (!active) return;
+      const active = activeCalls.get(interaction.channel.id);
+
+      if (!active) {
+        return interaction.reply({
+          content: "No active game call found.",
+          ephemeral: true
+        });
+      }
 
       const msg = await interaction.channel.messages.fetch(active.messageId);
 
@@ -298,18 +304,12 @@ client.on("interactionCreate", async interaction => {
 
       await msg.edit(lines.join("\n"));
 
-      const roleMatch = msg.content.match(/<@&\d+>/);
-      const rolePing = roleMatch ? roleMatch[0] : "";
+      const rolePing = `<@&${active.roleId}>`;
 
       await interaction.channel.send(
 `🚨 **NEW CODE** ${rolePing}
 CODE ${newCode}`
       );
-
-      clearTimeout(active.t1);
-      clearTimeout(active.t2);
-
-      activeCalls.delete(interaction.channel.id);
 
       return interaction.reply({
         content: `Game code updated to **${newCode}**.`,
