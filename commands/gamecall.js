@@ -3,6 +3,31 @@ const { SlashCommandBuilder } = require("discord.js");
 const RAISE_HAND = "✋";
 const ZBD_ERROR_ID = "1428748821160001617";
 
+function generateTimestamp(time, timezone) {
+
+  const [hour, minute] = time.split(":").map(Number);
+
+  const now = new Date();
+
+  const date = new Date();
+
+  date.setUTCHours(hour, minute, 0, 0);
+
+  if (timezone === "EST") {
+    date.setUTCHours(hour + 5, minute, 0, 0);
+  }
+
+  if (timezone === "GMT") {
+    date.setUTCHours(hour, minute, 0, 0);
+  }
+
+  if (date < now) {
+    date.setUTCDate(date.getUTCDate() + 1);
+  }
+
+  return Math.floor(date.getTime() / 1000);
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("gamecall")
@@ -33,9 +58,19 @@ module.exports = {
     )
 
     .addStringOption(option =>
-      option.setName("endtime")
-        .setDescription("Game start time (example: 20:07)")
+      option.setName("time")
+        .setDescription("Start time (example: 20:07)")
         .setRequired(true)
+    )
+
+    .addStringOption(option =>
+      option.setName("timezone")
+        .setDescription("Timezone of the entered time")
+        .setRequired(true)
+        .addChoices(
+          { name: "EST", value: "EST" },
+          { name: "GMT", value: "GMT" }
+        )
     ),
 
   async execute(interaction) {
@@ -44,26 +79,28 @@ module.exports = {
     const code = interaction.options.getString("code");
     const region = interaction.options.getString("region");
     const role = interaction.options.getRole("role");
-    const endtime = interaction.options.getString("endtime");
+    const time = interaction.options.getString("time");
+    const timezone = interaction.options.getString("timezone");
 
     const channel = interaction.channel;
+
+    const unix = generateTimestamp(time, timezone);
+    const discordTime = `<t:${unix}:t>`;
 
     await interaction.reply({
       content: "Game call started.",
       ephemeral: true
     });
 
-    // MESSAGE 1
     const message1 = await channel.send(
-`GAME ${game} ${region} CODE ${code}
-GAME ${game} START BY ${endtime}
+`GAME ${game} ${region} ${code}
+GAME ${game} START BY ${discordTime}
 WHO IS NOT IN ${role}`
     );
 
     await message1.react(RAISE_HAND);
     await message1.react(ZBD_ERROR_ID);
 
-    // MESSAGE 2 (after 2 minutes)
     setTimeout(async () => {
 
       const message2 = await channel.send(
@@ -75,7 +112,6 @@ WHO IS NOT IN ${role}`
 
     }, 120000);
 
-    // MESSAGE 3 (after 4 minutes)
     setTimeout(async () => {
 
       const message3 = await channel.send(
