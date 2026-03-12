@@ -42,16 +42,33 @@ function generateTimestamp(time, timezone) {
   return Math.floor(finalUTC.getTime() / 1000);
 }
 
+async function getNextGameNumber(channel) {
+
+  const messages = await channel.messages.fetch({ limit: 50 });
+
+  let highestGame = 0;
+
+  const regex = /GAME\s+(\d+)/i;
+
+  for (const msg of messages.values()) {
+
+    const match = msg.content.match(regex);
+
+    if (!match) continue;
+
+    const num = parseInt(match[1]);
+
+    if (num > highestGame) highestGame = num;
+
+  }
+
+  return highestGame + 1;
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("gamecall")
     .setDescription("Post game start reminders")
-
-    .addIntegerOption(option =>
-      option.setName("game")
-        .setDescription("Game number")
-        .setRequired(true)
-    )
 
     .addStringOption(option =>
       option.setName("code")
@@ -89,7 +106,6 @@ module.exports = {
 
   async execute(interaction) {
 
-    const game = interaction.options.getInteger("game");
     const code = interaction.options.getString("code");
     const region = interaction.options.getString("region");
     const role = interaction.options.getRole("role");
@@ -98,15 +114,16 @@ module.exports = {
 
     const channel = interaction.channel;
 
+    const game = await getNextGameNumber(channel);
+
     const unix = generateTimestamp(time, timezone);
     const discordTime = `<t:${unix}:t>`;
 
     await interaction.reply({
-      content: "Game call started.",
+      content: `Game ${game} call started.`,
       ephemeral: true
     });
 
-    // FIRST MESSAGE
     const message1 = await channel.send(
 `GAME ${game} ${region} CODE ${code}
 GAME ${game} START BY ${discordTime}
@@ -116,7 +133,6 @@ WHO IS NOT IN ${role}`
     await message1.react(RAISE_HAND);
     await message1.react(ZBD_ERROR_ID);
 
-    // SECOND MESSAGE (2 minutes)
     setTimeout(async () => {
 
       const message2 = await channel.send(
@@ -128,7 +144,6 @@ WHO IS NOT IN ${role}`
 
     }, 120000);
 
-    // THIRD MESSAGE (4 minutes)
     setTimeout(async () => {
 
       const message3 = await channel.send(
