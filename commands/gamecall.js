@@ -7,25 +7,39 @@ function generateTimestamp(time, timezone) {
 
   const [hour, minute] = time.split(":").map(Number);
 
+  const tz =
+    timezone === "ET"
+      ? "America/New_York"
+      : "Europe/London";
+
   const now = new Date();
 
-  const date = new Date();
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric"
+  }).formatToParts(now);
 
-  date.setUTCHours(hour, minute, 0, 0);
+  const year = parts.find(p => p.type === "year").value;
+  const month = parts.find(p => p.type === "month").value;
+  const day = parts.find(p => p.type === "day").value;
 
-  if (timezone === "EST") {
-    date.setUTCHours(hour + 5, minute, 0, 0);
+  const localDate = new Date(`${year}-${month}-${day}T${hour}:${minute}:00`);
+
+  const utcDate = new Date(
+    localDate.toLocaleString("en-US", { timeZone: "UTC" })
+  );
+
+  if (utcDate < now) {
+    localDate.setDate(localDate.getDate() + 1);
   }
 
-  if (timezone === "GMT") {
-    date.setUTCHours(hour, minute, 0, 0);
-  }
+  const finalUTC = new Date(
+    localDate.toLocaleString("en-US", { timeZone: "UTC" })
+  );
 
-  if (date < now) {
-    date.setUTCDate(date.getUTCDate() + 1);
-  }
-
-  return Math.floor(date.getTime() / 1000);
+  return Math.floor(finalUTC.getTime() / 1000);
 }
 
 module.exports = {
@@ -65,11 +79,11 @@ module.exports = {
 
     .addStringOption(option =>
       option.setName("timezone")
-        .setDescription("Timezone of the entered time")
+        .setDescription("Timezone of the input time")
         .setRequired(true)
         .addChoices(
-          { name: "EST", value: "EST" },
-          { name: "GMT", value: "GMT" }
+          { name: "ET (US East)", value: "ET" },
+          { name: "UK", value: "UK" }
         )
     ),
 
@@ -92,8 +106,9 @@ module.exports = {
       ephemeral: true
     });
 
+    // FIRST MESSAGE
     const message1 = await channel.send(
-`GAME ${game} ${region} ${code}
+`GAME ${game} ${region} CODE ${code}
 GAME ${game} START BY ${discordTime}
 WHO IS NOT IN ${role}`
     );
@@ -101,6 +116,7 @@ WHO IS NOT IN ${role}`
     await message1.react(RAISE_HAND);
     await message1.react(ZBD_ERROR_ID);
 
+    // SECOND MESSAGE (2 minutes)
     setTimeout(async () => {
 
       const message2 = await channel.send(
@@ -112,6 +128,7 @@ WHO IS NOT IN ${role}`
 
     }, 120000);
 
+    // THIRD MESSAGE (4 minutes)
     setTimeout(async () => {
 
       const message3 = await channel.send(
