@@ -3,6 +3,8 @@ const { SlashCommandBuilder } = require("discord.js");
 const RAISE_HAND = "✋";
 const ZBD_ERROR_ID = "1428748821160001617";
 
+const activeCalls = new Map();
+
 function generateTimestamp(time, timezone) {
 
   const match = time.match(/^(\d{1,2}):(\d{2})$/);
@@ -77,51 +79,121 @@ async function getNextGameNumber(channel) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("gamecall")
-    .setDescription("Post game start reminders")
+    .setDescription("Manage game calls")
 
     .addStringOption(option =>
       option.setName("code")
         .setDescription("Game code")
-        .setRequired(true)
     )
 
     .addStringOption(option =>
       option.setName("region")
         .setDescription("Region (NAC / EU etc)")
-        .setRequired(true)
     )
 
     .addRoleOption(option =>
       option.setName("role")
         .setDescription("Role to ping")
-        .setRequired(true)
     )
 
     .addStringOption(option =>
       option.setName("time")
         .setDescription("Start time HH:MM (example 20:07)")
-        .setRequired(true)
     )
 
     .addStringOption(option =>
       option.setName("timezone")
         .setDescription("Timezone of the input time")
-        .setRequired(true)
         .addChoices(
           { name: "ET (US East)", value: "ET" },
           { name: "UK", value: "UK" }
         )
+    )
+
+    .addStringOption(option =>
+      option.setName("override")
+        .setDescription("Override existing game code")
+    )
+
+    .addBooleanOption(option =>
+      option.setName("cancel")
+        .setDescription("Cancel current game call")
     ),
 
   async execute(interaction) {
 
+    const channel = interaction.channel;
+
+    const override = interaction.options.getString("override");
+    const cancel = interaction.options.getBoolean("cancel");
+
+    const active = activeCalls.get(channel.id);
+
+    // CANCEL CURRENT CALL
+    if (cancel) {
+
+      if (active) {
+        clearTimeout(active.t1);
+        clearTimeout(active.t2);
+        activeCalls.delete(channel.id);
+      }
+
+      return interaction.reply({
+        content: "Game call cancelled.",
+        ephemeral: true
+      });
+    }
+
+    // OVERRIDE CODE
+    if (override) {
+
+      const messages = await channel.messages.fetch({ limit: 20 });
+
+      const target = messages.find(m => /^GAME\s+\d+/i.test(m.content));
+
+      if (!target) {
+        return interaction.reply({
+          content: "No active GAME message found.",
+          ephemeral: true
+        });
+      }
+
+      const lines = target.content.split("\n");
+
+      const match = lines[0].match(/^GAME\s+(\d+)\s+(\S+)/i);
+
+      const game = match[1];
+      const region = match[2];
+
+      lines[0] = `GAME ${game} ${region} CODE ${override}`;
+
+      await target.edit(lines.join("\n"));
+
+      if (active) {
+        clearTimeout(active.t1);
+        clearTimeout(active.t2);
+        activeCalls.delete(channel.id);
+      }
+
+      return interaction.reply({
+        content: `Game code updated to **${override}**.`,
+        ephemeral: true
+      });
+    }
+
+    // NORMAL GAME CALL
     const code = interaction.options.getString("code");
     const region = interaction.options.getString("region");
     const role = interaction.options.getRole("role");
     const time = interaction.options.getString("time");
     const timezone = interaction.options.getString("timezone");
 
-    const channel = interaction.channel;
+    if (!code || !region || !role || !time || !timezone) {
+      return interaction.reply({
+        content: "Missing fields to start a game call.",
+        ephemeral: true
+      });
+    }
 
     const game = await getNextGameNumber(channel);
 
@@ -150,7 +222,7 @@ WHO IS NOT IN ${role}`
     await msg1.react(RAISE_HAND);
     await msg1.react(ZBD_ERROR_ID);
 
-    setTimeout(async () => {
+    const t1 = setTimeout(async () => {
 
       const msg2 = await channel.send(
 `WHO IS NOT IN ${role}`
@@ -161,7 +233,7 @@ WHO IS NOT IN ${role}`
 
     }, 120000);
 
-    setTimeout(async () => {
+    const t2 = setTimeout(async () => {
 
       const msg3 = await channel.send(
 `WHO IS NOT IN ${role} (game starting in 2 min max)`
@@ -170,7 +242,11 @@ WHO IS NOT IN ${role}`
       await msg3.react(RAISE_HAND);
       await msg3.react(ZBD_ERROR_ID);
 
+      activeCalls.delete(channel.id);
+
     }, 240000);
+
+    activeCalls.set(channel.id, { t1, t2 });
 
   }
 };
