@@ -2,7 +2,11 @@ const {
   Client,
   GatewayIntentBits,
   REST,
-  Routes
+  Routes,
+  ModalBuilder,
+  ActionRowBuilder,
+  TextInputBuilder,
+  TextInputStyle
 } = require("discord.js");
 
 const fs = require("fs");
@@ -44,6 +48,11 @@ const { startBanExpiryChecker } = require("./banExpiryChecker");
 // ================= DM SYSTEM =================
 
 const dm = require("./commands/dm");
+
+// ================= GAMECALL SHARED STATE =================
+
+const gamecallModule = require("./commands/gamecall");
+const activeCalls = gamecallModule.activeCalls;
 
 // ================= CONSTANTS =================
 
@@ -100,7 +109,6 @@ client.once("ready", async () => {
 
   console.log(`🤖 Logged in as ${client.user.tag}`);
 
-  // Start ban expiry monitoring
   startBanExpiryChecker(client);
 
   const rest = new REST({ version: "10" })
@@ -123,7 +131,6 @@ client.once("ready", async () => {
   for (const c of commands) {
 
     if (!c || typeof c.toJSON !== "function") continue;
-
     if (seen.has(c.name)) continue;
 
     seen.add(c.name);
@@ -192,6 +199,8 @@ client.on("messageCreate", async message => {
 
 client.on("interactionCreate", async interaction => {
 
+  // ================= SLASH COMMANDS =================
+
   if (interaction.isChatInputCommand()) {
 
     if (interaction.commandName === "verify")
@@ -242,6 +251,89 @@ client.on("interactionCreate", async interaction => {
     }
 
   }
+
+  // ================= GAMECALL BUTTONS =================
+
+  if (interaction.isButton()) {
+
+    const active = activeCalls.get(interaction.channel.id);
+    if (!active) return;
+
+    if (interaction.customId === "gamecall_cancel") {
+
+      clearTimeout(active.t1);
+      clearTimeout(active.t2);
+
+      activeCalls.delete(interaction.channel.id);
+
+      return interaction.reply({
+        content: "Game call cancelled.",
+        ephemeral: true
+      });
+
+    }
+
+    if (interaction.customId === "gamecall_override") {
+
+      const modal = new ModalBuilder()
+        .setCustomId("override_modal")
+        .setTitle("Override Game Code");
+
+      const input = new TextInputBuilder()
+        .setCustomId("new_code")
+        .setLabel("New Game Code")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(input)
+      );
+
+      return interaction.showModal(modal);
+
+    }
+
+  }
+
+  // ================= MODAL SUBMIT =================
+
+  if (interaction.isModalSubmit()) {
+
+    if (interaction.customId === "override_modal") {
+
+      const newCode = interaction.fields.getTextInputValue("new_code");
+
+      const active = activeCalls.get(interaction.channel.id);
+      if (!active) return;
+
+      const msg = await interaction.channel.messages.fetch(active.messageId);
+
+      const lines = msg.content.split("\n");
+
+      const match = lines[0].match(/^GAME\s+(\d+)\s+(\S+)/i);
+
+      const game = match[1];
+      const region = match[2];
+
+      lines[0] = `GAME ${game} ${region} CODE ${newCode}`;
+
+      await msg.edit(lines.join("\n"));
+
+      clearTimeout(active.t1);
+      clearTimeout(active.t2);
+
+      activeCalls.delete(interaction.channel.id);
+
+      return interaction.reply({
+        content: `Game code updated to **${newCode}**.`,
+        ephemeral: true
+      });
+
+    }
+
+  }
+
+  // ================= DM BUTTONS =================
 
   if (interaction.isButton() && dm.handleDMButton) {
     return dm.handleDMButton(interaction);

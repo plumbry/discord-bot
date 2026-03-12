@@ -1,4 +1,12 @@
-const { SlashCommandBuilder } = require("discord.js");
+const {
+  SlashCommandBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle
+} = require("discord.js");
 
 const RAISE_HAND = "✋";
 const ZBD_ERROR_ID = "1428748821160001617";
@@ -150,7 +158,31 @@ WHO IS NOT IN ${role}`
 
     },240000);
 
-    activeCalls.set(channel.id,{t1,t2});
+    activeCalls.set(channel.id,{
+      messageId:msg.id,
+      t1,
+      t2
+    });
+
+    const controls = new ActionRowBuilder().addComponents(
+
+      new ButtonBuilder()
+        .setCustomId("gamecall_override")
+        .setLabel("Override Code")
+        .setStyle(ButtonStyle.Primary),
+
+      new ButtonBuilder()
+        .setCustomId("gamecall_cancel")
+        .setLabel("Cancel Game Call")
+        .setStyle(ButtonStyle.Danger)
+
+    );
+
+    await interaction.followUp({
+      content:`Game ${game} controls:`,
+      ephemeral:true,
+      components:[controls]
+    });
 
   }
 };
