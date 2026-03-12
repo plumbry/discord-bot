@@ -10,54 +10,6 @@ const ZBD_ERROR_ID = "1428748821160001617";
 
 const activeCalls = new Map();
 
-function generateTimestamp(time, timezone) {
-
-  const match = time.match(/^(\d{1,2}):(\d{2})$/);
-  if (!match) return null;
-
-  const hour = parseInt(match[1]);
-  const minute = parseInt(match[2]);
-
-  const tz =
-    timezone === "ET"
-      ? "America/New_York"
-      : "Europe/London";
-
-  const now = new Date();
-
-  // Get current date in target timezone
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  });
-
-  const parts = formatter.formatToParts(now);
-
-  const year = parts.find(p => p.type === "year").value;
-  const month = parts.find(p => p.type === "month").value;
-  const day = parts.find(p => p.type === "day").value;
-
-  // Construct local time in that timezone
-  const local = new Date(`${year}-${month}-${day}T${hour.toString().padStart(2,"0")}:${minute.toString().padStart(2,"0")}:00`);
-
-  // Convert to UTC timestamp
-  const utc = new Date(
-    local.toLocaleString("en-US", { timeZone: "UTC" })
-  );
-
-  if (utc < now) {
-    local.setDate(local.getDate() + 1);
-  }
-
-  const finalUTC = new Date(
-    local.toLocaleString("en-US", { timeZone: "UTC" })
-  );
-
-  return Math.floor(finalUTC.getTime() / 1000);
-}
-
 async function getNextGameNumber(channel){
 
   const messages = await channel.messages.fetch({limit:50});
@@ -101,42 +53,29 @@ module.exports = {
         .setDescription("Role to ping")
         .setRequired(true))
 
-    .addStringOption(o =>
-      o.setName("time")
-        .setDescription("Start time HH:MM")
-        .setRequired(true))
-
-    .addStringOption(o =>
-      o.setName("timezone")
-        .setDescription("Timezone")
+    .addIntegerOption(o =>
+      o.setName("minutes")
+        .setDescription("Start game in X minutes")
         .setRequired(true)
-        .addChoices(
-          {name:"ET",value:"ET"},
-          {name:"UK",value:"UK"}
-        )),
+        .setMinValue(1)
+        .setMaxValue(60)),
 
   async execute(interaction){
 
     const code = interaction.options.getString("code");
     const region = interaction.options.getString("region");
     const role = interaction.options.getRole("role");
-    const time = interaction.options.getString("time");
-    const timezone = interaction.options.getString("timezone");
+    const minutes = interaction.options.getInteger("minutes");
 
     const channel = interaction.channel;
 
     const game = await getNextGameNumber(channel);
 
-    const unix = generateTimestamp(time, timezone);
+    const start = Date.now() + minutes * 60000;
+    const unix = Math.floor(start / 1000);
 
-    if(!unix){
-      return interaction.reply({
-        content:"Invalid time format. Use HH:MM.",
-        ephemeral:true
-      });
-    }
-
-    const discordTime = `<t:${unix}:t>`;
+    const relative = `<t:${unix}:R>`;
+    const exact = `<t:${unix}:t>`;
 
     const controls = new ActionRowBuilder().addComponents(
 
@@ -160,7 +99,7 @@ module.exports = {
 
     const msg = await channel.send(
 `GAME ${game} ${region} CODE ${code}
-GAME ${game} START BY ${discordTime}
+GAME ${game} START ${relative} (${exact})
 WHO IS NOT IN ${role}`
     );
 
