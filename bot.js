@@ -41,7 +41,7 @@ const {
   handleMyBan
 } = require("./event bans/eventBans");
 
-// ================= BAN EXPIRY CHECKER =================
+// ================= BAN EXPIRY =================
 
 const { startBanExpiryChecker } = require("./banExpiryChecker");
 
@@ -58,7 +58,7 @@ const activeCalls = gamecallModule.activeCalls;
 
 const GUILD_ID = "1371615693392576580";
 
-// ================= CREATE CLIENT =================
+// ================= CLIENT =================
 
 const client = new Client({
   intents: [
@@ -86,16 +86,17 @@ for (const file of commandFiles) {
 
     const command = require(`./commands/${file}`);
 
-    if (!command.data || !command.execute) {
-      console.log(`⚠️ Command missing data or execute: ${file}`);
+    if (!command?.data || !command?.execute) {
+      console.log(`⚠️ Invalid command skipped: ${file}`);
       continue;
     }
 
     client.commands.set(command.data.name, command);
+    console.log(`✅ Loaded command: ${command.data.name}`);
 
   } catch (err) {
 
-    console.error(`❌ Failed to load command: ${file}`);
+    console.error(`❌ Failed loading command: ${file}`);
     console.error(err);
 
   }
@@ -124,9 +125,13 @@ client.once("ready", async () => {
     commands.push(command.data);
   }
 
-  const commandJSON = commands.map(c => c.toJSON());
+  const commandJSON = commands
+    .filter(c => c && typeof c.toJSON === "function")
+    .map(c => c.toJSON());
 
   try {
+
+    console.log("🔄 Registering slash commands...");
 
     await rest.put(
       Routes.applicationGuildCommands(client.user.id, GUILD_ID),
@@ -137,7 +142,7 @@ client.once("ready", async () => {
 
   } catch (err) {
 
-    console.error("❌ Failed to update commands");
+    console.error("❌ Slash command registration failed");
     console.error(err);
 
   }
@@ -164,7 +169,7 @@ client.on("messageCreate", async message => {
 
     } catch (err) {
 
-      console.error("Failed to reply to DM:", err);
+      console.error("DM reply failed:", err);
 
     }
 
@@ -318,7 +323,7 @@ CODE ${newCode}`
 
   }
 
-  // ===== DM BUTTON HANDLER =====
+  // ===== DM BUTTONS =====
 
   if (interaction.isButton() && dm.handleDMButton) {
     return dm.handleDMButton(interaction);
