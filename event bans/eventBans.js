@@ -99,7 +99,7 @@ const eventBanCommand = new SlashCommandBuilder()
 .setName("eventban")
 .setDescription("Event ban management")
 
-// APPLY EVENT BAN
+// EVENT BAN
 .addSubcommand(s =>
   s.setName("apply")
     .setDescription("Apply an event ban")
@@ -124,7 +124,7 @@ const eventBanCommand = new SlashCommandBuilder()
         .setRequired(true))
 )
 
-// APPLY PROBATION
+// PROBATION
 .addSubcommand(s =>
   s.setName("probation")
     .setDescription("Apply probation (days)")
@@ -132,6 +132,10 @@ const eventBanCommand = new SlashCommandBuilder()
       o.setName("user").setDescription("User").setRequired(true))
     .addIntegerOption(o =>
       o.setName("days").setDescription("Days").setRequired(true))
+    .addStringOption(o =>
+      o.setName("start")
+        .setDescription("Start date DD/MM/YYYY")
+        .setRequired(false))
     .addStringOption(o =>
       o.setName("reason").setDescription("Reason").setRequired(true))
 )
@@ -182,7 +186,7 @@ async function handleEventBan(interaction) {
   const rows = await getRows();
   const banChannel = await interaction.guild.channels.fetch(BAN_CHANNEL_ID);
 
-  // APPLY EVENT BAN
+  // EVENT BAN
 
   if (sub === "apply") {
 
@@ -217,13 +221,32 @@ async function handleEventBan(interaction) {
     return interaction.editReply("✅ Event ban applied.");
   }
 
-  // APPLY PROBATION
+  // PROBATION
 
   if (sub === "probation") {
 
     const user = interaction.options.getUser("user");
     const days = interaction.options.getInteger("days");
+    const startInput = interaction.options.getString("start");
     const reason = interaction.options.getString("reason");
+
+    let startDate;
+
+    if (startInput) {
+
+      const [d,m,y] = startInput.split("/").map(Number);
+      startDate = new Date(y, m - 1, d);
+
+    } else {
+
+      startDate = new Date();
+
+    }
+
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + days);
+
+    const format = d => d.toLocaleDateString("en-GB");
 
     const row = [
       user.id,
@@ -231,8 +254,8 @@ async function handleEventBan(interaction) {
       "Probation",
       days,
       days,
-      today(),
-      today(),
+      format(startDate),
+      format(endDate),
       reason,
       interaction.user.tag,
       ""
