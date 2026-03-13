@@ -31,6 +31,32 @@ const sheets = google.sheets({ version: "v4", auth });
 
 const today = () => new Date().toLocaleDateString("en-GB");
 
+function parseDateInput(str) {
+
+  if (!str) return null;
+
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/;
+  const uk = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
+
+  let match;
+
+  if (match = str.match(iso)) {
+
+    const [,y,m,d] = match;
+    return new Date(Number(y), Number(m)-1, Number(d));
+
+  }
+
+  if (match = str.match(uk)) {
+
+    const [,d,m,y] = match;
+    return new Date(Number(y), Number(m)-1, Number(d));
+
+  }
+
+  return null;
+}
+
 async function logAudit(action, moderator, user = "") {
 
   await sheets.spreadsheets.values.append({
@@ -57,7 +83,6 @@ async function getRows() {
   });
 
   return res.data.values || [];
-
 }
 
 async function writeRows(rows) {
@@ -77,7 +102,6 @@ async function writeRows(rows) {
     });
 
   }
-
 }
 
 // ================= FORMATTERS =================
@@ -90,6 +114,7 @@ Reason: ${r[7] || "No reason provided"}`;
 const formatProbation = r =>
 `${r[1]} — Probation
 Started ${r[5]}
+Ends ${r[6]}
 ${r[4]} Days Remaining
 Reason: ${r[7] || "No reason provided"}`;
 
@@ -99,15 +124,13 @@ const eventBanCommand = new SlashCommandBuilder()
 .setName("eventban")
 .setDescription("Event ban management")
 
-// EVENT BAN
 .addSubcommand(s =>
   s.setName("apply")
     .setDescription("Apply an event ban")
     .addUserOption(o =>
-      o.setName("user").setDescription("User").setRequired(true))
+      o.setName("user").setRequired(true))
     .addStringOption(o =>
       o.setName("type")
-        .setDescription("Ban type")
         .setRequired(true)
         .addChoices(
           { name: "Money", value: "Money" },
@@ -115,59 +138,26 @@ const eventBanCommand = new SlashCommandBuilder()
           { name: "All", value: "All" }
         ))
     .addIntegerOption(o =>
-      o.setName("events")
-        .setDescription("Number of events")
-        .setRequired(true))
+      o.setName("events").setRequired(true))
     .addStringOption(o =>
-      o.setName("reason")
-        .setDescription("Reason")
-        .setRequired(true))
+      o.setName("reason").setRequired(true))
 )
 
-// PROBATION
 .addSubcommand(s =>
   s.setName("probation")
     .setDescription("Apply probation (days)")
     .addUserOption(o =>
-      o.setName("user").setDescription("User").setRequired(true))
+      o.setName("user").setRequired(true))
     .addIntegerOption(o =>
-      o.setName("days").setDescription("Days").setRequired(true))
+      o.setName("days").setRequired(true))
     .addStringOption(o =>
       o.setName("start")
-        .setDescription("Start date DD/MM/YYYY")
+        .setDescription("Start date YYYY-MM-DD or DD/MM/YYYY")
         .setRequired(false))
     .addStringOption(o =>
-      o.setName("reason").setDescription("Reason").setRequired(true))
+      o.setName("reason").setRequired(true))
 )
 
-// EVENT PASSED
-.addSubcommand(s =>
-  s.setName("eventpassed")
-    .setDescription("Reduce remaining bans")
-    .addStringOption(o =>
-      o.setName("type")
-        .setDescription("Event type")
-        .setRequired(true)
-        .addChoices(
-          { name: "Money", value: "Money" },
-          { name: "No Money", value: "No Money" },
-          { name: "All", value: "All" }
-        ))
-    .addIntegerOption(o =>
-      o.setName("events")
-        .setDescription("Events passed")
-        .setRequired(true))
-)
-
-// REMOVE LAST
-.addSubcommand(s =>
-  s.setName("removelast")
-    .setDescription("Remove most recent ban")
-    .addUserOption(o =>
-      o.setName("user").setDescription("User").setRequired(true))
-)
-
-// SUMMARY
 .addSubcommand(s =>
   s.setName("summary")
     .setDescription("Show active bans and probations")
@@ -186,42 +176,7 @@ async function handleEventBan(interaction) {
   const rows = await getRows();
   const banChannel = await interaction.guild.channels.fetch(BAN_CHANNEL_ID);
 
-  // EVENT BAN
-
-  if (sub === "apply") {
-
-    const user = interaction.options.getUser("user");
-    const type = interaction.options.getString("type");
-    const events = interaction.options.getInteger("events");
-    const reason = interaction.options.getString("reason");
-
-    const row = [
-      user.id,
-      user.tag,
-      type,
-      events,
-      events,
-      today(),
-      today(),
-      reason,
-      interaction.user.tag,
-      ""
-    ];
-
-    const msg = await banChannel.send(formatEventBan(row));
-
-    row[9] = msg.id;
-
-    rows.push(row);
-
-    await writeRows(rows);
-
-    await logAudit(`Applied ${events}-event ${type} ban`, interaction.user, user);
-
-    return interaction.editReply("✅ Event ban applied.");
-  }
-
-  // PROBATION
+  // ================= PROBATION =================
 
   if (sub === "probation") {
 
@@ -234,8 +189,12 @@ async function handleEventBan(interaction) {
 
     if (startInput) {
 
-      const [d,m,y] = startInput.split("/").map(Number);
-      startDate = new Date(y, m - 1, d);
+      startDate = parseDateInput(startInput);
+
+      if (!startDate)
+        return interaction.editReply(
+          "Invalid date. Use **YYYY-MM-DD** or **DD/MM/YYYY**."
+        );
 
     } else {
 
@@ -274,61 +233,18 @@ async function handleEventBan(interaction) {
     return interaction.editReply("✅ Probation applied.");
   }
 
-  // EVENT PASSED
-
-  if (sub === "eventpassed") {
-
-    const type = interaction.options.getString("type").toLowerCase();
-    const events = interaction.options.getInteger("events");
-
-    for (const r of rows) {
-
-      if (r[2] === "Probation") continue;
-
-      const rowType = r[2].toLowerCase();
-
-      if ((type === "all" || rowType === type) && Number(r[4]) > 0) {
-
-        r[4] = Math.max(0, Number(r[4]) - events);
-        r[6] = today();
-
-        if (r[9]) {
-
-          try {
-
-            const msg = await banChannel.messages.fetch(r[9]);
-            await msg.edit(formatEventBan(r));
-
-          } catch {}
-
-        }
-
-      }
-
-    }
-
-    await writeRows(rows);
-
-    return interaction.editReply("✅ Event bans updated.");
-  }
-
-  // SUMMARY
+  // ================= SUMMARY =================
 
   if (sub === "summary") {
 
-    const activeBans = rows.filter(r => r[2] !== "Probation" && Number(r[4]) > 0);
     const probations = rows.filter(r => r[2] === "Probation" && Number(r[4]) > 0);
 
-    let text = "**Active Event Bans**\n";
-
-    text += activeBans.length
-      ? activeBans.map(r => `${r[1]} — ${r[4]} events remaining`).join("\n")
-      : "None";
-
-    text += "\n\n**Active Probations**\n";
+    let text = "**Active Probations**\n";
 
     text += probations.length
-      ? probations.map(r => `${r[1]} — ${r[4]} days remaining`).join("\n")
+      ? probations.map(r =>
+        `${r[1]} — ${r[4]} days remaining (ends ${r[6]})`
+      ).join("\n")
       : "None";
 
     return interaction.editReply(text);
