@@ -31,18 +31,6 @@ const sheets = google.sheets({ version: "v4", auth });
 
 const today = () => new Date().toLocaleDateString("en-GB");
 
-function parseDateGB(str) {
-
-  if (!str) return null;
-
-  const [d, m, y] = str.split("/").map(Number);
-
-  if (!d || !m || !y) return null;
-
-  return new Date(y, m - 1, d);
-
-}
-
 async function logAudit(action, moderator, user = "") {
 
   await sheets.spreadsheets.values.append({
@@ -68,9 +56,7 @@ async function getRows() {
     range: `${EVENT_SHEET}!A2:J`
   });
 
-  const rows = res.data.values || [];
-
-  return rows.filter(r => r.length > 0);
+  return res.data.values || [];
 
 }
 
@@ -102,23 +88,23 @@ ${r[4]} Events Remaining
 Reason: ${r[7] || "No reason provided"}`;
 
 const formatProbation = r =>
-`${r[1]} — Probation Started ${r[5]}
-Ends: ${r[6]} (${r[3]} days)
+`${r[1]} — Probation
+Started ${r[5]}
+${r[4]} Days Remaining
 Reason: ${r[7] || "No reason provided"}`;
 
-// ================= COMMAND BUILDER =================
+// ================= COMMAND =================
 
 const eventBanCommand = new SlashCommandBuilder()
 .setName("eventban")
 .setDescription("Event ban management")
 
+// APPLY EVENT BAN
 .addSubcommand(s =>
   s.setName("apply")
     .setDescription("Apply an event ban")
     .addUserOption(o =>
-      o.setName("user")
-        .setDescription("User to ban")
-        .setRequired(true))
+      o.setName("user").setDescription("User").setRequired(true))
     .addStringOption(o =>
       o.setName("type")
         .setDescription("Ban type")
@@ -138,6 +124,19 @@ const eventBanCommand = new SlashCommandBuilder()
         .setRequired(true))
 )
 
+// APPLY PROBATION
+.addSubcommand(s =>
+  s.setName("probation")
+    .setDescription("Apply probation (days)")
+    .addUserOption(o =>
+      o.setName("user").setDescription("User").setRequired(true))
+    .addIntegerOption(o =>
+      o.setName("days").setDescription("Days").setRequired(true))
+    .addStringOption(o =>
+      o.setName("reason").setDescription("Reason").setRequired(true))
+)
+
+// EVENT PASSED
 .addSubcommand(s =>
   s.setName("eventpassed")
     .setDescription("Reduce remaining bans")
@@ -156,21 +155,21 @@ const eventBanCommand = new SlashCommandBuilder()
         .setRequired(true))
 )
 
+// REMOVE LAST
 .addSubcommand(s =>
   s.setName("removelast")
     .setDescription("Remove most recent ban")
     .addUserOption(o =>
-      o.setName("user")
-        .setDescription("User")
-        .setRequired(true))
+      o.setName("user").setDescription("User").setRequired(true))
 )
 
+// SUMMARY
 .addSubcommand(s =>
   s.setName("summary")
     .setDescription("Show active bans and probations")
 );
 
-// ================= MAIN HANDLER =================
+// ================= HANDLER =================
 
 async function handleEventBan(interaction) {
 
@@ -183,7 +182,7 @@ async function handleEventBan(interaction) {
   const rows = await getRows();
   const banChannel = await interaction.guild.channels.fetch(BAN_CHANNEL_ID);
 
-  // ================= APPLY BAN =================
+  // APPLY EVENT BAN
 
   if (sub === "apply") {
 
@@ -218,18 +217,52 @@ async function handleEventBan(interaction) {
     return interaction.editReply("✅ Event ban applied.");
   }
 
-  // ================= EVENT PASSED =================
+  // APPLY PROBATION
+
+  if (sub === "probation") {
+
+    const user = interaction.options.getUser("user");
+    const days = interaction.options.getInteger("days");
+    const reason = interaction.options.getString("reason");
+
+    const row = [
+      user.id,
+      user.tag,
+      "Probation",
+      days,
+      days,
+      today(),
+      today(),
+      reason,
+      interaction.user.tag,
+      ""
+    ];
+
+    const msg = await banChannel.send(formatProbation(row));
+
+    row[9] = msg.id;
+
+    rows.push(row);
+
+    await writeRows(rows);
+
+    await logAudit(`Applied ${days}-day probation`, interaction.user, user);
+
+    return interaction.editReply("✅ Probation applied.");
+  }
+
+  // EVENT PASSED
 
   if (sub === "eventpassed") {
 
-    const type = interaction.options.getString("type").trim().toLowerCase();
+    const type = interaction.options.getString("type").toLowerCase();
     const events = interaction.options.getInteger("events");
 
     for (const r of rows) {
 
-      if (!r[2]) continue;
+      if (r[2] === "Probation") continue;
 
-      const rowType = r[2].trim().toLowerCase();
+      const rowType = r[2].toLowerCase();
 
       if ((type === "all" || rowType === type) && Number(r[4]) > 0) {
 
@@ -253,89 +286,29 @@ async function handleEventBan(interaction) {
 
     await writeRows(rows);
 
-    await logAudit(`Event passed (${events})`, interaction.user);
-
     return interaction.editReply("✅ Event bans updated.");
-
   }
 
-  // ================= REMOVE LAST =================
-
-  if (sub === "removelast") {
-
-    const user = interaction.options.getUser("user");
-
-    const index = [...rows]
-      .map((r,i)=>({r,i}))
-      .reverse()
-      .find(x=>x.r[0]===user.id);
-
-    if (!index)
-      return interaction.editReply("No bans found.");
-
-    const removed = rows.splice(index.i,1)[0];
-
-    if (removed[9]) {
-
-      try {
-
-        const msg = await banChannel.messages.fetch(removed[9]);
-        await msg.delete();
-
-      } catch {}
-
-    }
-
-    await writeRows(rows);
-
-    await logAudit("Removed last ban", interaction.user, user);
-
-    return interaction.editReply("🗑️ Last ban removed.");
-
-  }
-
-  // ================= SUMMARY =================
+  // SUMMARY
 
   if (sub === "summary") {
 
-    const now = new Date();
+    const activeBans = rows.filter(r => r[2] !== "Probation" && Number(r[4]) > 0);
+    const probations = rows.filter(r => r[2] === "Probation" && Number(r[4]) > 0);
 
-    const activeBans = rows.filter(
-      r => r[2] !== "Probation" && Number(r[4]) > 0
-    );
+    let text = "**Active Event Bans**\n";
 
-    const probations = rows.filter(r => {
-
-      if (r[2] !== "Probation") return false;
-
-      const end = parseDateGB(r[6]);
-
-      return end && end >= now;
-
-    });
-
-    let text = "";
-
-    text += "**Active Event Bans**\n";
-
-    if (!activeBans.length)
-      text += "None\n";
-    else
-      text += activeBans
-        .map(r => `${r[1]} — ${r[2]} | ${r[4]} events remaining`)
-        .join("\n");
+    text += activeBans.length
+      ? activeBans.map(r => `${r[1]} — ${r[4]} events remaining`).join("\n")
+      : "None";
 
     text += "\n\n**Active Probations**\n";
 
-    if (!probations.length)
-      text += "None";
-    else
-      text += probations
-        .map(r => `${r[1]} — ends ${r[6]}`)
-        .join("\n");
+    text += probations.length
+      ? probations.map(r => `${r[1]} — ${r[4]} days remaining`).join("\n")
+      : "None";
 
     return interaction.editReply(text);
-
   }
 
 }
