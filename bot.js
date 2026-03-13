@@ -137,8 +137,6 @@ client.once("ready", async () => {
 
 client.on("interactionCreate", async interaction => {
 
-  // ===== SLASH COMMANDS =====
-
   if (interaction.isChatInputCommand()) {
 
     if (interaction.commandName === "verify")
@@ -170,7 +168,7 @@ client.on("interactionCreate", async interaction => {
 
   }
 
-  // ===== BUTTON HANDLING =====
+  // ================= BUTTONS =================
 
   if (interaction.isButton()) {
 
@@ -183,7 +181,22 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // ===== CANCEL GAMECALL =====
+    // STOP FOLLOW UPS
+
+    if (interaction.customId === "gamecall_stop_followups") {
+
+      await interaction.deferReply({ ephemeral: true });
+
+      clearTimeout(active.t1);
+      clearTimeout(active.t2);
+
+      return interaction.editReply({
+        content: "Automated WHO IS NOT IN follow ups stopped."
+      });
+
+    }
+
+    // CANCEL GAMECALL
 
     if (interaction.customId === "gamecall_cancel") {
 
@@ -219,7 +232,7 @@ client.on("interactionCreate", async interaction => {
 
     }
 
-    // ===== OVERRIDE CODE =====
+    // OVERRIDE CODE
 
     if (interaction.customId === "gamecall_override") {
 
@@ -243,7 +256,7 @@ client.on("interactionCreate", async interaction => {
 
   }
 
-  // ===== MODAL HANDLER =====
+  // ================= MODALS =================
 
   if (interaction.isModalSubmit()) {
 
@@ -286,10 +299,6 @@ CODE ${newCode}`
 
 });
 
-// ================= MEMBER JOIN =================
-
 client.on("guildMemberAdd", handleWelcome);
-
-// ================= LOGIN =================
 
 client.login(process.env.DISCORD_TOKEN);

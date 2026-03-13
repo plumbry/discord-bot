@@ -89,6 +89,11 @@ module.exports = {
         .setStyle(ButtonStyle.Primary),
 
       new ButtonBuilder()
+        .setCustomId("gamecall_stop_followups")
+        .setLabel("Stop Follow Ups")
+        .setStyle(ButtonStyle.Secondary),
+
+      new ButtonBuilder()
         .setCustomId("gamecall_cancel")
         .setLabel("Cancel Game Call")
         .setStyle(ButtonStyle.Danger)
