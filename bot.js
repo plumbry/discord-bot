@@ -2,7 +2,10 @@ const {
   Client,
   GatewayIntentBits,
   REST,
-  Routes
+  Routes,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle
 } = require("discord.js");
 
 const fs = require("fs");
@@ -39,8 +42,6 @@ const { startBanExpiryChecker } = require("./banExpiryChecker");
 
 const dm = require("./commands/dm");
 
-// ================= GAMECALL STATE =================
-
 const gamecallModule = require("./commands/gamecall");
 const activeCalls = gamecallModule.activeCalls || new Map();
 
@@ -67,9 +68,9 @@ async function updatePanel(guild, channelId) {
 
   try {
 
-    const panelMessage = await logChannel.messages.fetch(call.panelMessageId);
+    const panel = await logChannel.messages.fetch(call.panelMessageId);
 
-    await panelMessage.edit({
+    await panel.edit({
       content:
 `🎮 GAME ${call.gameNumber} CONTROL PANEL
 
@@ -137,9 +138,11 @@ async function closeDropmap(guild) {
   const nowCooldown = Date.now();
 
   if (nowCooldown - lastDropmapClose < DROP_MAP_COOLDOWN) {
+
     if (logChannel) {
       logChannel.send("⚠️ Dropmap closure skipped — cooldown active.");
     }
+
     return;
   }
 
@@ -251,7 +254,7 @@ client.once("ready", async () => {
 
 });
 
-// ================= DISCORD LOG TRIGGER =================
+// ================= DROP MAP TRIGGER =================
 
 client.on("messageCreate", async message => {
 
@@ -271,6 +274,8 @@ client.on("messageCreate", async message => {
 // ================= INTERACTIONS =================
 
 client.on("interactionCreate", async interaction => {
+
+  // ===== SLASH COMMANDS =====
 
   if (interaction.isChatInputCommand()) {
 
@@ -303,7 +308,7 @@ client.on("interactionCreate", async interaction => {
 
   }
 
-  // ================= STAFF PANEL BUTTONS =================
+  // ===== STAFF PANEL BUTTONS =====
 
   if (interaction.isButton()) {
 
@@ -323,6 +328,8 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
+    // ===== CANCEL GAME =====
+
     if (action === "staff_cancel_game") {
 
       clearTimeout(call.t1);
@@ -330,15 +337,50 @@ client.on("interactionCreate", async interaction => {
 
       call.status = "Cancelled";
 
-      await updatePanel(interaction.guild, channelId);
+      const logChannel = interaction.guild.channels.cache.get(BOT_LOG_CHANNEL);
+
+      if (call.panelMessageId && logChannel) {
+
+        const panel = await logChannel.messages.fetch(call.panelMessageId);
+
+        const disabledRow = new ActionRowBuilder().addComponents(
+
+          new ButtonBuilder().setCustomId("d1").setLabel("Cancel Game").setStyle(ButtonStyle.Danger).setDisabled(true),
+          new ButtonBuilder().setCustomId("d2").setLabel("Stop Followups").setStyle(ButtonStyle.Secondary).setDisabled(true),
+          new ButtonBuilder().setCustomId("d3").setLabel("Lock Chat").setStyle(ButtonStyle.Secondary).setDisabled(true),
+          new ButtonBuilder().setCustomId("d4").setLabel("Unlock Chat").setStyle(ButtonStyle.Success).setDisabled(true),
+          new ButtonBuilder().setCustomId("d5").setLabel("Check Streams").setStyle(ButtonStyle.Primary).setDisabled(true)
+
+        );
+
+        await panel.edit({
+
+          content:
+`🎮 GAME ${call.gameNumber} CONTROL PANEL
+
+Status: Cancelled
+Chat: ${call.chat}
+Streams: ${call.streams}
+Followups: ${call.followups}`,
+
+          components:[disabledRow]
+
+        });
+
+      }
 
       activeCalls.delete(channelId);
 
       await gameChannel.send("❌ **Game call cancelled by staff.**");
 
-      return interaction.reply({ content: "Game cancelled.", ephemeral: true });
+      return interaction.reply({
+        content: "Game cancelled.",
+        ephemeral: true
+      });
 
     }
+
+    // ===== STOP FOLLOWUPS =====
 
     if (action === "staff_stop_followups") {
 
@@ -349,16 +391,20 @@ client.on("interactionCreate", async interaction => {
 
       await updatePanel(interaction.guild, channelId);
 
-      return interaction.reply({ content: "Follow-ups stopped.", ephemeral: true });
+      return interaction.reply({
+        content: "Follow-ups stopped.",
+        ephemeral: true
+      });
 
     }
+
+    // ===== LOCK CHAT =====
 
     if (action === "staff_lock_chat") {
 
       const chatChannel = interaction.guild.channels.cache.find(
         c =>
           c.parentId === gameChannel.parentId &&
-          c.isTextBased() &&
           c.name.toLowerCase().includes("chat")
       );
 
@@ -371,16 +417,20 @@ client.on("interactionCreate", async interaction => {
 
       await updatePanel(interaction.guild, channelId);
 
-      return interaction.reply({ content: `🔒 Chat locked in ${chatChannel}.`, ephemeral: true });
+      return interaction.reply({
+        content: `🔒 Chat locked in ${chatChannel}.`,
+        ephemeral: true
+      });
 
     }
+
+    // ===== UNLOCK CHAT =====
 
     if (action === "staff_unlock_chat") {
 
       const chatChannel = interaction.guild.channels.cache.find(
         c =>
           c.parentId === gameChannel.parentId &&
-          c.isTextBased() &&
           c.name.toLowerCase().includes("chat")
       );
 
@@ -393,16 +443,20 @@ client.on("interactionCreate", async interaction => {
 
       await updatePanel(interaction.guild, channelId);
 
-      return interaction.reply({ content: `🔓 Chat unlocked in ${chatChannel}.`, ephemeral: true });
+      return interaction.reply({
+        content: `🔓 Chat unlocked in ${chatChannel}.`,
+        ephemeral: true
+      });
 
     }
+
+    // ===== CHECK STREAMS =====
 
     if (action === "staff_check_streams") {
 
       const streamChannel = interaction.guild.channels.cache.find(
         c =>
           c.parentId === gameChannel.parentId &&
-          c.isTextBased() &&
           c.name.toLowerCase() === "twitch-streams"
       );
 
