@@ -201,6 +201,7 @@ Followups: Running`,
     });
 
     const call = activeCalls.get(channel.id);
+
     if(call){
       call.panelMessageId = panel.id;
     }
