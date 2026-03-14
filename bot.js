@@ -2,11 +2,7 @@ const {
   Client,
   GatewayIntentBits,
   REST,
-  Routes,
-  ModalBuilder,
-  ActionRowBuilder,
-  TextInputBuilder,
-  TextInputStyle
+  Routes
 } = require("discord.js");
 
 const fs = require("fs");
@@ -66,8 +62,7 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.DirectMessages
+    GatewayIntentBits.MessageContent
   ]
 });
 
@@ -112,8 +107,6 @@ async function closeDropmap(guild) {
   const nowCooldown = Date.now();
 
   if (nowCooldown - lastDropmapClose < DROP_MAP_COOLDOWN) {
-
-    console.log("Dropmap closure skipped (cooldown active)");
 
     if (logChannel) {
       logChannel.send("⚠️ Dropmap closure skipped — cooldown active.");
@@ -172,36 +165,16 @@ async function closeDropmap(guild) {
 
   }
 
-  if (!activeCategory) {
-
-    console.log("No active category detected.");
-
-    if (logChannel) {
-      logChannel.send("⚠️ Dropmap closure failed — no active category detected.");
-    }
-
-    return;
-  }
+  if (!activeCategory) return;
 
   const dropmapChannel = guild.channels.cache.find(c =>
     c.parentId === activeCategory.id &&
     c.name.toLowerCase().includes("dropmap")
   );
 
-  if (!dropmapChannel) {
-
-    console.log("No dropmap channel found in:", activeCategory.name);
-
-    if (logChannel) {
-      logChannel.send(`⚠️ Dropmap closure failed — no dropmap channel in **${activeCategory.name}**.`);
-    }
-
-    return;
-  }
+  if (!dropmapChannel) return;
 
   lastDropmapClose = nowCooldown;
-
-  console.log("Closing dropmap in:", dropmapChannel.name);
 
   await dropmapChannel.send(
     "🚫 **DROPMAP CLOSED — CHANGES WILL COUNT FOR NEXT GAME**"
@@ -271,8 +244,6 @@ client.on("messageCreate", async message => {
 
 client.on("interactionCreate", async interaction => {
 
-  // ===== SLASH COMMANDS =====
-
   if (interaction.isChatInputCommand()) {
 
     if (interaction.commandName === "verify")
@@ -304,11 +275,9 @@ client.on("interactionCreate", async interaction => {
 
   }
 
-  // ===== BUTTON INTERACTIONS =====
+  // ================= BUTTON INTERACTIONS =================
 
   if (interaction.isButton()) {
-
-    // ---------- SCRIM CHANNEL BUTTONS ----------
 
     if (
       interaction.customId === "gamecall_cancel" ||
@@ -354,8 +323,6 @@ client.on("interactionCreate", async interaction => {
 
     }
 
-    // ---------- STAFF PANEL BUTTONS ----------
-
     if (interaction.customId.startsWith("staff_")) {
 
       const parts = interaction.customId.split("_");
@@ -363,15 +330,14 @@ client.on("interactionCreate", async interaction => {
       const channelId = parts[3];
 
       const call = activeCalls.get(channelId);
+      const gameChannel = interaction.guild.channels.cache.get(channelId);
 
-      if (!call) {
+      if (!call || !gameChannel) {
         return interaction.reply({
-          content: "No active game call found.",
+          content: "Game call not found.",
           ephemeral: true
         });
       }
-
-      const gameChannel = interaction.guild.channels.cache.get(channelId);
 
       if (action === "staff_cancel_game") {
 
@@ -403,14 +369,43 @@ client.on("interactionCreate", async interaction => {
 
       if (action === "staff_lock_chat") {
 
+        const chatChannel = interaction.guild.channels.cache.find(
+          c =>
+            c.parentId === gameChannel.parentId &&
+            c.isTextBased() &&
+            c.name.toLowerCase().includes("chat")
+        );
+
         const everyone = interaction.guild.roles.everyone;
 
-        await gameChannel.permissionOverwrites.edit(everyone, {
+        await chatChannel.permissionOverwrites.edit(everyone, {
           SendMessages: false
         });
 
         return interaction.reply({
-          content: "Chat locked.",
+          content: `🔒 Chat locked in ${chatChannel}.`,
+          ephemeral: true
+        });
+
+      }
+
+      if (action === "staff_unlock_chat") {
+
+        const chatChannel = interaction.guild.channels.cache.find(
+          c =>
+            c.parentId === gameChannel.parentId &&
+            c.isTextBased() &&
+            c.name.toLowerCase().includes("chat")
+        );
+
+        const everyone = interaction.guild.roles.everyone;
+
+        await chatChannel.permissionOverwrites.edit(everyone, {
+          SendMessages: null
+        });
+
+        return interaction.reply({
+          content: `🔓 Chat unlocked in ${chatChannel}.`,
           ephemeral: true
         });
 
@@ -418,18 +413,23 @@ client.on("interactionCreate", async interaction => {
 
       if (action === "staff_check_streams") {
 
-        const command = client.commands.get("teamsstreamcheck");
+        const streamChannel = interaction.guild.channels.cache.find(
+          c =>
+            c.parentId === gameChannel.parentId &&
+            c.isTextBased() &&
+            c.name.toLowerCase() === "twitch-streams"
+        );
 
-        if (command) {
-          await command.execute({
-            ...interaction,
-            channel: gameChannel
-          });
-        }
+        const command = client.commands.get("checklive");
 
-        return interaction.reply({
-          content: "Running stream check.",
+        await interaction.reply({
+          content: `Running stream check in ${streamChannel}...`,
           ephemeral: true
+        });
+
+        await command.execute({
+          ...interaction,
+          channel: streamChannel
         });
 
       }
