@@ -184,6 +184,11 @@ WHO IS NOT IN ${role}`
 
     const logChannel = guild.channels.cache.get(BOT_LOG_CHANNEL);
 
+    if(!logChannel){
+      console.error("Bot log channel not found.");
+      return;
+    }
+
     const panel = await logChannel.send({
       content:
 `🎮 GAME ${game} CONTROL PANEL
@@ -195,7 +200,10 @@ Followups: Running`,
       components:[staffControls]
     });
 
-    activeCalls.get(channel.id).panelMessageId = panel.id;
+    const call = activeCalls.get(channel.id);
+    if(call){
+      call.panelMessageId = panel.id;
+    }
 
   }
 
