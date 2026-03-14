@@ -114,6 +114,7 @@ async function closeDropmap(guild) {
   }
 
   let activeCategory = null;
+  let newestMessageTime = 0;
 
   const categories = guild.channels.cache.filter(c => c.type === 4);
 
@@ -138,8 +139,12 @@ async function closeDropmap(guild) {
         const age = Date.now() - lastMessage.createdTimestamp;
 
         if (age < ACTIVITY_WINDOW) {
-          activeCategory = category;
-          break;
+
+          if (lastMessage.createdTimestamp > newestMessageTime) {
+            newestMessageTime = lastMessage.createdTimestamp;
+            activeCategory = category;
+          }
+
         }
 
       } catch {
@@ -147,8 +152,6 @@ async function closeDropmap(guild) {
       }
 
     }
-
-    if (activeCategory) break;
 
   }
 
