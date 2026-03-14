@@ -56,7 +56,7 @@ const YUNITE_LOG_CHANNEL = "1371615781393137788";
 const DROP_MAP_COOLDOWN = 5 * 60 * 1000;
 let lastDropmapClose = 0;
 
-const ACTIVITY_WINDOW = 15 * 60 * 1000; // 15 minutes
+const ACTIVITY_WINDOW = 15 * 60 * 1000;
 
 // ================= CLIENT =================
 
@@ -116,9 +116,18 @@ async function closeDropmap(guild) {
   let activeCategory = null;
   let newestMessageTime = 0;
 
-  const categories = guild.channels.cache.filter(c => c.type === 4);
+  // Find all dropmap channels
+  const dropmapChannels = guild.channels.cache.filter(
+    c => c.isTextBased() && c.name.toLowerCase().includes("dropmap")
+  );
 
-  for (const category of categories.values()) {
+  const categories = new Set();
+
+  for (const channel of dropmapChannels.values()) {
+    if (channel.parent) categories.add(channel.parent);
+  }
+
+  for (const category of categories) {
 
     const chatChannels = guild.channels.cache.filter(
       c =>
