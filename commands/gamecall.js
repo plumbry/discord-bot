@@ -17,7 +17,6 @@ async function getNextGameNumber(channel){
   const messages = await channel.messages.fetch({limit:50});
 
   let highest = 0;
-
   const regex = /GAME\s+(\d+)/i;
 
   for(const msg of messages.values()){
@@ -157,27 +156,27 @@ WHO IS NOT IN ${role}`
       const staffControls = new ActionRowBuilder().addComponents(
 
         new ButtonBuilder()
-          .setCustomId("staff_override_code")
+          .setCustomId(`staff_override_code_${channel.id}`)
           .setLabel("Override Code")
           .setStyle(ButtonStyle.Primary),
 
         new ButtonBuilder()
-          .setCustomId("staff_stop_followups")
+          .setCustomId(`staff_stop_followups_${channel.id}`)
           .setLabel("Stop Follow Ups")
           .setStyle(ButtonStyle.Secondary),
 
         new ButtonBuilder()
-          .setCustomId("staff_cancel_game")
+          .setCustomId(`staff_cancel_game_${channel.id}`)
           .setLabel("Cancel Game Call")
           .setStyle(ButtonStyle.Danger),
 
         new ButtonBuilder()
-          .setCustomId("staff_lock_chat")
+          .setCustomId(`staff_lock_chat_${channel.id}`)
           .setLabel("Lock Chat")
           .setStyle(ButtonStyle.Secondary),
 
         new ButtonBuilder()
-          .setCustomId("staff_check_streams")
+          .setCustomId(`staff_check_streams_${channel.id}`)
           .setLabel("Check Streams")
           .setStyle(ButtonStyle.Secondary)
 
