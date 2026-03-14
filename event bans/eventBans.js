@@ -124,6 +124,7 @@ const eventBanCommand = new SlashCommandBuilder()
 .setName("eventban")
 .setDescription("Event ban management")
 
+// EVENT BAN
 .addSubcommand(s =>
   s.setName("apply")
     .setDescription("Apply an event ban")
@@ -150,6 +151,7 @@ const eventBanCommand = new SlashCommandBuilder()
         .setRequired(true))
 )
 
+// PROBATION
 .addSubcommand(s =>
   s.setName("probation")
     .setDescription("Apply probation (days)")
@@ -162,15 +164,16 @@ const eventBanCommand = new SlashCommandBuilder()
         .setDescription("Number of probation days")
         .setRequired(true))
     .addStringOption(o =>
-      o.setName("start")
-        .setDescription("Start date YYYY-MM-DD or DD/MM/YYYY")
-        .setRequired(false))
-    .addStringOption(o =>
       o.setName("reason")
         .setDescription("Reason for probation")
         .setRequired(true))
+    .addStringOption(o =>
+      o.setName("start")
+        .setDescription("Start date YYYY-MM-DD or DD/MM/YYYY")
+        .setRequired(false))
 )
 
+// SUMMARY
 .addSubcommand(s =>
   s.setName("summary")
     .setDescription("Show active bans and probations")
@@ -230,8 +233,8 @@ async function handleEventBan(interaction) {
 
     const user = interaction.options.getUser("user");
     const days = interaction.options.getInteger("days");
-    const startInput = interaction.options.getString("start");
     const reason = interaction.options.getString("reason");
+    const startInput = interaction.options.getString("start");
 
     let startDate;
 
