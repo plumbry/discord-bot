@@ -15,32 +15,48 @@ module.exports = {
 
     const sub = interaction.options.getSubcommand();
 
+    const bot = interaction.client;
+
     if (sub === "start") {
 
       if (yuniteRunning)
-        return interaction.reply({ content: "Yunite already running.", ephemeral: true });
+        return interaction.reply({
+          content: "Yunite already running.",
+          ephemeral: true
+        });
 
       yuniteRunning = true;
 
-      startYuniteStream();
+      if (bot.startYuniteStream) {
+        bot.startYuniteStream();
+      }
 
-      return interaction.reply("✅ Yunite stream started.");
+      return interaction.reply({
+        content: "✅ Yunite stream started.",
+        ephemeral: true
+      });
 
     }
 
     if (sub === "stop") {
 
       if (!yuniteRunning)
-        return interaction.reply({ content: "Yunite is not running.", ephemeral: true });
+        return interaction.reply({
+          content: "Yunite is not running.",
+          ephemeral: true
+        });
 
       yuniteRunning = false;
 
-      if (yuniteSocket) {
-        yuniteSocket.terminate();
-        yuniteSocket = null;
+      if (bot.yuniteSocket) {
+        bot.yuniteSocket.terminate();
+        bot.yuniteSocket = null;
       }
 
-      return interaction.reply("🛑 Yunite stream stopped.");
+      return interaction.reply({
+        content: "🛑 Yunite stream stopped.",
+        ephemeral: true
+      });
 
     }
 
