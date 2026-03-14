@@ -1,85 +1,397 @@
-// ================= STAFF PANEL BUTTONS =================
+const {
+  Client,
+  GatewayIntentBits,
+  REST,
+  Routes,
+  ModalBuilder,
+  ActionRowBuilder,
+  TextInputBuilder,
+  TextInputStyle
+} = require("discord.js");
 
-if (interaction.isButton()) {
+const fs = require("fs");
+const path = require("path");
 
-  if (!interaction.customId.startsWith("staff_")) return;
+// ================= ERROR HANDLING =================
 
-  const parts = interaction.customId.split("_");
-  const action = parts.slice(0,3).join("_");
-  const channelId = parts[3];
+process.on("unhandledRejection", error => {
+  console.error("Unhandled promise rejection:", error);
+});
 
-  const call = activeCalls.get(channelId);
+process.on("uncaughtException", error => {
+  console.error("Uncaught exception:", error);
+});
 
-  if (!call) {
-    return interaction.reply({
-      content: "No active game call found.",
-      ephemeral: true
-    });
-  }
+// ================= IMPORT COMMAND MODULES =================
 
-  const gameChannel = interaction.guild.channels.cache.get(channelId);
+const {
+  verifyCommand,
+  handleVerify,
+  handleWelcome
+} = require("./welcome ping");
 
-  if (action === "staff_cancel_game") {
+const {
+  eventBanCommand,
+  recentBanCommand,
+  myBanCommand,
+  handleEventBan,
+  handleRecentBan,
+  handleMyBan
+} = require("./event bans/eventBans");
 
-    clearTimeout(call.t1);
-    clearTimeout(call.t2);
+const { startBanExpiryChecker } = require("./banExpiryChecker");
 
-    activeCalls.delete(channelId);
+const dm = require("./commands/dm");
 
-    await gameChannel.send("❌ **Game call cancelled by staff.**");
+// ================= GAMECALL STATE =================
 
-    return interaction.reply({
-      content: "Game cancelled.",
-      ephemeral: true
-    });
+const gamecallModule = require("./commands/gamecall");
+const activeCalls = gamecallModule.activeCalls || new Map();
 
-  }
+// ================= CONSTANTS =================
 
-  if (action === "staff_stop_followups") {
+const GUILD_ID = "1371615693392576580";
+const YUNITE_LOG_CHANNEL = "1371615781393137788";
+const BOT_LOG_CHANNEL = "1471082166535454780";
 
-    clearTimeout(call.t1);
-    clearTimeout(call.t2);
+const DROP_MAP_COOLDOWN = 5 * 60 * 1000;
+let lastDropmapClose = 0;
 
-    return interaction.reply({
-      content: "Follow-ups stopped.",
-      ephemeral: true
-    });
+const ACTIVITY_WINDOW = 15 * 60 * 1000;
 
-  }
+// ================= CLIENT =================
 
-  if (action === "staff_lock_chat") {
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.DirectMessages
+  ]
+});
 
-    const everyone = interaction.guild.roles.everyone;
+client.commands = new Map();
 
-    await gameChannel.permissionOverwrites.edit(everyone, {
-      SendMessages: false
-    });
+// ================= LOAD COMMAND FILES =================
 
-    return interaction.reply({
-      content: "Chat locked.",
-      ephemeral: true
-    });
+const commandsPath = path.join(__dirname, "commands");
 
-  }
+const commandFiles = fs
+  .readdirSync(commandsPath)
+  .filter(file => file.endsWith(".js"));
 
-  if (action === "staff_check_streams") {
+for (const file of commandFiles) {
 
-    const command = interaction.client.commands.get("teamsstreamcheck");
+  try {
 
-    if (command) {
+    const command = require(`./commands/${file}`);
 
-      await command.execute({
-        ...interaction,
-        channel: gameChannel
-      });
-
+    if (!command?.data || !command?.execute) {
+      console.log(`Skipping invalid command: ${file}`);
+      continue;
     }
 
-    return interaction.reply({
-      content: "Running stream check.",
-      ephemeral: true
-    });
+    client.commands.set(command.data.name, command);
+
+  } catch (err) {
+
+    console.error(`Error loading command: ${file}`);
+    console.error(err);
 
   }
 
 }
+
+// ================= DROP MAP FUNCTION =================
+
+async function closeDropmap(guild) {
+
+  const logChannel = guild.channels.cache.get(BOT_LOG_CHANNEL);
+
+  const nowCooldown = Date.now();
+
+  if (nowCooldown - lastDropmapClose < DROP_MAP_COOLDOWN) {
+
+    console.log("Dropmap closure skipped (cooldown active)");
+
+    if (logChannel) {
+      logChannel.send("⚠️ Dropmap closure skipped — cooldown active.");
+    }
+
+    return;
+  }
+
+  let activeCategory = null;
+  let newestMessageTime = 0;
+
+  const dropmapChannels = guild.channels.cache.filter(
+    c => c.isTextBased() && c.name.toLowerCase().includes("dropmap")
+  );
+
+  const categories = new Set();
+
+  for (const channel of dropmapChannels.values()) {
+    if (channel.parent) categories.add(channel.parent);
+  }
+
+  for (const category of categories) {
+
+    const chatChannels = guild.channels.cache.filter(
+      c =>
+        c.parentId === category.id &&
+        c.isTextBased() &&
+        c.name.toLowerCase().includes("chat")
+    );
+
+    for (const channel of chatChannels.values()) {
+
+      try {
+
+        const messages = await channel.messages.fetch({ limit: 1 });
+        const lastMessage = messages.first();
+
+        if (!lastMessage) continue;
+
+        const age = Date.now() - lastMessage.createdTimestamp;
+
+        if (age < ACTIVITY_WINDOW) {
+
+          if (lastMessage.createdTimestamp > newestMessageTime) {
+            newestMessageTime = lastMessage.createdTimestamp;
+            activeCategory = category;
+          }
+
+        }
+
+      } catch {
+        continue;
+      }
+
+    }
+
+  }
+
+  if (!activeCategory) {
+
+    console.log("No active category detected.");
+
+    if (logChannel) {
+      logChannel.send("⚠️ Dropmap closure failed — no active category detected.");
+    }
+
+    return;
+  }
+
+  const dropmapChannel = guild.channels.cache.find(c =>
+    c.parentId === activeCategory.id &&
+    c.name.toLowerCase().includes("dropmap")
+  );
+
+  if (!dropmapChannel) {
+
+    console.log("No dropmap channel found in:", activeCategory.name);
+
+    if (logChannel) {
+      logChannel.send(`⚠️ Dropmap closure failed — no dropmap channel in **${activeCategory.name}**.`);
+    }
+
+    return;
+  }
+
+  lastDropmapClose = nowCooldown;
+
+  console.log("Closing dropmap in:", dropmapChannel.name);
+
+  await dropmapChannel.send(
+    "🚫 **DROPMAP CLOSED — CHANGES WILL COUNT FOR NEXT GAME**"
+  );
+
+  if (logChannel) {
+    logChannel.send(`✅ Dropmap closed in **#${dropmapChannel.name}** (${activeCategory.name})`);
+  }
+
+}
+
+// ================= READY =================
+
+client.once("ready", async () => {
+
+  console.log(`Logged in as ${client.user.tag}`);
+
+  startBanExpiryChecker(client);
+
+  const rest = new REST({ version: "10" })
+    .setToken(process.env.DISCORD_TOKEN);
+
+  const commands = [
+    verifyCommand,
+    eventBanCommand,
+    recentBanCommand,
+    myBanCommand
+  ];
+
+  for (const command of client.commands.values()) {
+    commands.push(command.data);
+  }
+
+  const commandJSON = commands
+    .filter(c => c && typeof c.toJSON === "function")
+    .map(c => c.toJSON());
+
+  await rest.put(
+    Routes.applicationGuildCommands(client.user.id, GUILD_ID),
+    { body: commandJSON }
+  );
+
+  if (dm.startDMScheduler) {
+    dm.startDMScheduler(client);
+  }
+
+});
+
+// ================= DISCORD LOG TRIGGER =================
+
+client.on("messageCreate", async message => {
+
+  if (message.channel.id !== YUNITE_LOG_CHANNEL) return;
+
+  const content = message.content.toLowerCase();
+
+  if (
+    !content.includes("matches are running") &&
+    !content.includes("test dropmap")
+  ) return;
+
+  closeDropmap(message.guild);
+
+});
+
+// ================= INTERACTIONS =================
+
+client.on("interactionCreate", async interaction => {
+
+  // ===== SLASH COMMANDS =====
+
+  if (interaction.isChatInputCommand()) {
+
+    if (interaction.commandName === "verify")
+      return handleVerify(interaction);
+
+    if (interaction.commandName === "eventban")
+      return handleEventBan(interaction);
+
+    if (interaction.commandName === "recentban")
+      return handleRecentBan(interaction);
+
+    if (interaction.commandName === "myban") {
+      await interaction.deferReply({ ephemeral: true });
+      return handleMyBan(interaction);
+    }
+
+    if (interaction.commandName === "dm" && dm.handleDM)
+      return dm.handleDM(interaction);
+
+    const command = client.commands.get(interaction.commandName);
+
+    if (!command) return;
+
+    try {
+      await command.execute(interaction);
+    } catch (error) {
+      console.error(error);
+    }
+
+  }
+
+  // ===== STAFF PANEL BUTTONS =====
+
+  if (interaction.isButton()) {
+
+    if (!interaction.customId.startsWith("staff_")) return;
+
+    const parts = interaction.customId.split("_");
+    const action = parts.slice(0,3).join("_");
+    const channelId = parts[3];
+
+    const call = activeCalls.get(channelId);
+
+    if (!call) {
+      return interaction.reply({
+        content: "No active game call found.",
+        ephemeral: true
+      });
+    }
+
+    const gameChannel = interaction.guild.channels.cache.get(channelId);
+
+    if (action === "staff_cancel_game") {
+
+      clearTimeout(call.t1);
+      clearTimeout(call.t2);
+
+      activeCalls.delete(channelId);
+
+      await gameChannel.send("❌ **Game call cancelled by staff.**");
+
+      return interaction.reply({
+        content: "Game cancelled.",
+        ephemeral: true
+      });
+
+    }
+
+    if (action === "staff_stop_followups") {
+
+      clearTimeout(call.t1);
+      clearTimeout(call.t2);
+
+      return interaction.reply({
+        content: "Follow-ups stopped.",
+        ephemeral: true
+      });
+
+    }
+
+    if (action === "staff_lock_chat") {
+
+      const everyone = interaction.guild.roles.everyone;
+
+      await gameChannel.permissionOverwrites.edit(everyone, {
+        SendMessages: false
+      });
+
+      return interaction.reply({
+        content: "Chat locked.",
+        ephemeral: true
+      });
+
+    }
+
+    if (action === "staff_check_streams") {
+
+      const command = client.commands.get("teamsstreamcheck");
+
+      if (command) {
+        await command.execute({
+          ...interaction,
+          channel: gameChannel
+        });
+      }
+
+      return interaction.reply({
+        content: "Running stream check.",
+        ephemeral: true
+      });
+
+    }
+
+  }
+
+});
+
+// ================= MEMBER JOIN =================
+
+client.on("guildMemberAdd", handleWelcome);
+
+client.login(process.env.DISCORD_TOKEN);
