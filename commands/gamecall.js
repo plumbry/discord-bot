@@ -8,6 +8,8 @@ const {
 const RAISE_HAND = "✋";
 const ZBD_ERROR_ID = "1428748821160001617";
 
+const BOT_LOG_CHANNEL = "1471082166535454780";
+
 const activeCalls = new Map();
 
 async function getNextGameNumber(channel){
@@ -72,6 +74,7 @@ module.exports = {
     const minutes = interaction.options.getInteger("minutes");
 
     const channel = interaction.channel;
+    const guild = interaction.guild;
 
     const game = await getNextGameNumber(channel);
 
@@ -144,6 +147,54 @@ WHO IS NOT IN ${role}`
       t1,
       t2
     });
+
+    // ================= STAFF PANEL =================
+
+    const logChannel = guild.channels.cache.get(BOT_LOG_CHANNEL);
+
+    if(logChannel){
+
+      const staffControls = new ActionRowBuilder().addComponents(
+
+        new ButtonBuilder()
+          .setCustomId("staff_override_code")
+          .setLabel("Override Code")
+          .setStyle(ButtonStyle.Primary),
+
+        new ButtonBuilder()
+          .setCustomId("staff_stop_followups")
+          .setLabel("Stop Follow Ups")
+          .setStyle(ButtonStyle.Secondary),
+
+        new ButtonBuilder()
+          .setCustomId("staff_cancel_game")
+          .setLabel("Cancel Game Call")
+          .setStyle(ButtonStyle.Danger),
+
+        new ButtonBuilder()
+          .setCustomId("staff_lock_chat")
+          .setLabel("Lock Chat")
+          .setStyle(ButtonStyle.Secondary),
+
+        new ButtonBuilder()
+          .setCustomId("staff_check_streams")
+          .setLabel("Check Streams")
+          .setStyle(ButtonStyle.Secondary)
+
+      );
+
+      await logChannel.send({
+        content:
+`🎮 GAME ${game} CONTROL PANEL
+
+Channel: ${channel}
+Region: ${region}
+Code: ${code}
+Start: ${relative}`,
+        components:[staffControls]
+      });
+
+    }
 
   }
 

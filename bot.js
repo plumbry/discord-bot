@@ -271,6 +271,8 @@ client.on("messageCreate", async message => {
 
 client.on("interactionCreate", async interaction => {
 
+  // SLASH COMMANDS
+
   if (interaction.isChatInputCommand()) {
 
     if (interaction.commandName === "verify")
@@ -298,6 +300,85 @@ client.on("interactionCreate", async interaction => {
       await command.execute(interaction);
     } catch (error) {
       console.error(error);
+    }
+
+  }
+
+  // ================= STAFF PANEL BUTTONS =================
+
+  if (interaction.isButton()) {
+
+    const call = activeCalls.get(interaction.channel.id);
+
+    if (!call) {
+      return interaction.reply({
+        content: "No active game call in this channel.",
+        ephemeral: true
+      });
+    }
+
+    if (interaction.customId === "staff_cancel_game") {
+
+      clearTimeout(call.t1);
+      clearTimeout(call.t2);
+
+      activeCalls.delete(interaction.channel.id);
+
+      await interaction.reply({
+        content: "❌ Game call cancelled.",
+        ephemeral: true
+      });
+
+      return;
+
+    }
+
+    if (interaction.customId === "staff_stop_followups") {
+
+      clearTimeout(call.t1);
+      clearTimeout(call.t2);
+
+      await interaction.reply({
+        content: "⛔ Follow-ups stopped.",
+        ephemeral: true
+      });
+
+      return;
+
+    }
+
+    if (interaction.customId === "staff_lock_chat") {
+
+      const everyone = interaction.guild.roles.everyone;
+
+      await interaction.channel.permissionOverwrites.edit(everyone, {
+        SendMessages: false
+      });
+
+      await interaction.reply({
+        content: "🔒 Chat locked.",
+        ephemeral: true
+      });
+
+      return;
+
+    }
+
+    if (interaction.customId === "staff_check_streams") {
+
+      await interaction.reply({
+        content: "Running stream check...",
+        ephemeral: true
+      });
+
+      const command = client.commands.get("teamsstreamcheck");
+
+      if (command) {
+        command.execute(interaction);
+      }
+
+      return;
+
     }
 
   }
