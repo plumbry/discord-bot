@@ -439,7 +439,7 @@ client.once("ready", async () => {
 
   console.log(`Logged in as ${client.user.tag}`);
   
-  startYuniteStream();
+ // startYuniteStream();   // Disabled - only run Yunite during tournaments
 
   startBanExpiryChecker(client);
 
