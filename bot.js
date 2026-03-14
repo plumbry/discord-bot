@@ -11,6 +11,7 @@ const {
 
 const fs = require("fs");
 const path = require("path");
+const axios = require("axios");
 
 // ================= ERROR HANDLING =================
 
@@ -52,6 +53,9 @@ const activeCalls = gamecallModule.activeCalls || new Map();
 
 const GUILD_ID = "1371615693392576580";
 const YUNITE_LOG_CHANNEL = "1371615781393137788";
+
+const YUNITE_API_KEY = "dceb92dd-a9f4-441c-80ad-331c03e3a16b";
+const YUNITE_API_URL = "https://api.yunite.xyz/v1/matches";
 
 const DROP_MAP_COOLDOWN = 5 * 60 * 1000;
 let lastDropmapClose = 0;
@@ -100,92 +104,9 @@ for (const file of commandFiles) {
 
 }
 
-// ================= READY =================
+// ================= DROP MAP FUNCTION =================
 
-client.once("ready", async () => {
-
-  console.log(`Logged in as ${client.user.tag}`);
-
-  startBanExpiryChecker(client);
-
-  const rest = new REST({ version: "10" })
-    .setToken(process.env.DISCORD_TOKEN);
-
-  const commands = [
-    verifyCommand,
-    eventBanCommand,
-    recentBanCommand,
-    myBanCommand
-  ];
-
-  for (const command of client.commands.values()) {
-    commands.push(command.data);
-  }
-
-  const commandJSON = commands
-    .filter(c => c && typeof c.toJSON === "function")
-    .map(c => c.toJSON());
-
-  await rest.put(
-    Routes.applicationGuildCommands(client.user.id, GUILD_ID),
-    { body: commandJSON }
-  );
-
-  if (dm.startDMScheduler) {
-    dm.startDMScheduler(client);
-  }
-
-});
-
-// ================= INTERACTIONS =================
-
-client.on("interactionCreate", async interaction => {
-
-  if (interaction.isChatInputCommand()) {
-
-    if (interaction.commandName === "verify")
-      return handleVerify(interaction);
-
-    if (interaction.commandName === "eventban")
-      return handleEventBan(interaction);
-
-    if (interaction.commandName === "recentban")
-      return handleRecentBan(interaction);
-
-    if (interaction.commandName === "myban") {
-      await interaction.deferReply({ ephemeral: true });
-      return handleMyBan(interaction);
-    }
-
-    if (interaction.commandName === "dm" && dm.handleDM)
-      return dm.handleDM(interaction);
-
-    const command = client.commands.get(interaction.commandName);
-
-    if (!command) return;
-
-    try {
-      await command.execute(interaction);
-    } catch (error) {
-      console.error(error);
-    }
-
-  }
-
-});
-
-// ================= DROP MAP AUTOMATION =================
-
-client.on("messageCreate", async message => {
-
-  if (message.channel.id !== YUNITE_LOG_CHANNEL) return;
-
-  const content = message.content.toLowerCase();
-
-  if (
-    !content.includes("matches are running") &&
-    !content.includes("test dropmap")
-  ) return;
+async function closeDropmap(guild) {
 
   const nowCooldown = Date.now();
 
@@ -196,35 +117,6 @@ client.on("messageCreate", async message => {
 
   lastDropmapClose = nowCooldown;
 
-  const guild = message.guild;
-
-  let tournamentName = null;
-
-  const lines = message.content.split("\n");
-
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].toLowerCase().includes("tournament")) {
-      tournamentName = lines[i + 1] || lines[i];
-      break;
-    }
-  }
-
-  if (!tournamentName) {
-    const match = message.content.match(/Tournament\s*(.+?)\s*-?\s*(Matches|TEST)/i);
-    if (match) tournamentName = match[1];
-  }
-
-  if (!tournamentName) {
-    console.log("Could not detect tournament name.");
-    return;
-  }
-
-  console.log("Detected tournament:", tournamentName);
-
-  const tournamentWords = tournamentName
-    .toLowerCase()
-    .split(/\s+/);
-
   const fiveMinutes = 5 * 60 * 1000;
   const now = Date.now();
 
@@ -233,16 +125,6 @@ client.on("messageCreate", async message => {
   const categories = guild.channels.cache.filter(c => c.type === 4);
 
   for (const category of categories.values()) {
-
-    const categoryWords = category.name
-      .toLowerCase()
-      .split(/\s+/);
-
-    const nameMatch = categoryWords.some(word =>
-      tournamentWords.includes(word)
-    );
-
-    if (!nameMatch) continue;
 
     const chatChannels = guild.channels.cache.filter(
       c =>
@@ -300,6 +182,135 @@ client.on("messageCreate", async message => {
   dropmapChannel.send(
     "🚫 **DROPMAP CLOSED — CHANGES WILL COUNT FOR NEXT GAME**"
   );
+
+}
+
+// ================= YUNITE API CHECK =================
+
+async function checkYuniteMatches(client) {
+
+  try {
+
+    const response = await axios.get(YUNITE_API_URL, {
+      headers: {
+        Authorization: `Bearer ${YUNITE_API_KEY}`
+      }
+    });
+
+    const matches = response.data.matches;
+
+    if (!matches) return;
+
+    const runningMatch = matches.find(m => m.status === "running");
+
+    if (!runningMatch) return;
+
+    console.log("Yunite API detected running match");
+
+    const guild = client.guilds.cache.get(GUILD_ID);
+    if (!guild) return;
+
+    closeDropmap(guild);
+
+  } catch (err) {
+
+    console.error("Yunite API error:", err.message);
+
+  }
+
+}
+
+// ================= READY =================
+
+client.once("ready", async () => {
+
+  console.log(`Logged in as ${client.user.tag}`);
+
+  startBanExpiryChecker(client);
+
+  const rest = new REST({ version: "10" })
+    .setToken(process.env.DISCORD_TOKEN);
+
+  const commands = [
+    verifyCommand,
+    eventBanCommand,
+    recentBanCommand,
+    myBanCommand
+  ];
+
+  for (const command of client.commands.values()) {
+    commands.push(command.data);
+  }
+
+  const commandJSON = commands
+    .filter(c => c && typeof c.toJSON === "function")
+    .map(c => c.toJSON());
+
+  await rest.put(
+    Routes.applicationGuildCommands(client.user.id, GUILD_ID),
+    { body: commandJSON }
+  );
+
+  if (dm.startDMScheduler) {
+    dm.startDMScheduler(client);
+  }
+
+  // Start Yunite polling
+  setInterval(() => checkYuniteMatches(client), 30000);
+
+});
+
+// ================= DISCORD LOG FALLBACK =================
+
+client.on("messageCreate", async message => {
+
+  if (message.channel.id !== YUNITE_LOG_CHANNEL) return;
+
+  const content = message.content.toLowerCase();
+
+  if (
+    !content.includes("matches are running") &&
+    !content.includes("test dropmap")
+  ) return;
+
+  closeDropmap(message.guild);
+
+});
+
+// ================= INTERACTIONS =================
+
+client.on("interactionCreate", async interaction => {
+
+  if (interaction.isChatInputCommand()) {
+
+    if (interaction.commandName === "verify")
+      return handleVerify(interaction);
+
+    if (interaction.commandName === "eventban")
+      return handleEventBan(interaction);
+
+    if (interaction.commandName === "recentban")
+      return handleRecentBan(interaction);
+
+    if (interaction.commandName === "myban") {
+      await interaction.deferReply({ ephemeral: true });
+      return handleMyBan(interaction);
+    }
+
+    if (interaction.commandName === "dm" && dm.handleDM)
+      return dm.handleDM(interaction);
+
+    const command = client.commands.get(interaction.commandName);
+
+    if (!command) return;
+
+    try {
+      await command.execute(interaction);
+    } catch (error) {
+      console.error(error);
+    }
+
+  }
 
 });
 
