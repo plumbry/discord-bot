@@ -10,6 +10,8 @@ const {
 
 const fs = require("fs");
 const path = require("path");
+const axios = require("axios");
+const WebSocket = require("ws");
 
 // ================= ERROR HANDLING =================
 
@@ -50,6 +52,8 @@ const activeCalls = gamecallModule.activeCalls || new Map();
 const GUILD_ID = "1371615693392576580";
 const YUNITE_LOG_CHANNEL = "1371615781393137788";
 const BOT_LOG_CHANNEL = "1471082166535454780";
+const YUNITE_API_KEY = process.env.YUNITE_API_KEY;
+const YUNITE_GUILD_ID = "1371615693392576580";
 
 const DROP_MAP_COOLDOWN = 5 * 60 * 1000;
 let lastDropmapClose = 0;
@@ -217,11 +221,82 @@ async function closeDropmap(guild) {
 
 }
 
+async function startYuniteStream() {
+
+  try {
+
+    const res = await axios.get(
+      "https://yunite.xyz/api/v3/websocket-token",
+      {
+        headers: {
+          "Y-Api-Token": YUNITE_API_KEY
+        }
+      }
+    );
+
+    const token = res.data;
+
+    const ws = new WebSocket(
+      `wss://yunite.xyz/api/v3/guild/${YUNITE_GUILD_ID}/customs/stream?token=${token}`
+    );
+
+    ws.on("open", () => {
+      console.log("Connected to Yunite customs stream");
+    });
+
+    ws.on("message", async (msg) => {
+
+      const payload = JSON.parse(msg);
+
+      if (!payload?.data) return;
+
+      const state = payload.data.state;
+
+      const guild = client.guilds.cache.get(GUILD_ID);
+      if (!guild) return;
+
+      const logChannel = guild.channels.cache.get(BOT_LOG_CHANNEL);
+
+      if (state === "STARTED") {
+        console.log("Yunite: match started");
+        await closeDropmap(guild);
+      }
+
+      if (state === "FINISHED") {
+        console.log("Yunite: match finished");
+        if (logChannel) {
+          logChannel.send("✅ Yunite detected match finished.");
+        }
+      }
+
+    });
+
+    ws.on("close", () => {
+      console.log("Yunite stream closed — reconnecting");
+      setTimeout(startYuniteStream, 10000);
+    });
+
+    ws.on("error", err => {
+      console.log("Yunite stream error:", err.message);
+    });
+
+  } catch (err) {
+
+    console.error("Yunite connection failed:", err.response?.data || err.message);
+
+    setTimeout(startYuniteStream, 15000);
+
+  }
+
+}
+
 // ================= READY =================
 
 client.once("ready", async () => {
 
   console.log(`Logged in as ${client.user.tag}`);
+  
+  startYuniteStream();
 
   startBanExpiryChecker(client);
 
