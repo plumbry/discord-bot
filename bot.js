@@ -169,132 +169,9 @@ client.on("interactionCreate", async interaction => {
 
   }
 
-  // ================= BUTTONS =================
-
-  if (interaction.isButton()) {
-
-    const active = activeCalls.get(interaction.channel.id);
-
-    if (!active) {
-      return interaction.reply({
-        content: "No active game call found.",
-        ephemeral: true
-      });
-    }
-
-    if (interaction.customId === "gamecall_stop_followups") {
-
-      await interaction.deferReply({ ephemeral: true });
-
-      clearTimeout(active.t1);
-      clearTimeout(active.t2);
-
-      return interaction.editReply({
-        content: "Automated WHO IS NOT IN follow ups stopped."
-      });
-
-    }
-
-    if (interaction.customId === "gamecall_cancel") {
-
-      await interaction.deferReply({ ephemeral: true });
-
-      clearTimeout(active.t1);
-      clearTimeout(active.t2);
-
-      const msg = await interaction.channel.messages.fetch(active.messageId);
-
-      const lines = msg.content.split("\n");
-
-      const game = active.gameNumber;
-
-      const regionMatch = lines[0].match(/GAME\s+\d+\s+(\S+)/i);
-      const region = regionMatch ? regionMatch[1] : "";
-
-      lines[0] = `GAME ${game} ${region} CODE CANCELLED`;
-
-      await msg.edit(lines.join("\n"));
-
-      const rolePing = `<@&${active.roleId}>`;
-
-      await interaction.channel.send(
-`🚨 **CODE CANCELLED** ${rolePing}`
-      );
-
-      activeCalls.delete(interaction.channel.id);
-
-      return interaction.editReply({
-        content: `Game ${game} cancelled.`
-      });
-
-    }
-
-    if (interaction.customId === "gamecall_override") {
-
-      const modal = new ModalBuilder()
-        .setCustomId("override_modal")
-        .setTitle("Override Game Code");
-
-      const input = new TextInputBuilder()
-        .setCustomId("new_code")
-        .setLabel("New Game Code")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
-
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(input)
-      );
-
-      return interaction.showModal(modal);
-
-    }
-
-  }
-
-  // ================= MODALS =================
-
-  if (interaction.isModalSubmit()) {
-
-    if (interaction.customId === "override_modal") {
-
-      const newCode = interaction.fields.getTextInputValue("new_code");
-
-      const active = activeCalls.get(interaction.channel.id);
-
-      if (!active) return;
-
-      const msg = await interaction.channel.messages.fetch(active.messageId);
-
-      const lines = msg.content.split("\n");
-
-      const match = lines[0].match(/^GAME\s+(\d+)\s+(\S+)/i);
-
-      const game = match[1];
-      const region = match[2];
-
-      lines[0] = `GAME ${game} ${region} CODE ${newCode}`;
-
-      await msg.edit(lines.join("\n"));
-
-      const rolePing = `<@&${active.roleId}>`;
-
-      await interaction.channel.send(
-`🚨 **NEW CODE** ${rolePing}
-CODE ${newCode}`
-      );
-
-      return interaction.reply({
-        content: `Game code updated to **${newCode}**.`,
-        ephemeral: true
-      });
-
-    }
-
-  }
-
 });
 
-// ================= YUNITE DROP MAP AUTOMATION =================
+// ================= DROP MAP AUTOMATION =================
 
 client.on("messageCreate", async message => {
 
@@ -332,33 +209,72 @@ client.on("messageCreate", async message => {
 
   console.log("Detected tournament:", tournamentName);
 
-  const lowerTournament = tournamentName.toLowerCase();
-  const tournamentWords = lowerTournament.split(/\s+/);
+  const ignoreWords = [
+    "zbd",
+    "tournament",
+    "season",
+    "scrims",
+    "event",
+    "cup"
+  ];
 
-  const category = guild.channels.cache.find(c => {
+  const priorityWords = [
+    "monday","tuesday","wednesday","thursday",
+    "friday","saturday","sunday",
+    "funday"
+  ];
 
-    if (c.type !== 4) return false;
+  const tournamentWords = tournamentName
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(w => !ignoreWords.includes(w));
 
-    const categoryWords = c.name.toLowerCase().split(/\s+/);
+  let bestCategory = null;
+  let bestScore = 0;
 
-    return categoryWords.some(word =>
-      tournamentWords.includes(word)
-    );
+  guild.channels.cache.forEach(channel => {
+
+    if (channel.type !== 4) return;
+
+    const categoryWords = channel.name
+      .toLowerCase()
+      .split(/\s+/);
+
+    let score = 0;
+
+    categoryWords.forEach(word => {
+
+      if (!tournamentWords.includes(word)) return;
+
+      if (priorityWords.includes(word)) {
+        score += 10;
+      } else {
+        score += 2;
+      }
+
+    });
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestCategory = channel;
+    }
 
   });
 
-  if (!category) {
+  if (!bestCategory) {
     console.log("No category match for:", tournamentName);
     return;
   }
 
+  console.log("Best category match:", bestCategory.name);
+
   const dropmapChannel = guild.channels.cache.find(c =>
-    c.parentId === category.id &&
+    c.parentId === bestCategory.id &&
     c.name.toLowerCase().includes("dropmap")
   );
 
   if (!dropmapChannel) {
-    console.log("No dropmap channel found in:", category.name);
+    console.log("No dropmap channel found in:", bestCategory.name);
     return;
   }
 
