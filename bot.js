@@ -51,6 +51,7 @@ const activeCalls = gamecallModule.activeCalls || new Map();
 // ================= CONSTANTS =================
 
 const GUILD_ID = "1371615693392576580";
+const YUNITE_LOG_CHANNEL = "1371615781393137788";
 
 // ================= CLIENT =================
 
@@ -181,8 +182,6 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // STOP FOLLOW UPS
-
     if (interaction.customId === "gamecall_stop_followups") {
 
       await interaction.deferReply({ ephemeral: true });
@@ -195,8 +194,6 @@ client.on("interactionCreate", async interaction => {
       });
 
     }
-
-    // CANCEL GAMECALL
 
     if (interaction.customId === "gamecall_cancel") {
 
@@ -231,8 +228,6 @@ client.on("interactionCreate", async interaction => {
       });
 
     }
-
-    // OVERRIDE CODE
 
     if (interaction.customId === "gamecall_override") {
 
@@ -298,6 +293,66 @@ CODE ${newCode}`
   }
 
 });
+
+// ================= YUNITE DROP MAP AUTOMATION =================
+
+client.on("messageCreate", async message => {
+
+  if (!message.author.bot) return;
+  if (message.channel.id !== YUNITE_LOG_CHANNEL) return;
+
+  if (!message.content.toLowerCase().includes("matches are running")) return;
+
+  const guild = message.guild;
+
+  let tournamentName = null;
+
+  const lines = message.content.split("\n");
+
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].toLowerCase().includes("tournament")) {
+      tournamentName = lines[i + 1] || lines[i];
+      break;
+    }
+  }
+
+  if (!tournamentName) {
+    const match = message.content.match(/Tournament\s*(.+?)\s*-?\s*Matches/i);
+    if (match) tournamentName = match[1];
+  }
+
+  if (!tournamentName) {
+    console.log("Could not detect tournament name.");
+    return;
+  }
+
+  const lowerTournament = tournamentName.toLowerCase();
+
+  const category = guild.channels.cache.find(c =>
+    c.type === 4 &&
+    lowerTournament.includes(c.name.toLowerCase())
+  );
+
+  if (!category) {
+    console.log("No category match for:", tournamentName);
+    return;
+  }
+
+  const dropmapChannel = guild.channels.cache.find(c =>
+    c.parentId === category.id &&
+    c.name.toLowerCase().includes("dropmap")
+  );
+
+  if (!dropmapChannel) {
+    console.log("No dropmap channel found in:", category.name);
+    return;
+  }
+
+  dropmapChannel.send("🚫 **DROPMAP CLOSED — CHANGES WILL COUNT FOR NEXT GAME**");
+
+});
+
+// ================= MEMBER JOIN =================
 
 client.on("guildMemberAdd", handleWelcome);
 
