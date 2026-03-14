@@ -52,6 +52,7 @@ const activeCalls = gamecallModule.activeCalls || new Map();
 
 const GUILD_ID = "1371615693392576580";
 const YUNITE_LOG_CHANNEL = "1371615781393137788";
+const BOT_LOG_CHANNEL = "1471082166535454780";
 
 const DROP_MAP_COOLDOWN = 5 * 60 * 1000;
 let lastDropmapClose = 0;
@@ -106,17 +107,24 @@ for (const file of commandFiles) {
 
 async function closeDropmap(guild) {
 
+  const logChannel = guild.channels.cache.get(BOT_LOG_CHANNEL);
+
   const nowCooldown = Date.now();
 
   if (nowCooldown - lastDropmapClose < DROP_MAP_COOLDOWN) {
+
     console.log("Dropmap closure skipped (cooldown active)");
+
+    if (logChannel) {
+      logChannel.send("⚠️ Dropmap closure skipped — cooldown active.");
+    }
+
     return;
   }
 
   let activeCategory = null;
   let newestMessageTime = 0;
 
-  // Find all dropmap channels
   const dropmapChannels = guild.channels.cache.filter(
     c => c.isTextBased() && c.name.toLowerCase().includes("dropmap")
   );
@@ -165,11 +173,15 @@ async function closeDropmap(guild) {
   }
 
   if (!activeCategory) {
+
     console.log("No active category detected.");
+
+    if (logChannel) {
+      logChannel.send("⚠️ Dropmap closure failed — no active category detected.");
+    }
+
     return;
   }
-
-  console.log("Active category detected:", activeCategory.name);
 
   const dropmapChannel = guild.channels.cache.find(c =>
     c.parentId === activeCategory.id &&
@@ -177,7 +189,13 @@ async function closeDropmap(guild) {
   );
 
   if (!dropmapChannel) {
+
     console.log("No dropmap channel found in:", activeCategory.name);
+
+    if (logChannel) {
+      logChannel.send(`⚠️ Dropmap closure failed — no dropmap channel in **${activeCategory.name}**.`);
+    }
+
     return;
   }
 
@@ -185,9 +203,13 @@ async function closeDropmap(guild) {
 
   console.log("Closing dropmap in:", dropmapChannel.name);
 
-  dropmapChannel.send(
+  await dropmapChannel.send(
     "🚫 **DROPMAP CLOSED — CHANGES WILL COUNT FOR NEXT GAME**"
   );
+
+  if (logChannel) {
+    logChannel.send(`✅ Dropmap closed in **#${dropmapChannel.name}** (${activeCategory.name})`);
+  }
 
 }
 
