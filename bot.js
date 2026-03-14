@@ -232,14 +232,14 @@ client.on("messageCreate", async message => {
 
     if (!nameMatch) continue;
 
-    const childChannels = guild.channels.cache.filter(
+    const chatChannels = guild.channels.cache.filter(
       c =>
         c.parentId === category.id &&
         c.isTextBased() &&
         c.name.toLowerCase().includes("chat")
     );
 
-    for (const channel of childChannels.values()) {
+    for (const channel of chatChannels.values()) {
 
       try {
 
