@@ -233,7 +233,14 @@ client.on("messageCreate", async message => {
     if (!nameMatch) continue;
 
     const childChannels = guild.channels.cache.filter(
-      c => c.parentId === category.id && c.isTextBased()
+      c =>
+        c.parentId === category.id &&
+        c.isTextBased() &&
+        !c.name.includes("staff") &&
+        !c.name.includes("bot") &&
+        !c.name.includes("dropmap") &&
+        !c.name.includes("log") &&
+        !c.name.includes("leaderboard")
     );
 
     for (const channel of childChannels.values()) {
