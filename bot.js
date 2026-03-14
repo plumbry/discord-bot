@@ -55,6 +55,36 @@ let lastDropmapClose = 0;
 
 const ACTIVITY_WINDOW = 15 * 60 * 1000;
 
+// ================= PANEL UPDATE =================
+
+async function updatePanel(guild, channelId) {
+
+  const call = activeCalls.get(channelId);
+  if (!call || !call.panelMessageId) return;
+
+  const logChannel = guild.channels.cache.get(BOT_LOG_CHANNEL);
+  if (!logChannel) return;
+
+  try {
+
+    const panelMessage = await logChannel.messages.fetch(call.panelMessageId);
+
+    await panelMessage.edit({
+      content:
+`🎮 GAME ${call.gameNumber} CONTROL PANEL
+
+Status: ${call.status}
+Chat: ${call.chat}
+Streams: ${call.streams}
+Followups: ${call.followups}`
+    });
+
+  } catch (err) {
+    console.error("Panel update failed:", err);
+  }
+
+}
+
 // ================= CLIENT =================
 
 const client = new Client({
@@ -273,169 +303,124 @@ client.on("interactionCreate", async interaction => {
 
   }
 
-  // ================= BUTTON INTERACTIONS =================
+  // ================= STAFF PANEL BUTTONS =================
 
   if (interaction.isButton()) {
 
-    // ===== SCRIM CHANNEL BUTTONS =====
+    if (!interaction.customId.startsWith("staff_")) return;
 
-    if (
-      interaction.customId === "gamecall_cancel" ||
-      interaction.customId === "gamecall_stop_followups"
-    ) {
+    const parts = interaction.customId.split("_");
+    const action = parts.slice(0,3).join("_");
+    const channelId = parts[3];
 
-      const call = activeCalls.get(interaction.channel.id);
+    const call = activeCalls.get(channelId);
+    const gameChannel = interaction.guild.channels.cache.get(channelId);
 
-      if (!call) {
-        return interaction.reply({
-          content: "No active game call in this channel.",
-          ephemeral: true
-        });
-      }
+    if (!call || !gameChannel) {
+      return interaction.reply({
+        content: "⚠️ This game panel is no longer active.",
+        ephemeral: true
+      });
+    }
 
-      if (interaction.customId === "gamecall_cancel") {
+    if (action === "staff_cancel_game") {
 
-        clearTimeout(call.t1);
-        clearTimeout(call.t2);
+      clearTimeout(call.t1);
+      clearTimeout(call.t2);
 
-        activeCalls.delete(interaction.channel.id);
+      call.status = "Cancelled";
 
-        await interaction.channel.send("❌ **Game call cancelled.**");
+      await updatePanel(interaction.guild, channelId);
 
-        return interaction.reply({
-          content: "Game cancelled.",
-          ephemeral: true
-        });
+      activeCalls.delete(channelId);
 
-      }
+      await gameChannel.send("❌ **Game call cancelled by staff.**");
 
-      if (interaction.customId === "gamecall_stop_followups") {
-
-        clearTimeout(call.t1);
-        clearTimeout(call.t2);
-
-        return interaction.reply({
-          content: "Follow-ups stopped.",
-          ephemeral: true
-        });
-
-      }
+      return interaction.reply({ content: "Game cancelled.", ephemeral: true });
 
     }
 
-    // ===== STAFF PANEL BUTTONS =====
+    if (action === "staff_stop_followups") {
 
-    if (interaction.customId.startsWith("staff_")) {
+      clearTimeout(call.t1);
+      clearTimeout(call.t2);
 
-      const parts = interaction.customId.split("_");
-      const action = parts.slice(0,3).join("_");
-      const channelId = parts[3];
+      call.followups = "Stopped";
 
-      const call = activeCalls.get(channelId);
-      const gameChannel = interaction.guild.channels.cache.get(channelId);
+      await updatePanel(interaction.guild, channelId);
 
-      // 🔒 SAFETY CHECK
-      if (!call || !gameChannel || call.messageId === undefined) {
-        return interaction.reply({
-          content: "⚠️ This game panel is no longer active.",
-          ephemeral: true
-        });
-      }
+      return interaction.reply({ content: "Follow-ups stopped.", ephemeral: true });
 
-      if (action === "staff_cancel_game") {
+    }
 
-        clearTimeout(call.t1);
-        clearTimeout(call.t2);
+    if (action === "staff_lock_chat") {
 
-        activeCalls.delete(channelId);
+      const chatChannel = interaction.guild.channels.cache.find(
+        c =>
+          c.parentId === gameChannel.parentId &&
+          c.isTextBased() &&
+          c.name.toLowerCase().includes("chat")
+      );
 
-        await gameChannel.send("❌ **Game call cancelled by staff.**");
+      await chatChannel.permissionOverwrites.edit(
+        interaction.guild.roles.everyone,
+        { SendMessages: false }
+      );
 
-        return interaction.reply({
-          content: "Game cancelled.",
-          ephemeral: true
-        });
+      call.chat = "Locked";
 
-      }
+      await updatePanel(interaction.guild, channelId);
 
-      if (action === "staff_stop_followups") {
+      return interaction.reply({ content: `🔒 Chat locked in ${chatChannel}.`, ephemeral: true });
 
-        clearTimeout(call.t1);
-        clearTimeout(call.t2);
+    }
 
-        return interaction.reply({
-          content: "Follow-ups stopped.",
-          ephemeral: true
-        });
+    if (action === "staff_unlock_chat") {
 
-      }
+      const chatChannel = interaction.guild.channels.cache.find(
+        c =>
+          c.parentId === gameChannel.parentId &&
+          c.isTextBased() &&
+          c.name.toLowerCase().includes("chat")
+      );
 
-      if (action === "staff_lock_chat") {
+      await chatChannel.permissionOverwrites.edit(
+        interaction.guild.roles.everyone,
+        { SendMessages: null }
+      );
 
-        const chatChannel = interaction.guild.channels.cache.find(
-          c =>
-            c.parentId === gameChannel.parentId &&
-            c.isTextBased() &&
-            c.name.toLowerCase().includes("chat")
-        );
+      call.chat = "Open";
 
-        const everyone = interaction.guild.roles.everyone;
+      await updatePanel(interaction.guild, channelId);
 
-        await chatChannel.permissionOverwrites.edit(everyone, {
-          SendMessages: false
-        });
+      return interaction.reply({ content: `🔓 Chat unlocked in ${chatChannel}.`, ephemeral: true });
 
-        return interaction.reply({
-          content: `🔒 Chat locked in ${chatChannel}.`,
-          ephemeral: true
-        });
+    }
 
-      }
+    if (action === "staff_check_streams") {
 
-      if (action === "staff_unlock_chat") {
+      const streamChannel = interaction.guild.channels.cache.find(
+        c =>
+          c.parentId === gameChannel.parentId &&
+          c.isTextBased() &&
+          c.name.toLowerCase() === "twitch-streams"
+      );
 
-        const chatChannel = interaction.guild.channels.cache.find(
-          c =>
-            c.parentId === gameChannel.parentId &&
-            c.isTextBased() &&
-            c.name.toLowerCase().includes("chat")
-        );
+      const command = client.commands.get("checklive");
 
-        const everyone = interaction.guild.roles.everyone;
+      await command.execute({
+        ...interaction,
+        channel: streamChannel
+      });
 
-        await chatChannel.permissionOverwrites.edit(everyone, {
-          SendMessages: null
-        });
+      call.streams = "Checked";
 
-        return interaction.reply({
-          content: `🔓 Chat unlocked in ${chatChannel}.`,
-          ephemeral: true
-        });
+      await updatePanel(interaction.guild, channelId);
 
-      }
-
-      if (action === "staff_check_streams") {
-
-        const streamChannel = interaction.guild.channels.cache.find(
-          c =>
-            c.parentId === gameChannel.parentId &&
-            c.isTextBased() &&
-            c.name.toLowerCase() === "twitch-streams"
-        );
-
-        const command = client.commands.get("checklive");
-
-        await interaction.reply({
-          content: `Running stream check in ${streamChannel}...`,
-          ephemeral: true
-        });
-
-        await command.execute({
-          ...interaction,
-          channel: streamChannel
-        });
-
-      }
+      return interaction.reply({
+        content: `Running stream check in ${streamChannel}`,
+        ephemeral: true
+      });
 
     }
 

@@ -17,6 +17,7 @@ async function getNextGameNumber(channel){
   const messages = await channel.messages.fetch({limit:50});
 
   let highest = 0;
+
   const regex = /GAME\s+(\d+)/i;
 
   for(const msg of messages.values()){
@@ -140,60 +141,61 @@ WHO IS NOT IN ${role}`
     },240000);
 
     activeCalls.set(channel.id,{
-      messageId:msg.id,
-      roleId:role.id,
-      gameNumber:game,
+      messageId: msg.id,
+      roleId: role.id,
+      gameNumber: game,
       t1,
-      t2
+      t2,
+      status: "Active",
+      chat: "Open",
+      streams: "Unchecked",
+      followups: "Running",
+      panelMessageId: null
     });
 
-    // ================= STAFF PANEL =================
+    const staffControls = new ActionRowBuilder().addComponents(
+
+      new ButtonBuilder()
+        .setCustomId(`staff_cancel_game_${channel.id}`)
+        .setLabel("Cancel Game")
+        .setStyle(ButtonStyle.Danger),
+
+      new ButtonBuilder()
+        .setCustomId(`staff_stop_followups_${channel.id}`)
+        .setLabel("Stop Followups")
+        .setStyle(ButtonStyle.Secondary),
+
+      new ButtonBuilder()
+        .setCustomId(`staff_lock_chat_${channel.id}`)
+        .setLabel("Lock Chat")
+        .setStyle(ButtonStyle.Secondary),
+
+      new ButtonBuilder()
+        .setCustomId(`staff_unlock_chat_${channel.id}`)
+        .setLabel("Unlock Chat")
+        .setStyle(ButtonStyle.Success),
+
+      new ButtonBuilder()
+        .setCustomId(`staff_check_streams_${channel.id}`)
+        .setLabel("Check Streams")
+        .setStyle(ButtonStyle.Primary)
+
+    );
 
     const logChannel = guild.channels.cache.get(BOT_LOG_CHANNEL);
 
-    if(logChannel){
-
-      const staffControls = new ActionRowBuilder().addComponents(
-
-        new ButtonBuilder()
-          .setCustomId(`staff_override_code_${channel.id}`)
-          .setLabel("Override Code")
-          .setStyle(ButtonStyle.Primary),
-
-        new ButtonBuilder()
-          .setCustomId(`staff_stop_followups_${channel.id}`)
-          .setLabel("Stop Follow Ups")
-          .setStyle(ButtonStyle.Secondary),
-
-        new ButtonBuilder()
-          .setCustomId(`staff_cancel_game_${channel.id}`)
-          .setLabel("Cancel Game Call")
-          .setStyle(ButtonStyle.Danger),
-
-        new ButtonBuilder()
-          .setCustomId(`staff_lock_chat_${channel.id}`)
-          .setLabel("Lock Chat")
-          .setStyle(ButtonStyle.Secondary),
-
-        new ButtonBuilder()
-          .setCustomId(`staff_check_streams_${channel.id}`)
-          .setLabel("Check Streams")
-          .setStyle(ButtonStyle.Secondary)
-
-      );
-
-      await logChannel.send({
-        content:
+    const panel = await logChannel.send({
+      content:
 `🎮 GAME ${game} CONTROL PANEL
 
-Channel: ${channel}
-Region: ${region}
-Code: ${code}
-Start: ${relative}`,
-        components:[staffControls]
-      });
+Status: Active
+Chat: Open
+Streams: Unchecked
+Followups: Running`,
+      components:[staffControls]
+    });
 
-    }
+    activeCalls.get(channel.id).panelMessageId = panel.id;
 
   }
 
