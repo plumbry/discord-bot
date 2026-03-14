@@ -298,10 +298,15 @@ CODE ${newCode}`
 
 client.on("messageCreate", async message => {
 
-  if (!message.author.bot) return;
   if (message.channel.id !== YUNITE_LOG_CHANNEL) return;
 
-  if (!message.content.toLowerCase().includes("matches are running")) return;
+  const content = message.content.toLowerCase();
+
+  // Allow real Yunite message OR test message
+  if (
+    !content.includes("matches are running") &&
+    !content.includes("test dropmap")
+  ) return;
 
   const guild = message.guild;
 
@@ -317,7 +322,7 @@ client.on("messageCreate", async message => {
   }
 
   if (!tournamentName) {
-    const match = message.content.match(/Tournament\s*(.+?)\s*-?\s*Matches/i);
+    const match = message.content.match(/Tournament\s*(.+?)\s*-?\s*(Matches|TEST)/i);
     if (match) tournamentName = match[1];
   }
 
@@ -325,6 +330,8 @@ client.on("messageCreate", async message => {
     console.log("Could not detect tournament name.");
     return;
   }
+
+  console.log("Detected tournament:", tournamentName);
 
   const lowerTournament = tournamentName.toLowerCase();
 
@@ -347,6 +354,8 @@ client.on("messageCreate", async message => {
     console.log("No dropmap channel found in:", category.name);
     return;
   }
+
+  console.log("Closing dropmap in:", dropmapChannel.name);
 
   dropmapChannel.send("🚫 **DROPMAP CLOSED — CHANGES WILL COUNT FOR NEXT GAME**");
 
