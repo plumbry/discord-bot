@@ -107,11 +107,9 @@ async function closeDropmap(guild) {
   const nowCooldown = Date.now();
 
   if (nowCooldown - lastDropmapClose < DROP_MAP_COOLDOWN) {
-
     if (logChannel) {
       logChannel.send("⚠️ Dropmap closure skipped — cooldown active.");
     }
-
     return;
   }
 
@@ -279,6 +277,8 @@ client.on("interactionCreate", async interaction => {
 
   if (interaction.isButton()) {
 
+    // ===== SCRIM CHANNEL BUTTONS =====
+
     if (
       interaction.customId === "gamecall_cancel" ||
       interaction.customId === "gamecall_stop_followups"
@@ -323,6 +323,8 @@ client.on("interactionCreate", async interaction => {
 
     }
 
+    // ===== STAFF PANEL BUTTONS =====
+
     if (interaction.customId.startsWith("staff_")) {
 
       const parts = interaction.customId.split("_");
@@ -332,9 +334,10 @@ client.on("interactionCreate", async interaction => {
       const call = activeCalls.get(channelId);
       const gameChannel = interaction.guild.channels.cache.get(channelId);
 
-      if (!call || !gameChannel) {
+      // 🔒 SAFETY CHECK
+      if (!call || !gameChannel || call.messageId === undefined) {
         return interaction.reply({
-          content: "Game call not found.",
+          content: "⚠️ This game panel is no longer active.",
           ephemeral: true
         });
       }
