@@ -122,6 +122,7 @@ const eventBanCommand = new SlashCommandBuilder()
 .setName("eventban")
 .setDescription("Event ban management")
 
+// APPLY BAN
 .addSubcommand(s =>
   s.setName("apply")
     .setDescription("Apply an event ban")
@@ -142,6 +143,7 @@ const eventBanCommand = new SlashCommandBuilder()
       o.setName("reason").setDescription("Reason").setRequired(true))
 )
 
+// PROBATION
 .addSubcommand(s =>
   s.setName("probation")
     .setDescription("Apply probation (days)")
@@ -157,6 +159,7 @@ const eventBanCommand = new SlashCommandBuilder()
         .setRequired(false))
 )
 
+// EVENT PASSED
 .addSubcommand(s =>
   s.setName("eventpassed")
     .setDescription("Reduce remaining bans")
@@ -175,6 +178,7 @@ const eventBanCommand = new SlashCommandBuilder()
         .setRequired(true))
 )
 
+// SUMMARY
 .addSubcommand(s =>
   s.setName("summary")
     .setDescription("Show active bans and probations")
@@ -192,6 +196,100 @@ async function handleEventBan(interaction) {
   const sub = interaction.options.getSubcommand();
   const rows = await getRows();
   const banChannel = await interaction.guild.channels.fetch(BAN_CHANNEL_ID);
+
+  // APPLY EVENT BAN
+
+  if (sub === "apply") {
+
+    const user = interaction.options.getUser("user");
+    const type = interaction.options.getString("type");
+    const events = interaction.options.getInteger("events");
+    const reason = interaction.options.getString("reason");
+
+    const row = [
+      user.id,
+      user.tag,
+      type,
+      events,
+      events,
+      today(),
+      today(),
+      reason,
+      interaction.user.tag,
+      ""
+    ];
+
+    const msg = await banChannel.send(formatEventBan(row));
+
+    row[9] = msg.id;
+
+    rows.push(row);
+
+    await writeRows(rows);
+
+    await logAudit(`Applied ${events}-event ${type} ban`, interaction.user, user);
+
+    return interaction.editReply("✅ Event ban applied.");
+  }
+
+  // APPLY PROBATION
+
+  if (sub === "probation") {
+
+    const user = interaction.options.getUser("user");
+    const days = interaction.options.getInteger("days");
+    const reason = interaction.options.getString("reason");
+    const startInput = interaction.options.getString("start");
+
+    let startDate;
+
+    if (startInput) {
+
+      startDate = parseDateInput(startInput);
+
+      if (!startDate)
+        return interaction.editReply(
+          "Invalid date format. Use **YYYY-MM-DD** or **DD/MM/YYYY**."
+        );
+
+    } else {
+
+      startDate = new Date();
+
+    }
+
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + days);
+
+    const format = d => d.toLocaleDateString("en-GB");
+
+    const row = [
+      user.id,
+      user.tag,
+      "Probation",
+      days,
+      days,
+      format(startDate),
+      format(endDate),
+      reason,
+      interaction.user.tag,
+      ""
+    ];
+
+    const msg = await banChannel.send(formatProbation(row));
+
+    row[9] = msg.id;
+
+    rows.push(row);
+
+    await writeRows(rows);
+
+    await logAudit(`Applied ${days}-day probation`, interaction.user, user);
+
+    return interaction.editReply("✅ Probation applied.");
+  }
+
+  // EVENT PASSED
 
   if (sub === "eventpassed") {
 
@@ -212,10 +310,8 @@ async function handleEventBan(interaction) {
         if (r[9]) {
 
           try {
-
             const msg = await banChannel.messages.fetch(r[9]);
             await msg.edit(formatEventBan(r));
-
           } catch {}
 
         }
@@ -229,7 +325,39 @@ async function handleEventBan(interaction) {
     return interaction.editReply("✅ Event bans updated.");
   }
 
-  // other handlers remain unchanged
+  // SUMMARY
+
+  if (sub === "summary") {
+
+    const activeBans = rows.filter(
+      r => r[2] !== "Probation" && Number(r[4]) > 0
+    );
+
+    const probations = rows.filter(
+      r => r[2] === "Probation" && Number(r[4]) > 0
+    );
+
+    let text = "";
+
+    text += "**Active Event Bans**\n";
+
+    text += activeBans.length
+      ? activeBans.map(r =>
+        `${r[1]} — ${r[2]} | ${r[4]} events remaining`
+      ).join("\n")
+      : "None";
+
+    text += "\n\n**Active Probations**\n";
+
+    text += probations.length
+      ? probations.map(r =>
+        `${r[1]} — ${r[4]} days remaining (ends ${r[6]})`
+      ).join("\n")
+      : "None";
+
+    return interaction.editReply(text);
+  }
+
 }
 
 module.exports = {
