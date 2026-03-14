@@ -236,11 +236,7 @@ client.on("messageCreate", async message => {
       c =>
         c.parentId === category.id &&
         c.isTextBased() &&
-        !c.name.includes("staff") &&
-        !c.name.includes("bot") &&
-        !c.name.includes("dropmap") &&
-        !c.name.includes("log") &&
-        !c.name.includes("leaderboard")
+        c.name.toLowerCase().includes("chat")
     );
 
     for (const channel of childChannels.values()) {
