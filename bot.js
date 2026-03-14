@@ -11,7 +11,6 @@ const {
 
 const fs = require("fs");
 const path = require("path");
-const axios = require("axios");
 
 // ================= ERROR HANDLING =================
 
@@ -53,9 +52,6 @@ const activeCalls = gamecallModule.activeCalls || new Map();
 
 const GUILD_ID = "1371615693392576580";
 const YUNITE_LOG_CHANNEL = "1371615781393137788";
-
-const YUNITE_API_KEY = "dceb92dd-a9f4-441c-80ad-331c03e3a16b";
-const YUNITE_API_URL = "https://api.yunite.xyz/v1/matches";
 
 const DROP_MAP_COOLDOWN = 5 * 60 * 1000;
 let lastDropmapClose = 0;
@@ -117,9 +113,6 @@ async function closeDropmap(guild) {
 
   lastDropmapClose = nowCooldown;
 
-  const fiveMinutes = 5 * 60 * 1000;
-  const now = Date.now();
-
   let activeCategory = null;
 
   const categories = guild.channels.cache.filter(c => c.type === 4);
@@ -138,17 +131,12 @@ async function closeDropmap(guild) {
       try {
 
         const messages = await channel.messages.fetch({ limit: 1 });
-
         const lastMessage = messages.first();
 
         if (!lastMessage) continue;
 
-        const age = now - lastMessage.createdTimestamp;
-
-        if (age < fiveMinutes) {
-          activeCategory = category;
-          break;
-        }
+        activeCategory = category;
+        break;
 
       } catch {
         continue;
@@ -182,41 +170,6 @@ async function closeDropmap(guild) {
   dropmapChannel.send(
     "🚫 **DROPMAP CLOSED — CHANGES WILL COUNT FOR NEXT GAME**"
   );
-
-}
-
-// ================= YUNITE API CHECK =================
-
-async function checkYuniteMatches(client) {
-
-  try {
-
-    const response = await axios.get(YUNITE_API_URL, {
-      headers: {
-        Authorization: `Bearer ${YUNITE_API_KEY}`
-      }
-    });
-
-    const matches = response.data.matches;
-
-    if (!matches) return;
-
-    const runningMatch = matches.find(m => m.status === "running");
-
-    if (!runningMatch) return;
-
-    console.log("Yunite API detected running match");
-
-    const guild = client.guilds.cache.get(GUILD_ID);
-    if (!guild) return;
-
-    closeDropmap(guild);
-
-  } catch (err) {
-
-    console.error("Yunite API error:", err.message);
-
-  }
 
 }
 
@@ -255,12 +208,9 @@ client.once("ready", async () => {
     dm.startDMScheduler(client);
   }
 
-  // Start Yunite polling
-  setInterval(() => checkYuniteMatches(client), 30000);
-
 });
 
-// ================= DISCORD LOG FALLBACK =================
+// ================= DISCORD LOG TRIGGER =================
 
 client.on("messageCreate", async message => {
 
