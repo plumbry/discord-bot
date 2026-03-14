@@ -56,6 +56,8 @@ const YUNITE_LOG_CHANNEL = "1371615781393137788";
 const DROP_MAP_COOLDOWN = 5 * 60 * 1000;
 let lastDropmapClose = 0;
 
+const ACTIVITY_WINDOW = 15 * 60 * 1000; // 15 minutes
+
 // ================= CLIENT =================
 
 const client = new Client({
@@ -111,8 +113,6 @@ async function closeDropmap(guild) {
     return;
   }
 
-  lastDropmapClose = nowCooldown;
-
   let activeCategory = null;
 
   const categories = guild.channels.cache.filter(c => c.type === 4);
@@ -135,8 +135,12 @@ async function closeDropmap(guild) {
 
         if (!lastMessage) continue;
 
-        activeCategory = category;
-        break;
+        const age = Date.now() - lastMessage.createdTimestamp;
+
+        if (age < ACTIVITY_WINDOW) {
+          activeCategory = category;
+          break;
+        }
 
       } catch {
         continue;
@@ -164,6 +168,8 @@ async function closeDropmap(guild) {
     console.log("No dropmap channel found in:", activeCategory.name);
     return;
   }
+
+  lastDropmapClose = nowCooldown;
 
   console.log("Closing dropmap in:", dropmapChannel.name);
 
