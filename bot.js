@@ -290,6 +290,149 @@ async function startYuniteStream() {
 
 }
 
+// ================= SAFE YUNITE SOCKET (ADDED) =================
+
+let yuniteSocket = null;
+let yuniteReconnectTimer = null;
+let yuniteReconnectDelay = 10000;
+
+async function startYuniteStreamSafe() {
+
+  try {
+
+    if (yuniteSocket) {
+      console.log("Yunite socket already active");
+      return;
+    }
+
+    console.log("Requesting Yunite websocket token...");
+
+    const res = await axios.get(
+      "https://yunite.xyz/api/v3/websocket-token",
+      {
+        headers: {
+          "Y-Api-Token": YUNITE_API_KEY
+        },
+        timeout: 10000
+      }
+    );
+
+    const token = res.data;
+
+    console.log("Connecting to Yunite stream...");
+
+    yuniteSocket = new WebSocket(
+      `wss://yunite.xyz/api/v3/guild/${YUNITE_GUILD_ID}/customs/stream?token=${token}`
+    );
+
+    yuniteSocket.on("open", () => {
+
+      console.log("✅ Yunite stream connected");
+      yuniteReconnectDelay = 10000;
+
+    });
+
+    yuniteSocket.on("message", async (msg) => {
+
+      try {
+
+        const payload = JSON.parse(msg);
+
+        if (!payload?.data) return;
+
+        const state = payload.data.state;
+
+        const guild = client.guilds.cache.get(GUILD_ID);
+        if (!guild) return;
+
+        const logChannel = guild.channels.cache.get(BOT_LOG_CHANNEL);
+
+        if (state === "STARTED") {
+
+          console.log("🎮 Yunite: match started");
+
+          await closeDropmap(guild);
+
+          if (logChannel) {
+            logChannel.send("🎮 Yunite detected **match start**");
+          }
+
+        }
+
+        if (state === "FINISHED") {
+
+          console.log("🏁 Yunite: match finished");
+
+          if (logChannel) {
+            logChannel.send("🏁 Yunite detected **match finished**");
+          }
+
+        }
+
+      } catch (err) {
+
+        console.log("Yunite message parse error:", err.message);
+
+      }
+
+    });
+
+    yuniteSocket.on("close", () => {
+
+      console.log("⚠️ Yunite socket closed");
+
+      yuniteSocket = null;
+
+      scheduleYuniteReconnect();
+
+    });
+
+    yuniteSocket.on("error", (err) => {
+
+      console.log("Yunite socket error:", err.message);
+
+      if (yuniteSocket) {
+        yuniteSocket.terminate();
+        yuniteSocket = null;
+      }
+
+    });
+
+  } catch (err) {
+
+    console.log(
+      "Yunite connection failed:",
+      err.response?.data || err.message
+    );
+
+    scheduleYuniteReconnect();
+
+  }
+
+}
+
+function scheduleYuniteReconnect() {
+
+  if (yuniteReconnectTimer) return;
+
+  console.log(`Reconnecting Yunite in ${yuniteReconnectDelay / 1000}s`);
+
+  yuniteReconnectTimer = setTimeout(() => {
+
+    yuniteReconnectTimer = null;
+
+    startYuniteStreamSafe();
+
+    yuniteReconnectDelay = Math.min(yuniteReconnectDelay * 2, 60000);
+
+  }, yuniteReconnectDelay);
+
+}
+
+// Override original Yunite function safely
+startYuniteStream = startYuniteStreamSafe;
+
+
 // ================= READY =================
 
 client.once("ready", async () => {
