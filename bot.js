@@ -53,6 +53,9 @@ const activeCalls = gamecallModule.activeCalls || new Map();
 const GUILD_ID = "1371615693392576580";
 const YUNITE_LOG_CHANNEL = "1371615781393137788";
 
+const DROP_MAP_COOLDOWN = 5 * 60 * 1000;
+let lastDropmapClose = 0;
+
 // ================= CLIENT =================
 
 const client = new Client({
@@ -183,6 +186,15 @@ client.on("messageCreate", async message => {
     !content.includes("matches are running") &&
     !content.includes("test dropmap")
   ) return;
+
+  const nowCooldown = Date.now();
+
+  if (nowCooldown - lastDropmapClose < DROP_MAP_COOLDOWN) {
+    console.log("Dropmap closure skipped (cooldown active)");
+    return;
+  }
+
+  lastDropmapClose = nowCooldown;
 
   const guild = message.guild;
 
