@@ -209,72 +209,74 @@ client.on("messageCreate", async message => {
 
   console.log("Detected tournament:", tournamentName);
 
-  const ignoreWords = [
-    "zbd",
-    "tournament",
-    "season",
-    "scrims",
-    "event",
-    "cup"
-  ];
-
-  const priorityWords = [
-    "monday","tuesday","wednesday","thursday",
-    "friday","saturday","sunday",
-    "funday"
-  ];
-
   const tournamentWords = tournamentName
     .toLowerCase()
-    .split(/\s+/)
-    .filter(w => !ignoreWords.includes(w));
+    .split(/\s+/);
 
-  let bestCategory = null;
-  let bestScore = 0;
+  const fiveMinutes = 5 * 60 * 1000;
+  const now = Date.now();
 
-  guild.channels.cache.forEach(channel => {
+  let activeCategory = null;
 
-    if (channel.type !== 4) return;
+  const categories = guild.channels.cache.filter(c => c.type === 4);
 
-    const categoryWords = channel.name
+  for (const category of categories.values()) {
+
+    const categoryWords = category.name
       .toLowerCase()
       .split(/\s+/);
 
-    let score = 0;
+    const nameMatch = categoryWords.some(word =>
+      tournamentWords.includes(word)
+    );
 
-    categoryWords.forEach(word => {
+    if (!nameMatch) continue;
 
-      if (!tournamentWords.includes(word)) return;
+    const childChannels = guild.channels.cache.filter(
+      c => c.parentId === category.id && c.isTextBased()
+    );
 
-      if (priorityWords.includes(word)) {
-        score += 10;
-      } else {
-        score += 2;
+    for (const channel of childChannels.values()) {
+
+      try {
+
+        const messages = await channel.messages.fetch({ limit: 1 });
+
+        const lastMessage = messages.first();
+
+        if (!lastMessage) continue;
+
+        const age = now - lastMessage.createdTimestamp;
+
+        if (age < fiveMinutes) {
+          activeCategory = category;
+          break;
+        }
+
+      } catch {
+        continue;
       }
 
-    });
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestCategory = channel;
     }
 
-  });
+    if (activeCategory) break;
 
-  if (!bestCategory) {
-    console.log("No category match for:", tournamentName);
+  }
+
+  if (!activeCategory) {
+    console.log("No active category detected.");
     return;
   }
 
-  console.log("Best category match:", bestCategory.name);
+  console.log("Active category detected:", activeCategory.name);
 
   const dropmapChannel = guild.channels.cache.find(c =>
-    c.parentId === bestCategory.id &&
+    c.parentId === activeCategory.id &&
     c.name.toLowerCase().includes("dropmap")
   );
 
   if (!dropmapChannel) {
-    console.log("No dropmap channel found in:", bestCategory.name);
+    console.log("No dropmap channel found in:", activeCategory.name);
     return;
   }
 
