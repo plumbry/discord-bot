@@ -23,7 +23,6 @@ const sheets = google.sheets({ version: "v4", auth });
 const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)/gi;
 
 function parseDuration(duration) {
-
   const match = duration.match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/);
 
   const h = parseInt(match?.[1] || 0);
@@ -31,7 +30,6 @@ function parseDuration(duration) {
   const s = parseInt(match?.[3] || 0);
 
   return h * 3600 + m * 60 + s;
-
 }
 
 function vodOverlaps(vod, start, end) {
@@ -41,7 +39,6 @@ function vodOverlaps(vod, start, end) {
   const vodEnd = new Date(vodStart.getTime() + duration * 1000);
 
   return vodStart < end && vodEnd > start;
-
 }
 
 async function getAccessToken() {
@@ -56,8 +53,50 @@ async function getAccessToken() {
   });
 
   const data = await res.json();
-  return data.access_token;
 
+  if (!data.access_token) {
+    throw new Error("Failed to obtain Twitch token");
+  }
+
+  return data.access_token;
+}
+
+async function getUserId(username, token) {
+
+  const res = await fetch(
+    `https://api.twitch.tv/helix/users?login=${username}`,
+    {
+      headers: {
+        "Client-ID": process.env.TWITCH_CLIENT_ID,
+        Authorization: `Bearer ${token}`
+      }
+    }
+  );
+
+  const data = await res.json();
+
+  if (!data.data || !data.data.length) return null;
+
+  return data.data[0].id;
+}
+
+async function getRecentVods(userId, token) {
+
+  const res = await fetch(
+    `https://api.twitch.tv/helix/videos?user_id=${userId}&type=archive&first=5`,
+    {
+      headers: {
+        "Client-ID": process.env.TWITCH_CLIENT_ID,
+        Authorization: `Bearer ${token}`
+      }
+    }
+  );
+
+  const data = await res.json();
+
+  if (!data.data) return [];
+
+  return data.data;
 }
 
 async function getTwitchUsers(channel) {
@@ -77,30 +116,37 @@ async function getTwitchUsers(channel) {
 
       if (msg.author.bot) continue;
 
-      // Fetch reactions and verify accepted signup
-      await msg.fetch();
-      const reactions = await msg.reactions.fetch();
+      try {
 
-      const accepted = reactions.some(
-        r => r.emoji.id === ACCEPTED_EMOJI_ID && r.count > 0
-      );
+        await msg.fetch();
+        const reactions = await msg.reactions.fetch();
 
-      if (!accepted) continue;
+        const accepted = reactions.some(
+          r => r.emoji.id === ACCEPTED_EMOJI_ID && r.count > 0
+        );
 
-      const matches = msg.content.match(TWITCH_REGEX);
-      if (!matches) continue;
+        if (!accepted) continue;
 
-      const isStaff = msg.member?.permissions?.has(PermissionFlagsBits.ManageRoles);
-      const batchMode = isStaff && matches.length > 5;
+        const matches = msg.content.match(TWITCH_REGEX);
+        if (!matches) continue;
 
-      for (const link of matches) {
+        const isStaff = msg.member?.permissions?.has(PermissionFlagsBits.ManageRoles);
+        const batchMode = isStaff && matches.length > 5;
 
-        const twitch = link.split("twitch.tv/")[1].toLowerCase();
+        for (const link of matches) {
 
-        users.set(twitch, {
-          twitch,
-          discordTag: batchMode ? "" : `<@${msg.author.id}>`
-        });
+          const twitch = link.split("twitch.tv/")[1].toLowerCase();
+
+          users.set(twitch, {
+            twitch,
+            discordTag: batchMode ? "" : `<@${msg.author.id}>`
+          });
+
+        }
+
+      } catch (err) {
+
+        console.error("Message scan error:", err);
 
       }
 
@@ -111,41 +157,6 @@ async function getTwitchUsers(channel) {
   }
 
   return [...users.values()];
-
-}
-
-async function getUserId(username, token) {
-
-  const res = await fetch(
-    `https://api.twitch.tv/helix/users?login=${username}`,
-    {
-      headers: {
-        "Client-ID": process.env.TWITCH_CLIENT_ID,
-        Authorization: `Bearer ${token}`
-      }
-    }
-  );
-
-  const data = await res.json();
-  return data.data?.[0]?.id;
-
-}
-
-async function getRecentVods(userId, token) {
-
-  const res = await fetch(
-    `https://api.twitch.tv/helix/videos?user_id=${userId}&type=archive&first=5`,
-    {
-      headers: {
-        "Client-ID": process.env.TWITCH_CLIENT_ID,
-        Authorization: `Bearer ${token}`
-      }
-    }
-  );
-
-  const data = await res.json();
-  return data.data || [];
-
 }
 
 async function appendRows(rows) {
@@ -180,65 +191,79 @@ module.exports = {
 
   async execute(interaction) {
 
-    const date = interaction.options.getString("date");
-    const startTime = interaction.options.getString("start");
-    const endTime = interaction.options.getString("end");
+    try {
 
-    const start = new Date(`${date}T${startTime}:00Z`);
-    const end = new Date(`${date}T${endTime}:00Z`);
+      const date = interaction.options.getString("date");
+      const startTime = interaction.options.getString("start");
+      const endTime = interaction.options.getString("end");
 
-    const categoryName =
-      interaction.channel.parent?.name || "No Category";
+      const start = new Date(`${date}T${startTime}:00Z`);
+      const end = new Date(`${date}T${endTime}:00Z`);
 
-    const checkedBy = `<@${interaction.user.id}>`;
-    const checkedAt = new Date().toISOString();
+      const categoryName =
+        interaction.channel.parent?.name || "No Category";
 
-    await interaction.reply("Scanning Twitch VODs...");
+      const checkedBy = `<@${interaction.user.id}>`;
+      const checkedAt = new Date().toISOString();
 
-    const users = await getTwitchUsers(interaction.channel);
-    const token = await getAccessToken();
+      await interaction.reply("Scanning Twitch VODs...");
 
-    const rows = [];
-    const missing = [];
+      const users = await getTwitchUsers(interaction.channel);
 
-    for (const user of users) {
+      if (!users.length) {
+        await interaction.followUp("No accepted Twitch links found.");
+        return;
+      }
 
-      const username = user.twitch;
-      const discordUser = user.discordTag;
+      const token = await getAccessToken();
 
-      let lastStream = "";
-      let vodStart = "";
-      let vodEnd = "";
-      let valid = false;
-      let note = "No public VOD";
+      const rows = [];
+      const missing = [];
 
-      const userId = await getUserId(username, token);
+      for (const user of users) {
 
-      if (userId) {
+        try {
 
-        const vods = await getRecentVods(userId, token);
+          const username = user.twitch;
+          const discordUser = user.discordTag;
 
-        if (vods.length) {
+          let lastStream = "";
+          let vodStart = "";
+          let vodEnd = "";
+          let valid = false;
+          let note = "No public VOD";
 
-          lastStream = vods[0].created_at;
+          const userId = await getUserId(username, token);
 
-          for (const vod of vods) {
+          if (userId) {
 
-            if (vod.viewable !== "public") continue;
+            const vods = await getRecentVods(userId, token);
 
-            if (vodOverlaps(vod, start, end)) {
+            if (vods.length) {
 
-              const startDate = new Date(vod.created_at);
-              const duration = parseDuration(vod.duration);
-              const endDate = new Date(startDate.getTime() + duration * 1000);
+              lastStream = vods[0].created_at;
 
-              vodStart = startDate.toISOString();
-              vodEnd = endDate.toISOString();
+              for (const vod of vods) {
 
-              valid = true;
-              note = "Public VOD overlaps event";
+                if (vod.viewable !== "public") continue;
 
-              break;
+                if (vodOverlaps(vod, start, end)) {
+
+                  const startDate = new Date(vod.created_at);
+                  const duration = parseDuration(vod.duration);
+                  const endDate = new Date(startDate.getTime() + duration * 1000);
+
+                  vodStart = startDate.toISOString();
+                  vodEnd = endDate.toISOString();
+
+                  valid = true;
+                  note = "Public VOD overlaps event";
+
+                  break;
+
+                }
+
+              }
 
             }
 
@@ -246,47 +271,55 @@ module.exports = {
 
           if (!valid) missing.push(username);
 
-        } else {
+          rows.push([
+            categoryName,
+            discordUser,
+            username,
+            lastStream,
+            vodStart,
+            vodEnd,
+            valid ? "YES" : "NO",
+            note,
+            checkedAt,
+            checkedBy
+          ]);
 
-          missing.push(username);
+        } catch (err) {
+
+          console.error("User VOD check error:", err);
 
         }
 
+        await new Promise(r => setTimeout(r, 400));
+
       }
 
-      rows.push([
-        categoryName,
-        discordUser,
-        username,
-        lastStream,
-        vodStart,
-        vodEnd,
-        valid ? "YES" : "NO",
-        note,
-        checkedAt,
-        checkedBy
-      ]);
+      await appendRows(rows);
 
-      await new Promise(r => setTimeout(r, 400));
+      let summary = `VOD Report Complete\n\n`;
 
-    }
+      if (missing.length) {
 
-    await appendRows(rows);
+        summary += `Missing Public VODs (${missing.length})\n`;
+        summary += missing.join("\n");
 
-    let summary = `VOD Report Complete\n\n`;
+      } else {
 
-    if (missing.length) {
+        summary += "All submitted streams have valid VODs.";
 
-      summary += `Missing Public VODs (${missing.length})\n`;
-      summary += missing.join("\n");
+      }
 
-    } else {
+      await interaction.followUp(summary);
 
-      summary += "All submitted streams have valid VODs.";
+    } catch (err) {
+
+      console.error("vodreport command error:", err);
+
+      await interaction.followUp(
+        "An error occurred while generating the VOD report."
+      );
 
     }
-
-    await interaction.followUp(summary);
 
   }
 
