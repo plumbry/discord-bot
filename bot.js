@@ -10,8 +10,6 @@ const {
 
 const fs = require("fs");
 const path = require("path");
-const axios = require("axios");
-const WebSocket = require("ws");
 
 // ================= ERROR HANDLING =================
 
@@ -52,8 +50,6 @@ const activeCalls = gamecallModule.activeCalls || new Map();
 const GUILD_ID = "1371615693392576580";
 const YUNITE_LOG_CHANNEL = "1371615781393137788";
 const BOT_LOG_CHANNEL = "1471082166535454780";
-const YUNITE_API_KEY = process.env.YUNITE_API_KEY;
-const YUNITE_GUILD_ID = "1371615693392576580";
 
 const DROP_MAP_COOLDOWN = 5 * 60 * 1000;
 let lastDropmapClose = 0;
@@ -191,134 +187,11 @@ async function closeDropmap(guild) {
 
 }
 
-// ================= SAFE YUNITE SOCKET =================
-
-let yuniteSocket = null;
-let yuniteReconnectTimer = null;
-let yuniteReconnectDelay = 10000;
-
-async function startYuniteStreamSafe() {
-
-  try {
-
-    if (yuniteSocket) return;
-
-    const res = await axios.get(
-      "https://yunite.xyz/api/v3/websocket-token",
-      {
-        headers: { "Y-Api-Token": YUNITE_API_KEY },
-        timeout: 10000
-      }
-    );
-
-    const token = res.data;
-
-    yuniteSocket = new WebSocket(
-      `wss://yunite.xyz/api/v3/guild/${YUNITE_GUILD_ID}/customs/stream?token=${token}`
-    );
-
-    yuniteSocket.on("open", () => {
-      console.log("✅ Yunite stream connected");
-      yuniteReconnectDelay = 10000;
-    });
-
-    yuniteSocket.on("message", async (msg) => {
-
-      try {
-
-        const payload = JSON.parse(msg);
-        if (!payload?.data) return;
-
-        const state = payload.data.state;
-
-        const guild = client.guilds.cache.get(GUILD_ID);
-        if (!guild) return;
-
-        const logChannel = guild.channels.cache.get(BOT_LOG_CHANNEL);
-
-        if (state === "STARTED") {
-
-          console.log("🎮 Yunite: match started");
-
-          await closeDropmap(guild);
-
-          if (logChannel) {
-            logChannel.send("🎮 Yunite detected **match start**");
-          }
-
-        }
-
-        if (state === "FINISHED") {
-
-          console.log("🏁 Yunite: match finished");
-
-          if (logChannel) {
-            logChannel.send("🏁 Yunite detected **match finished**");
-          }
-
-        }
-
-      } catch (err) {
-        console.log("Yunite parse error:", err.message);
-      }
-
-    });
-
-    yuniteSocket.on("close", () => {
-
-      console.log("⚠️ Yunite socket closed");
-
-      yuniteSocket = null;
-      scheduleReconnect();
-
-    });
-
-    yuniteSocket.on("error", (err) => {
-
-      console.log("Yunite socket error:", err.message);
-
-      if (yuniteSocket) {
-        yuniteSocket.terminate();
-        yuniteSocket = null;
-      }
-
-    });
-
-  } catch (err) {
-
-    console.log(
-      "Yunite connection failed:",
-      err.response?.data || err.message
-    );
-
-    scheduleReconnect();
-
-  }
-
-}
-
-function scheduleReconnect() {
-
-  if (yuniteReconnectTimer) return;
-
-  yuniteReconnectTimer = setTimeout(() => {
-
-    yuniteReconnectTimer = null;
-    startYuniteStreamSafe();
-
-    yuniteReconnectDelay = Math.min(yuniteReconnectDelay * 2, 60000);
-
-  }, yuniteReconnectDelay);
-
-}
-
 // ================= READY =================
 
 client.once("ready", async () => {
 
   console.log(`Logged in as ${client.user.tag}`);
-
-  // startYuniteStreamSafe(); // only used during tournaments
 
   startBanExpiryChecker(client);
 
@@ -423,7 +296,6 @@ client.on("interactionCreate", async interaction => {
       });
     }
 
-    // CANCEL GAME
     if (action === "staff_cancel_game") {
 
       clearTimeout(call.t1);
@@ -440,7 +312,6 @@ client.on("interactionCreate", async interaction => {
 
     }
 
-    // STOP FOLLOWUPS
     if (action === "staff_stop_followups") {
 
       clearTimeout(call.t1);
@@ -453,7 +324,6 @@ client.on("interactionCreate", async interaction => {
 
     }
 
-    // LOCK CHAT
     if (action === "staff_lock_chat") {
 
       const chatChannel = interaction.guild.channels.cache.find(
@@ -474,7 +344,6 @@ client.on("interactionCreate", async interaction => {
 
     }
 
-    // UNLOCK CHAT
     if (action === "staff_unlock_chat") {
 
       const chatChannel = interaction.guild.channels.cache.find(
@@ -495,7 +364,6 @@ client.on("interactionCreate", async interaction => {
 
     }
 
-    // CHECK STREAMS
     if (action === "staff_check_streams") {
 
       const streamChannel = interaction.guild.channels.cache.find(
