@@ -4,7 +4,6 @@ const { getAccessToken, getLiveStreams } = require("../twitchBatch");
 
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME = "'Live Check'";
-const ACCEPTED_EMOJI_ID = "1405510864496361482";
 
 const credentials = JSON.parse(
   Buffer.from(
@@ -20,66 +19,47 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: "v4", auth });
 
-const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)/gi;
+const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)/i;
 
-async function getTwitchUsers(channel) {
+async function fetchAllMessages(channel) {
 
+  let messages = [];
   let lastId;
-  const users = new Map();
 
   while (true) {
 
     const options = { limit: 100 };
     if (lastId) options.before = lastId;
 
-    const messages = await channel.messages.fetch(options);
-    if (!messages.size) break;
+    const batch = await channel.messages.fetch(options);
+    if (!batch.size) break;
 
-    for (const message of messages.values()) {
+    messages.push(...batch.values());
+    lastId = batch.last().id;
 
-      // ensure we have a full message object
-      const msg = await channel.messages.fetch(message.id);
+  }
 
-      const reactions = msg.reactions?.cache;
+  return messages;
+}
 
-      let accepted = false;
+async function getTwitchUsers(channel) {
 
-      if (reactions) {
-        for (const reaction of reactions.values()) {
-          if (reaction.emoji.id === ACCEPTED_EMOJI_ID && reaction.count > 0) {
-            accepted = true;
-            break;
-          }
-        }
-      }
+  const messages = await fetchAllMessages(channel);
+  const users = new Map();
 
-      if (!accepted) continue;
+  for (const msg of messages) {
 
-      const matches = msg.content.match(TWITCH_REGEX);
-      if (!matches) continue;
+    if (msg.author.bot) continue;
 
-      const isStaff =
-        msg.member?.permissions?.has(PermissionFlagsBits.ManageRoles);
+    const match = msg.content.match(TWITCH_REGEX);
+    if (!match) continue;
 
-      const batchMode = isStaff && matches.length > 5;
+    const twitch = match[1].toLowerCase();
 
-      for (const link of matches) {
-
-        const twitch = link
-          .split("twitch.tv/")[1]
-          .split(/[/?]/)[0]
-          .toLowerCase();
-
-        users.set(twitch, {
-          twitch,
-          discordTag: batchMode ? "" : `<@${msg.author.id}>`
-        });
-
-      }
-
-    }
-
-    lastId = messages.last().id;
+    users.set(twitch, {
+      twitch,
+      discordTag: `<@${msg.author.id}>`
+    });
 
   }
 
