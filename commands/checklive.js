@@ -40,9 +40,14 @@ async function getTwitchUsers(channel) {
       await msg.fetch();
       const reactions = await msg.reactions.fetch();
 
-      const accepted = reactions.some(
-        r => r.emoji.id === ACCEPTED_EMOJI_ID && r.count > 0
-      );
+      let accepted = false;
+
+      for (const reaction of reactions.values()) {
+        if (reaction.emoji.id === ACCEPTED_EMOJI_ID && reaction.count > 0) {
+          accepted = true;
+          break;
+        }
+      }
 
       if (!accepted) continue;
 
@@ -54,7 +59,7 @@ async function getTwitchUsers(channel) {
 
       for (const link of matches) {
 
-        const twitch = link.split("twitch.tv/")[1].toLowerCase();
+        const twitch = link.split("twitch.tv/")[1].split(/[/?]/)[0].toLowerCase();
 
         users.set(twitch, {
           twitch,
@@ -98,15 +103,14 @@ module.exports = {
     const checkedBy = `<@${interaction.user.id}>`;
     const checkedAt = new Date().toISOString();
 
-    await interaction.reply("Checking Twitch streams...");
+    // prevents interaction timeout
+    await interaction.deferReply();
 
     const users = await getTwitchUsers(interaction.channel);
 
     if (!users.length) {
-
-      await interaction.followUp("No Twitch links found in this channel.");
+      await interaction.editReply("No Twitch links found in this channel.");
       return;
-
     }
 
     const token = await getAccessToken();
@@ -153,7 +157,7 @@ module.exports = {
 
     }
 
-    await interaction.followUp(message);
+    await interaction.editReply(message);
 
   }
 
