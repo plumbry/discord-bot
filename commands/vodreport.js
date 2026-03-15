@@ -23,6 +23,7 @@ const sheets = google.sheets({ version: "v4", auth });
 const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)/gi;
 
 function parseDuration(duration) {
+
   const match = duration.match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/);
 
   const h = parseInt(match?.[1] || 0);
@@ -30,6 +31,7 @@ function parseDuration(duration) {
   const s = parseInt(match?.[3] || 0);
 
   return h * 3600 + m * 60 + s;
+
 }
 
 function vodOverlaps(vod, start, end) {
@@ -39,6 +41,7 @@ function vodOverlaps(vod, start, end) {
   const vodEnd = new Date(vodStart.getTime() + duration * 1000);
 
   return vodStart < end && vodEnd > start;
+
 }
 
 async function getAccessToken() {
@@ -59,6 +62,7 @@ async function getAccessToken() {
   }
 
   return data.access_token;
+
 }
 
 async function getUserId(username, token) {
@@ -78,6 +82,7 @@ async function getUserId(username, token) {
   if (!data.data || !data.data.length) return null;
 
   return data.data[0].id;
+
 }
 
 async function getRecentVods(userId, token) {
@@ -97,6 +102,7 @@ async function getRecentVods(userId, token) {
   if (!data.data) return [];
 
   return data.data;
+
 }
 
 async function getTwitchUsers(channel) {
@@ -119,7 +125,8 @@ async function getTwitchUsers(channel) {
       try {
 
         await msg.fetch();
-        const reactions = await msg.reactions.fetch();
+
+        const reactions = msg.reactions.cache;
 
         const accepted = reactions.some(
           r => r.emoji.id === ACCEPTED_EMOJI_ID && r.count > 0
@@ -157,6 +164,7 @@ async function getTwitchUsers(channel) {
   }
 
   return [...users.values()];
+
 }
 
 async function appendRows(rows) {
