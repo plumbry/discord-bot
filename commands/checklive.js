@@ -37,8 +37,7 @@ async function getTwitchUsers(channel) {
 
     for (const msg of messages.values()) {
 
-      await msg.fetch();
-      const reactions = await msg.reactions.fetch();
+      const reactions = msg.reactions.cache;
 
       let accepted = false;
 
@@ -59,7 +58,10 @@ async function getTwitchUsers(channel) {
 
       for (const link of matches) {
 
-        const twitch = link.split("twitch.tv/")[1].split(/[/?]/)[0].toLowerCase();
+        const twitch = link
+          .split("twitch.tv/")[1]
+          .split(/[/?]/)[0]
+          .toLowerCase();
 
         users.set(twitch, {
           twitch,
@@ -103,14 +105,15 @@ module.exports = {
     const checkedBy = `<@${interaction.user.id}>`;
     const checkedAt = new Date().toISOString();
 
-    // prevents interaction timeout
     await interaction.deferReply();
 
     const users = await getTwitchUsers(interaction.channel);
 
     if (!users.length) {
+
       await interaction.editReply("No Twitch links found in this channel.");
       return;
+
     }
 
     const token = await getAccessToken();
