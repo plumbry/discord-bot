@@ -8,9 +8,7 @@ const ACCEPTED_EMOJI_ID = "1405510864496361482";
 
 const credentials = JSON.parse(
   Buffer.from(
-    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
-    "base64"
-  ).toString("utf8")
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, "base64").toString("utf8")
 );
 
 const auth = new google.auth.GoogleAuth({
@@ -37,6 +35,7 @@ async function getTwitchUsers(channel) {
 
     for (const msg of messages.values()) {
 
+      await msg.reactions.fetch();
       const reactions = msg.reactions.cache;
 
       let accepted = false;
