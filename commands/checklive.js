@@ -8,7 +8,9 @@ const ACCEPTED_EMOJI_ID = "1405510864496361482";
 
 const credentials = JSON.parse(
   Buffer.from(
-    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, "base64").toString("utf8")
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
+    "base64"
+  ).toString("utf8")
 );
 
 const auth = new google.auth.GoogleAuth({
@@ -33,17 +35,21 @@ async function getTwitchUsers(channel) {
     const messages = await channel.messages.fetch(options);
     if (!messages.size) break;
 
-    for (const msg of messages.values()) {
+    for (const message of messages.values()) {
 
-      await msg.reactions.fetch();
-      const reactions = msg.reactions.cache;
+      // ensure we have a full message object
+      const msg = await channel.messages.fetch(message.id);
+
+      const reactions = msg.reactions?.cache;
 
       let accepted = false;
 
-      for (const reaction of reactions.values()) {
-        if (reaction.emoji.id === ACCEPTED_EMOJI_ID && reaction.count > 0) {
-          accepted = true;
-          break;
+      if (reactions) {
+        for (const reaction of reactions.values()) {
+          if (reaction.emoji.id === ACCEPTED_EMOJI_ID && reaction.count > 0) {
+            accepted = true;
+            break;
+          }
         }
       }
 
@@ -52,7 +58,9 @@ async function getTwitchUsers(channel) {
       const matches = msg.content.match(TWITCH_REGEX);
       if (!matches) continue;
 
-      const isStaff = msg.member?.permissions?.has(PermissionFlagsBits.ManageRoles);
+      const isStaff =
+        msg.member?.permissions?.has(PermissionFlagsBits.ManageRoles);
+
       const batchMode = isStaff && matches.length > 5;
 
       for (const link of matches) {
