@@ -5,6 +5,7 @@ const fetch = require("node-fetch");
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SHEET_NAME = "'VOD Report'";
 const ACCEPTED_EMOJI_ID = "1405510864496361482";
+const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)/i;
 
 const credentials = JSON.parse(
   Buffer.from(
@@ -19,8 +20,6 @@ const auth = new google.auth.GoogleAuth({
 });
 
 const sheets = google.sheets({ version: "v4", auth });
-
-const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)/gi;
 
 function parseDuration(duration) {
 
@@ -44,6 +43,84 @@ function vodOverlaps(vod, start, end) {
 
 }
 
+async function fetchAllMessages(channel) {
+
+  let messages = [];
+  let lastId;
+
+  while (true) {
+
+    const options = { limit: 100 };
+    if (lastId) options.before = lastId;
+
+    const batch = await channel.messages.fetch(options);
+    if (!batch.size) break;
+
+    messages.push(...batch.values());
+    lastId = batch.last().id;
+
+  }
+
+  return messages;
+
+}
+
+async function getAcceptedTeams(signupChannel) {
+
+  const messages = await fetchAllMessages(signupChannel);
+  const teams = [];
+
+  for (const msg of messages) {
+
+    if (msg.author.bot) continue;
+
+    const reactions = msg.reactions.cache;
+
+    const accepted = reactions.some(
+      r => r.emoji.id === ACCEPTED_EMOJI_ID && r.count > 0
+    );
+
+    if (!accepted) continue;
+
+    const members = [...msg.mentions.users.values()].map(u => u.id);
+
+    if (members.length) {
+
+      teams.push({
+        members
+      });
+
+    }
+
+  }
+
+  return teams;
+
+}
+
+async function getStreamLinks(streamChannel) {
+
+  const messages = await fetchAllMessages(streamChannel);
+
+  const streams = new Map();
+
+  for (const msg of messages) {
+
+    if (msg.author.bot) continue;
+
+    const match = msg.content.match(TWITCH_REGEX);
+    if (!match) continue;
+
+    const twitch = match[1].toLowerCase();
+
+    streams.set(msg.author.id, twitch);
+
+  }
+
+  return streams;
+
+}
+
 async function getAccessToken() {
 
   const res = await fetch("https://id.twitch.tv/oauth2/token", {
@@ -56,11 +133,6 @@ async function getAccessToken() {
   });
 
   const data = await res.json();
-
-  if (!data.access_token) {
-    throw new Error("Failed to obtain Twitch token");
-  }
-
   return data.access_token;
 
 }
@@ -78,10 +150,7 @@ async function getUserId(username, token) {
   );
 
   const data = await res.json();
-
-  if (!data.data || !data.data.length) return null;
-
-  return data.data[0].id;
+  return data.data?.[0]?.id;
 
 }
 
@@ -98,72 +167,7 @@ async function getRecentVods(userId, token) {
   );
 
   const data = await res.json();
-
-  if (!data.data) return [];
-
-  return data.data;
-
-}
-
-async function getTwitchUsers(channel) {
-
-  let lastId;
-  const users = new Map();
-
-  while (true) {
-
-    const options = { limit: 100 };
-    if (lastId) options.before = lastId;
-
-    const messages = await channel.messages.fetch(options);
-    if (!messages.size) break;
-
-    for (const msg of messages.values()) {
-
-      if (msg.author.bot) continue;
-
-      try {
-
-        await msg.fetch();
-
-        const reactions = msg.reactions.cache;
-
-        const accepted = reactions.some(
-          r => r.emoji.id === ACCEPTED_EMOJI_ID && r.count > 0
-        );
-
-        if (!accepted) continue;
-
-        const matches = msg.content.match(TWITCH_REGEX);
-        if (!matches) continue;
-
-        const isStaff = msg.member?.permissions?.has(PermissionFlagsBits.ManageRoles);
-        const batchMode = isStaff && matches.length > 5;
-
-        for (const link of matches) {
-
-          const twitch = link.split("twitch.tv/")[1].toLowerCase();
-
-          users.set(twitch, {
-            twitch,
-            discordTag: batchMode ? "" : `<@${msg.author.id}>`
-          });
-
-        }
-
-      } catch (err) {
-
-        console.error("Message scan error:", err);
-
-      }
-
-    }
-
-    lastId = messages.last().id;
-
-  }
-
-  return [...users.values()];
+  return data.data || [];
 
 }
 
@@ -185,149 +189,148 @@ module.exports = {
     .setDescription("Check Twitch VOD compliance for event")
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
     .addStringOption(o =>
-      o.setName("date")
-        .setDescription("Event date (YYYY-MM-DD)")
-        .setRequired(true))
+      o.setName("date").setDescription("YYYY-MM-DD").setRequired(true))
     .addStringOption(o =>
-      o.setName("start")
-        .setDescription("Start time UTC (HH:MM)")
-        .setRequired(true))
+      o.setName("start").setDescription("HH:MM UTC").setRequired(true))
     .addStringOption(o =>
-      o.setName("end")
-        .setDescription("End time UTC (HH:MM)")
-        .setRequired(true)),
+      o.setName("end").setDescription("HH:MM UTC").setRequired(true)),
 
   async execute(interaction) {
 
-    try {
+    const category = interaction.channel.parent;
 
-      const date = interaction.options.getString("date");
-      const startTime = interaction.options.getString("start");
-      const endTime = interaction.options.getString("end");
+    const signupChannel = category.children.cache.find(c => {
 
-      const start = new Date(`${date}T${startTime}:00Z`);
-      const end = new Date(`${date}T${endTime}:00Z`);
+      if (!c.isTextBased()) return false;
 
-      const categoryName =
-        interaction.channel.parent?.name || "No Category";
+      const name = c.name.toLowerCase();
 
-      const checkedBy = `<@${interaction.user.id}>`;
-      const checkedAt = new Date().toISOString();
+      return (
+        name.includes("signups") ||
+        name.includes("sign-ups") ||
+        name.includes("teams")
+      );
 
-      await interaction.reply("Scanning Twitch VODs...");
+    });
 
-      const users = await getTwitchUsers(interaction.channel);
+    const streamChannel = category.children.cache.find(c => {
 
-      if (!users.length) {
-        await interaction.followUp("No accepted Twitch links found.");
-        return;
+      if (!c.isTextBased()) return false;
+
+      return c.name.toLowerCase().includes("twitch-stream");
+
+    });
+
+    if (!signupChannel || !streamChannel) {
+
+      return interaction.reply({
+        content: "Could not locate signups or twitch-stream channel.",
+        ephemeral: true
+      });
+
+    }
+
+    await interaction.reply("Scanning teams and Twitch streams...");
+
+    const teams = await getAcceptedTeams(signupChannel);
+    const streams = await getStreamLinks(streamChannel);
+
+    const token = await getAccessToken();
+
+    const date = interaction.options.getString("date");
+    const start = new Date(`${date}T${interaction.options.getString("start")}:00Z`);
+    const end = new Date(`${date}T${interaction.options.getString("end")}:00Z`);
+
+    const rows = [];
+    const missing = [];
+
+    for (const team of teams) {
+
+      const streamer = team.members.find(id => streams.has(id));
+
+      if (!streamer) {
+
+        missing.push(`Team missing stream: ${team.members.map(m => `<@${m}>`).join(" ")}`);
+        continue;
+
       }
 
-      const token = await getAccessToken();
+      const twitch = streams.get(streamer);
 
-      const rows = [];
-      const missing = [];
+      let valid = false;
+      let lastStream = "";
+      let vodStart = "";
+      let vodEnd = "";
+      let note = "No public VOD";
 
-      for (const user of users) {
+      const userId = await getUserId(twitch, token);
 
-        try {
+      if (userId) {
 
-          const username = user.twitch;
-          const discordUser = user.discordTag;
+        const vods = await getRecentVods(userId, token);
 
-          let lastStream = "";
-          let vodStart = "";
-          let vodEnd = "";
-          let valid = false;
-          let note = "No public VOD";
+        if (vods.length) {
 
-          const userId = await getUserId(username, token);
+          lastStream = vods[0].created_at;
 
-          if (userId) {
+          for (const vod of vods) {
 
-            const vods = await getRecentVods(userId, token);
+            if (vod.viewable !== "public") continue;
 
-            if (vods.length) {
+            if (vodOverlaps(vod, start, end)) {
 
-              lastStream = vods[0].created_at;
+              const startDate = new Date(vod.created_at);
+              const duration = parseDuration(vod.duration);
+              const endDate = new Date(startDate.getTime() + duration * 1000);
 
-              for (const vod of vods) {
+              vodStart = startDate.toISOString();
+              vodEnd = endDate.toISOString();
 
-                if (vod.viewable !== "public") continue;
-
-                if (vodOverlaps(vod, start, end)) {
-
-                  const startDate = new Date(vod.created_at);
-                  const duration = parseDuration(vod.duration);
-                  const endDate = new Date(startDate.getTime() + duration * 1000);
-
-                  vodStart = startDate.toISOString();
-                  vodEnd = endDate.toISOString();
-
-                  valid = true;
-                  note = "Public VOD overlaps event";
-
-                  break;
-
-                }
-
-              }
+              valid = true;
+              note = "Public VOD overlaps event";
+              break;
 
             }
 
           }
 
-          if (!valid) missing.push(username);
-
-          rows.push([
-            categoryName,
-            discordUser,
-            username,
-            lastStream,
-            vodStart,
-            vodEnd,
-            valid ? "YES" : "NO",
-            note,
-            checkedAt,
-            checkedBy
-          ]);
-
-        } catch (err) {
-
-          console.error("User VOD check error:", err);
-
         }
 
-        await new Promise(r => setTimeout(r, 400));
-
       }
 
-      await appendRows(rows);
+      if (!valid) missing.push(twitch);
 
-      let summary = `VOD Report Complete\n\n`;
-
-      if (missing.length) {
-
-        summary += `Missing Public VODs (${missing.length})\n`;
-        summary += missing.join("\n");
-
-      } else {
-
-        summary += "All submitted streams have valid VODs.";
-
-      }
-
-      await interaction.followUp(summary);
-
-    } catch (err) {
-
-      console.error("vodreport command error:", err);
-
-      await interaction.followUp(
-        "An error occurred while generating the VOD report."
-      );
+      rows.push([
+        category.name,
+        `<@${streamer}>`,
+        twitch,
+        lastStream,
+        vodStart,
+        vodEnd,
+        valid ? "YES" : "NO",
+        note,
+        new Date().toISOString(),
+        `<@${interaction.user.id}>`
+      ]);
 
     }
+
+    await appendRows(rows);
+
+    let summary = `VOD Report Complete\n\n`;
+
+    if (missing.length) {
+
+      summary += `Issues Found (${missing.length})\n`;
+      summary += missing.join("\n");
+
+    } else {
+
+      summary += "All teams submitted valid VODs.";
+
+    }
+
+    await interaction.followUp(summary);
 
   }
 
