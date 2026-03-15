@@ -60,36 +60,6 @@ let lastDropmapClose = 0;
 
 const ACTIVITY_WINDOW = 15 * 60 * 1000;
 
-// ================= PANEL UPDATE =================
-
-async function updatePanel(guild, channelId) {
-
-  const call = activeCalls.get(channelId);
-  if (!call || !call.panelMessageId) return;
-
-  const logChannel = guild.channels.cache.get(BOT_LOG_CHANNEL);
-  if (!logChannel) return;
-
-  try {
-
-    const panel = await logChannel.messages.fetch(call.panelMessageId);
-
-    await panel.edit({
-      content:
-`🎮 GAME ${call.gameNumber} CONTROL PANEL
-
-Status: ${call.status}
-Chat: ${call.chat}
-Streams: ${call.streams}
-Followups: ${call.followups}`
-    });
-
-  } catch (err) {
-    console.error("Panel update failed:", err);
-  }
-
-}
-
 // ================= CLIENT =================
 
 const client = new Client({
@@ -221,76 +191,7 @@ async function closeDropmap(guild) {
 
 }
 
-async function startYuniteStream() {
-
-  try {
-
-    const res = await axios.get(
-      "https://yunite.xyz/api/v3/websocket-token",
-      {
-        headers: {
-          "Y-Api-Token": YUNITE_API_KEY
-        }
-      }
-    );
-
-    const token = res.data;
-
-    const ws = new WebSocket(
-      `wss://yunite.xyz/api/v3/guild/${YUNITE_GUILD_ID}/customs/stream?token=${token}`
-    );
-
-    ws.on("open", () => {
-      console.log("Connected to Yunite customs stream");
-    });
-
-    ws.on("message", async (msg) => {
-
-      const payload = JSON.parse(msg);
-
-      if (!payload?.data) return;
-
-      const state = payload.data.state;
-
-      const guild = client.guilds.cache.get(GUILD_ID);
-      if (!guild) return;
-
-      const logChannel = guild.channels.cache.get(BOT_LOG_CHANNEL);
-
-      if (state === "STARTED") {
-        console.log("Yunite: match started");
-        await closeDropmap(guild);
-      }
-
-      if (state === "FINISHED") {
-        console.log("Yunite: match finished");
-        if (logChannel) {
-          logChannel.send("✅ Yunite detected match finished.");
-        }
-      }
-
-    });
-
-    ws.on("close", () => {
-      console.log("Yunite stream closed — reconnecting");
-      setTimeout(startYuniteStream, 10000);
-    });
-
-    ws.on("error", err => {
-      console.log("Yunite stream error:", err.message);
-    });
-
-  } catch (err) {
-
-    console.error("Yunite connection failed:", err.response?.data || err.message);
-
-    setTimeout(startYuniteStream, 15000);
-
-  }
-
-}
-
-// ================= SAFE YUNITE SOCKET (ADDED) =================
+// ================= SAFE YUNITE SOCKET =================
 
 let yuniteSocket = null;
 let yuniteReconnectTimer = null;
@@ -300,36 +201,25 @@ async function startYuniteStreamSafe() {
 
   try {
 
-    if (yuniteSocket) {
-      console.log("Yunite socket already active");
-      return;
-    }
-
-    console.log("Requesting Yunite websocket token...");
+    if (yuniteSocket) return;
 
     const res = await axios.get(
       "https://yunite.xyz/api/v3/websocket-token",
       {
-        headers: {
-          "Y-Api-Token": YUNITE_API_KEY
-        },
+        headers: { "Y-Api-Token": YUNITE_API_KEY },
         timeout: 10000
       }
     );
 
     const token = res.data;
 
-    console.log("Connecting to Yunite stream...");
-
     yuniteSocket = new WebSocket(
       `wss://yunite.xyz/api/v3/guild/${YUNITE_GUILD_ID}/customs/stream?token=${token}`
     );
 
     yuniteSocket.on("open", () => {
-
       console.log("✅ Yunite stream connected");
       yuniteReconnectDelay = 10000;
-
     });
 
     yuniteSocket.on("message", async (msg) => {
@@ -337,7 +227,6 @@ async function startYuniteStreamSafe() {
       try {
 
         const payload = JSON.parse(msg);
-
         if (!payload?.data) return;
 
         const state = payload.data.state;
@@ -370,9 +259,7 @@ async function startYuniteStreamSafe() {
         }
 
       } catch (err) {
-
-        console.log("Yunite message parse error:", err.message);
-
+        console.log("Yunite parse error:", err.message);
       }
 
     });
@@ -382,8 +269,7 @@ async function startYuniteStreamSafe() {
       console.log("⚠️ Yunite socket closed");
 
       yuniteSocket = null;
-
-      scheduleYuniteReconnect();
+      scheduleReconnect();
 
     });
 
@@ -405,22 +291,19 @@ async function startYuniteStreamSafe() {
       err.response?.data || err.message
     );
 
-    scheduleYuniteReconnect();
+    scheduleReconnect();
 
   }
 
 }
 
-function scheduleYuniteReconnect() {
+function scheduleReconnect() {
 
   if (yuniteReconnectTimer) return;
-
-  console.log(`Reconnecting Yunite in ${yuniteReconnectDelay / 1000}s`);
 
   yuniteReconnectTimer = setTimeout(() => {
 
     yuniteReconnectTimer = null;
-
     startYuniteStreamSafe();
 
     yuniteReconnectDelay = Math.min(yuniteReconnectDelay * 2, 60000);
@@ -429,17 +312,13 @@ function scheduleYuniteReconnect() {
 
 }
 
-// Override original Yunite function safely
-startYuniteStream = startYuniteStreamSafe;
-
-
 // ================= READY =================
 
 client.once("ready", async () => {
 
   console.log(`Logged in as ${client.user.tag}`);
-  
- // startYuniteStream();   // Disabled - only run Yunite during tournaments
+
+  // startYuniteStreamSafe(); // only used during tournaments
 
   startBanExpiryChecker(client);
 
@@ -493,8 +372,6 @@ client.on("messageCreate", async message => {
 
 client.on("interactionCreate", async interaction => {
 
-  // ===== SLASH COMMANDS =====
-
   if (interaction.isChatInputCommand()) {
 
     if (interaction.commandName === "verify")
@@ -526,7 +403,7 @@ client.on("interactionCreate", async interaction => {
 
   }
 
-  // ===== STAFF PANEL BUTTONS =====
+  // ===== STAFF BUTTONS =====
 
   if (interaction.isButton()) {
 
@@ -541,51 +418,16 @@ client.on("interactionCreate", async interaction => {
 
     if (!call || !gameChannel) {
       return interaction.reply({
-        content: "⚠️ This game panel is no longer active.",
+        content: "⚠️ This game call is no longer active.",
         ephemeral: true
       });
     }
 
-    // ===== CANCEL GAME =====
-
+    // CANCEL GAME
     if (action === "staff_cancel_game") {
 
       clearTimeout(call.t1);
       clearTimeout(call.t2);
-
-      call.status = "Cancelled";
-
-      const logChannel = interaction.guild.channels.cache.get(BOT_LOG_CHANNEL);
-
-      if (call.panelMessageId && logChannel) {
-
-        const panel = await logChannel.messages.fetch(call.panelMessageId);
-
-        const disabledRow = new ActionRowBuilder().addComponents(
-
-          new ButtonBuilder().setCustomId("d1").setLabel("Cancel Game").setStyle(ButtonStyle.Danger).setDisabled(true),
-          new ButtonBuilder().setCustomId("d2").setLabel("Stop Followups").setStyle(ButtonStyle.Secondary).setDisabled(true),
-          new ButtonBuilder().setCustomId("d3").setLabel("Lock Chat").setStyle(ButtonStyle.Secondary).setDisabled(true),
-          new ButtonBuilder().setCustomId("d4").setLabel("Unlock Chat").setStyle(ButtonStyle.Success).setDisabled(true),
-          new ButtonBuilder().setCustomId("d5").setLabel("Check Streams").setStyle(ButtonStyle.Primary).setDisabled(true)
-
-        );
-
-        await panel.edit({
-
-          content:
-`🎮 GAME ${call.gameNumber} CONTROL PANEL
-
-Status: Cancelled
-Chat: ${call.chat}
-Streams: ${call.streams}
-Followups: ${call.followups}`,
-
-          components:[disabledRow]
-
-        });
-
-      }
 
       activeCalls.delete(channelId);
 
@@ -598,26 +440,20 @@ Followups: ${call.followups}`,
 
     }
 
-    // ===== STOP FOLLOWUPS =====
-
+    // STOP FOLLOWUPS
     if (action === "staff_stop_followups") {
 
       clearTimeout(call.t1);
       clearTimeout(call.t2);
 
-      call.followups = "Stopped";
-
-      await updatePanel(interaction.guild, channelId);
-
       return interaction.reply({
-        content: "Follow-ups stopped.",
+        content: "Follow-up messages stopped.",
         ephemeral: true
       });
 
     }
 
-    // ===== LOCK CHAT =====
-
+    // LOCK CHAT
     if (action === "staff_lock_chat") {
 
       const chatChannel = interaction.guild.channels.cache.find(
@@ -631,10 +467,6 @@ Followups: ${call.followups}`,
         { SendMessages: false }
       );
 
-      call.chat = "Locked";
-
-      await updatePanel(interaction.guild, channelId);
-
       return interaction.reply({
         content: `🔒 Chat locked in ${chatChannel}.`,
         ephemeral: true
@@ -642,8 +474,7 @@ Followups: ${call.followups}`,
 
     }
 
-    // ===== UNLOCK CHAT =====
-
+    // UNLOCK CHAT
     if (action === "staff_unlock_chat") {
 
       const chatChannel = interaction.guild.channels.cache.find(
@@ -657,10 +488,6 @@ Followups: ${call.followups}`,
         { SendMessages: null }
       );
 
-      call.chat = "Open";
-
-      await updatePanel(interaction.guild, channelId);
-
       return interaction.reply({
         content: `🔓 Chat unlocked in ${chatChannel}.`,
         ephemeral: true
@@ -668,8 +495,7 @@ Followups: ${call.followups}`,
 
     }
 
-    // ===== CHECK STREAMS =====
-
+    // CHECK STREAMS
     if (action === "staff_check_streams") {
 
       const streamChannel = interaction.guild.channels.cache.find(
@@ -684,10 +510,6 @@ Followups: ${call.followups}`,
         ...interaction,
         channel: streamChannel
       });
-
-      call.streams = "Checked";
-
-      await updatePanel(interaction.guild, channelId);
 
       return interaction.reply({
         content: `Running stream check in ${streamChannel}`,
