@@ -10,6 +10,18 @@ const {
 
 const fs = require("fs");
 const path = require("path");
+const Database = require("better-sqlite3");
+
+// ================= MESSAGE ACTIVITY DATABASE =================
+
+const db = new Database("./activity.db");
+
+db.prepare(`
+CREATE TABLE IF NOT EXISTS messages (
+  userId TEXT PRIMARY KEY,
+  count INTEGER
+)
+`).run();
 
 // ================= ERROR HANDLING =================
 
@@ -224,9 +236,39 @@ client.once("ready", async () => {
 
 });
 
-// ================= DROP MAP TRIGGER =================
+// ================= MESSAGE CREATE =================
 
 client.on("messageCreate", async message => {
+
+  if (message.author.bot) return;
+
+  // ================= MESSAGE COUNT TRACKING =================
+
+  try {
+
+    const row = db.prepare(
+      "SELECT count FROM messages WHERE userId = ?"
+    ).get(message.author.id);
+
+    if (!row) {
+
+      db.prepare(
+        "INSERT INTO messages (userId, count) VALUES (?, ?)"
+      ).run(message.author.id, 1);
+
+    } else {
+
+      db.prepare(
+        "UPDATE messages SET count = count + 1 WHERE userId = ?"
+      ).run(message.author.id);
+
+    }
+
+  } catch (err) {
+    console.error("Message tracking error:", err);
+  }
+
+  // ================= DROP MAP TRIGGER =================
 
   if (message.channel.id !== YUNITE_LOG_CHANNEL) return;
 
