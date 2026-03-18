@@ -32,23 +32,26 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: "v4", auth });
 
-async function getGirlRows() {
+// 🔥 CACHE (fixes rate limit)
+let girlCache = new Set();
+
+async function loadGirlCache() {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: `${GIRL_ROLE_SHEET}!A:B`
+    range: `${GIRL_ROLE_SHEET}!A:A`
   });
 
-  return res.data.values || [];
+  girlCache = new Set((res.data.values || []).map(r => r[0]));
+  console.log("Girl cache loaded:", girlCache.size, "entries");
 }
 
-async function isGirlVerified(userId) {
-  const rows = await getGirlRows();
-  return rows.some(r => r[0] === userId);
+function isGirlVerified(userId) {
+  return girlCache.has(userId);
 }
 
 async function addGirlVerified(user) {
-  const exists = await isGirlVerified(user.id);
-  if (exists) return;
+
+  if (girlCache.has(user.id)) return;
 
   try {
     console.log("Adding to sheet:", user.tag);
@@ -62,9 +65,12 @@ async function addGirlVerified(user) {
       }
     });
 
+    girlCache.add(user.id); // keep cache in sync
+
   } catch (err) {
     console.error("SHEETS ERROR:", err);
   }
+
 }
 // ===== GIRL ROLE SYSTEM END =====
 
@@ -195,10 +201,11 @@ client.once("ready", async () => {
     dm.startDMScheduler(client);
   }
 
-  // ===== GIRL ROLE BACKFILL (FIXED) =====
+  // ===== GIRL ROLE INIT + BACKFILL =====
   const guild = client.guilds.cache.get(GUILD_ID);
 
-  await guild.members.fetch(); // 🔥 FIX: ensures full member cache
+  await guild.members.fetch();     // ensure full cache
+  await loadGirlCache();           // 🔥 single read
 
   const role = guild.roles.cache.get(ROLE_ID);
 
@@ -206,8 +213,7 @@ client.once("ready", async () => {
   console.log("Role members count:", role.members.size);
 
   for (const member of role.members.values()) {
-    console.log("Adding:", member.user.tag);
-    await addGirlVerified(member.user);
+    await addGirlVerified(member.user); // no read spam
   }
 
   console.log("Backfill complete.");
@@ -247,9 +253,7 @@ client.on("guildMemberAdd", async (member) => {
 
   try {
 
-    const exists = await isGirlVerified(member.id);
-
-    if (exists) {
+    if (isGirlVerified(member.id)) {
       const role = member.guild.roles.cache.get(ROLE_ID);
       if (role) {
         await member.roles.add(role);
