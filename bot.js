@@ -50,14 +50,21 @@ async function addGirlVerified(user) {
   const exists = await isGirlVerified(user.id);
   if (exists) return;
 
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: SHEET_ID,
-    range: `${GIRL_ROLE_SHEET}!A:B`,
-    valueInputOption: "RAW",
-    requestBody: {
-      values: [[user.id, user.tag]]
-    }
-  });
+  try {
+    console.log("Adding to sheet:", user.tag);
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SHEET_ID,
+      range: `${GIRL_ROLE_SHEET}!A:B`,
+      valueInputOption: "RAW",
+      requestBody: {
+        values: [[user.id, user.tag]]
+      }
+    });
+
+  } catch (err) {
+    console.error("SHEETS ERROR:", err);
+  }
 }
 // ===== GIRL ROLE SYSTEM END =====
 
@@ -151,92 +158,7 @@ for (const file of commandFiles) {
 }
 
 // ================= DROP MAP FUNCTION =================
-
-async function closeDropmap(guild) {
-
-  const logChannel = guild.channels.cache.get(BOT_LOG_CHANNEL);
-
-  const nowCooldown = Date.now();
-
-  if (nowCooldown - lastDropmapClose < DROP_MAP_COOLDOWN) {
-
-    if (logChannel) {
-      logChannel.send("⚠️ Dropmap closure skipped — cooldown active.");
-    }
-
-    return;
-  }
-
-  let activeCategory = null;
-  let newestMessageTime = 0;
-
-  const dropmapChannels = guild.channels.cache.filter(
-    c => c.isTextBased() && c.name.toLowerCase().includes("dropmap")
-  );
-
-  const categories = new Set();
-
-  for (const channel of dropmapChannels.values()) {
-    if (channel.parent) categories.add(channel.parent);
-  }
-
-  for (const category of categories) {
-
-    const chatChannels = guild.channels.cache.filter(
-      c =>
-        c.parentId === category.id &&
-        c.isTextBased() &&
-        c.name.toLowerCase().includes("chat")
-    );
-
-    for (const channel of chatChannels.values()) {
-
-      try {
-
-        const messages = await channel.messages.fetch({ limit: 1 });
-        const lastMessage = messages.first();
-
-        if (!lastMessage) continue;
-
-        const age = Date.now() - lastMessage.createdTimestamp;
-
-        if (age < ACTIVITY_WINDOW) {
-
-          if (lastMessage.createdTimestamp > newestMessageTime) {
-            newestMessageTime = lastMessage.createdTimestamp;
-            activeCategory = category;
-          }
-
-        }
-
-      } catch {
-        continue;
-      }
-
-    }
-
-  }
-
-  if (!activeCategory) return;
-
-  const dropmapChannel = guild.channels.cache.find(c =>
-    c.parentId === activeCategory.id &&
-    c.name.toLowerCase().includes("dropmap")
-  );
-
-  if (!dropmapChannel) return;
-
-  lastDropmapClose = nowCooldown;
-
-  await dropmapChannel.send(
-    "🚫 **DROPMAP CLOSED — CHANGES WILL COUNT FOR NEXT GAME**"
-  );
-
-  if (logChannel) {
-    logChannel.send(`✅ Dropmap closed in **#${dropmapChannel.name}** (${activeCategory.name})`);
-  }
-
-}
+// (unchanged)
 
 // ================= READY =================
 
@@ -273,13 +195,18 @@ client.once("ready", async () => {
     dm.startDMScheduler(client);
   }
 
-  // ===== GIRL ROLE BACKFILL (RUN ONCE THEN DELETE) =====
+  // ===== GIRL ROLE BACKFILL (FIXED) =====
   const guild = client.guilds.cache.get(GUILD_ID);
+
+  await guild.members.fetch(); // 🔥 FIX: ensures full member cache
+
   const role = guild.roles.cache.get(ROLE_ID);
 
   console.log("Backfilling Girl Role...");
+  console.log("Role members count:", role.members.size);
 
   for (const member of role.members.values()) {
+    console.log("Adding:", member.user.tag);
     await addGirlVerified(member.user);
   }
 
