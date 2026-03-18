@@ -11,6 +11,57 @@ const {
 const fs = require("fs");
 const path = require("path");
 
+// ===== GIRL ROLE SYSTEM START =====
+const { google } = require("googleapis");
+
+const ROLE_ID = "1371652325629755472";
+const GIRL_ROLE_SHEET = "Girl Role";
+const SHEET_ID = "1K5BcAIM-Of9buZVmBzdtGRvjJO2XP9ZAPbFIzE5j1ZM";
+
+const credentials = JSON.parse(
+  Buffer.from(
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
+    "base64"
+  ).toString("utf8")
+);
+
+const auth = new google.auth.GoogleAuth({
+  credentials,
+  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+});
+
+const sheets = google.sheets({ version: "v4", auth });
+
+async function getGirlRows() {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `${GIRL_ROLE_SHEET}!A:A`
+  });
+
+  return res.data.values || [];
+}
+
+async function isGirlVerified(userId) {
+  const rows = await getGirlRows();
+  return rows.some(r => r[0] === userId);
+}
+
+async function addGirlVerified(userId) {
+  const exists = await isGirlVerified(userId);
+  if (exists) return;
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SHEET_ID,
+    range: `${GIRL_ROLE_SHEET}!A:A`,
+    valueInputOption: "RAW",
+    requestBody: {
+      values: [[userId]]
+    }
+  });
+}
+// ===== GIRL ROLE SYSTEM END =====
+
+
 // ================= ERROR HANDLING =================
 
 process.on("unhandledRejection", error => {
@@ -222,6 +273,19 @@ client.once("ready", async () => {
     dm.startDMScheduler(client);
   }
 
+  // ===== GIRL ROLE SYSTEM BACKFILL (RUN ONCE THEN DELETE) =====
+  const guild = client.guilds.cache.get(GUILD_ID);
+  const role = guild.roles.cache.get(ROLE_ID);
+
+  console.log("Backfilling Girl Role...");
+
+  for (const member of role.members.values()) {
+    await addGirlVerified(member.id);
+  }
+
+  console.log("Backfill complete.");
+  // ===== END BACKFILL =====
+
 });
 
 // ================= MESSAGE CREATE =================
@@ -229,8 +293,6 @@ client.once("ready", async () => {
 client.on("messageCreate", async message => {
 
   if (message.author.bot) return;
-
-  // ================= DROP MAP TRIGGER =================
 
   if (message.channel.id !== YUNITE_LOG_CHANNEL) return;
 
@@ -279,8 +341,6 @@ client.on("interactionCreate", async interaction => {
     }
 
   }
-
-  // ===== STAFF BUTTONS =====
 
   if (interaction.isButton()) {
 
@@ -394,8 +454,45 @@ client.on("interactionCreate", async interaction => {
 
 });
 
+// ===== GIRL ROLE SYSTEM TRACKING =====
+client.on("guildMemberUpdate", async (oldMember, newMember) => {
+
+  const hadRole = oldMember.roles.cache.has(ROLE_ID);
+  const hasRole = newMember.roles.cache.has(ROLE_ID);
+
+  if (!hadRole && hasRole) {
+    try {
+      await addGirlVerified(newMember.id);
+    } catch (err) {
+      console.error("Error saving girl role:", err);
+    }
+  }
+
+});
+// ===== END TRACKING =====
+
+
 // ================= MEMBER JOIN =================
 
-client.on("guildMemberAdd", handleWelcome);
+client.on("guildMemberAdd", async (member) => {
+
+  await handleWelcome(member);
+
+  try {
+
+    const exists = await isGirlVerified(member.id);
+
+    if (exists) {
+      const role = member.guild.roles.cache.get(ROLE_ID);
+      if (role) {
+        await member.roles.add(role);
+      }
+    }
+
+  } catch (err) {
+    console.error("Girl role reassign error:", err);
+  }
+
+});
 
 client.login(process.env.DISCORD_TOKEN);
