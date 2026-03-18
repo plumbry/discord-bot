@@ -32,7 +32,7 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: "v4", auth });
 
-// 🔥 CACHE (fixes rate limit)
+// ===== CACHE =====
 let girlCache = new Set();
 
 async function loadGirlCache() {
@@ -42,7 +42,7 @@ async function loadGirlCache() {
   });
 
   girlCache = new Set((res.data.values || []).map(r => r[0]));
-  console.log("Girl cache loaded:", girlCache.size, "entries");
+  console.log("Girl cache loaded:", girlCache.size);
 }
 
 function isGirlVerified(userId) {
@@ -54,8 +54,6 @@ async function addGirlVerified(user) {
   if (girlCache.has(user.id)) return;
 
   try {
-    console.log("Adding to sheet:", user.tag);
-
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
       range: `${GIRL_ROLE_SHEET}!A:B`,
@@ -65,7 +63,7 @@ async function addGirlVerified(user) {
       }
     });
 
-    girlCache.add(user.id); // keep cache in sync
+    girlCache.add(user.id);
 
   } catch (err) {
     console.error("SHEETS ERROR:", err);
@@ -201,19 +199,43 @@ client.once("ready", async () => {
     dm.startDMScheduler(client);
   }
 
-  // ===== GIRL ROLE INIT + BACKFILL =====
+  // ===== GIRL ROLE INIT + BATCH BACKFILL =====
   const guild = client.guilds.cache.get(GUILD_ID);
 
-  await guild.members.fetch();     // ensure full cache
-  await loadGirlCache();           // 🔥 single read
+  await guild.members.fetch();
+  await loadGirlCache();
 
   const role = guild.roles.cache.get(ROLE_ID);
 
   console.log("Backfilling Girl Role...");
   console.log("Role members count:", role.members.size);
 
+  const newRows = [];
+
   for (const member of role.members.values()) {
-    await addGirlVerified(member.user); // no read spam
+    if (!girlCache.has(member.id)) {
+      newRows.push([member.id, member.user.tag]);
+      girlCache.add(member.id);
+    }
+  }
+
+  console.log("New users to add:", newRows.length);
+
+  if (newRows.length > 0) {
+    try {
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: SHEET_ID,
+        range: `${GIRL_ROLE_SHEET}!A:B`,
+        valueInputOption: "RAW",
+        requestBody: {
+          values: newRows
+        }
+      });
+
+      console.log("Batch write successful.");
+    } catch (err) {
+      console.error("BATCH WRITE ERROR:", err);
+    }
   }
 
   console.log("Backfill complete.");
