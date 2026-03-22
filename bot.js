@@ -41,7 +41,12 @@ async function loadGirlCache() {
       range: `${GIRL_ROLE_SHEET}!A:A`
     });
 
-    girlCache = new Set((res.data.values || []).map(r => r[0]));
+    girlCache = new Set(
+      (res.data.values || [])
+        .map(r => String(r[0]).trim())
+        .filter(Boolean)
+    );
+
     console.log("Girl cache loaded:", girlCache.size);
   } catch (err) {
     console.error("Failed to load Girl Role cache:", err);
@@ -49,11 +54,13 @@ async function loadGirlCache() {
 }
 
 function isGirlVerified(userId) {
-  return girlCache.has(userId);
+  return girlCache.has(String(userId).trim());
 }
 
 async function addGirlVerified(user) {
-  if (girlCache.has(user.id)) return;
+  const id = String(user.id).trim();
+
+  if (girlCache.has(id)) return;
 
   try {
     await sheets.spreadsheets.values.append({
@@ -61,11 +68,11 @@ async function addGirlVerified(user) {
       range: `${GIRL_ROLE_SHEET}!A:B`,
       valueInputOption: "RAW",
       requestBody: {
-        values: [[user.id, user.tag]]
+        values: [[id, user.tag]]
       }
     });
 
-    girlCache.add(user.id);
+    girlCache.add(id);
   } catch (err) {
     console.error("SHEETS ERROR:", err);
   }
@@ -269,7 +276,11 @@ client.on("guildMemberAdd", async (member) => {
   await handleWelcome(member);
 
   try {
-    if (isGirlVerified(member.id)) {
+    const id = String(member.id).trim();
+
+    console.log("JOIN:", id, "in cache?", girlCache.has(id));
+
+    if (girlCache.has(id)) {
       const role = member.guild.roles.cache.get(ROLE_ID);
       if (role) {
         await member.roles.add(role);
