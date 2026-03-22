@@ -5,7 +5,8 @@ const {
   Routes,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle
+  ButtonStyle,
+  ChannelType
 } = require("discord.js");
 
 const fs = require("fs");
@@ -198,6 +199,91 @@ client.once("ready", async () => {
   }
 });
 
+// ================= DROP MAP LISTENER =================
+
+client.on("messageCreate", async (message) => {
+  try {
+    if (message.channel.id !== YUNITE_LOG_CHANNEL) return;
+    if (!message.author.bot) return;
+    if (!message.embeds?.length) return;
+
+    const embed = message.embeds[0];
+
+    if (!embed.title?.includes("Custom Game Matchmaking Result")) return;
+
+    const description = embed.description || "";
+
+    const tournamentMatch = description.match(/Tournament\s*\n(.+)/i);
+    if (!tournamentMatch) return;
+
+    const tournamentName = tournamentMatch[1].trim();
+
+    const keywordMatch = tournamentName.match(
+      /(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i
+    );
+
+    if (!keywordMatch) return;
+
+    const keyword = keywordMatch[1].toLowerCase();
+
+    const guild = message.guild;
+
+    const category = guild.channels.cache.find(
+      c =>
+        c.type === ChannelType.GuildCategory &&
+        c.name.toLowerCase().includes(keyword)
+    );
+
+    if (!category) return;
+
+    const channelsInCategory = guild.channels.cache.filter(
+      c => c.parentId === category.id
+    );
+
+    const now = Date.now();
+
+    let activeChat = null;
+
+    for (const c of channelsInCategory.values()) {
+      if (!c.isTextBased()) continue;
+      if (!c.name.toLowerCase().includes("chat")) continue;
+
+      const messages = await c.messages.fetch({ limit: 1 }).catch(() => null);
+      const lastMessage = messages?.first();
+
+      if (!lastMessage) continue;
+
+      if (now - lastMessage.createdTimestamp < ACTIVITY_WINDOW) {
+        activeChat = c;
+        break;
+      }
+    }
+
+    if (!activeChat) return;
+
+    const dropmapChannel = channelsInCategory.find(c =>
+      c.isTextBased() &&
+      (c.name.toLowerCase().includes("dropmap") ||
+        c.name.toLowerCase().includes("drop-map"))
+    );
+
+    if (!dropmapChannel) return;
+
+    const nowTime = Date.now();
+
+    if (nowTime - lastDropmapClose < DROP_MAP_COOLDOWN) return;
+
+    lastDropmapClose = nowTime;
+
+    await dropmapChannel.send("DROPMAP CLOSED UNTIL NEXT GAME");
+
+    console.log("Dropmap message sent to:", dropmapChannel.name);
+
+  } catch (err) {
+    console.error("Dropmap listener error:", err);
+  }
+});
+
 // ================= INTERACTIONS =================
 
 client.on("interactionCreate", async interaction => {
@@ -277,8 +363,6 @@ client.on("guildMemberAdd", async (member) => {
 
   try {
     const id = String(member.id).trim();
-
-    console.log("JOIN:", id, "in cache?", girlCache.has(id));
 
     if (girlCache.has(id)) {
       const role = member.guild.roles.cache.get(ROLE_ID);
