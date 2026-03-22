@@ -31,6 +31,10 @@ const sheets = google.sheets({ version: "v4", auth });
 
 const today = () => new Date().toLocaleDateString("en-GB");
 
+function formatUser(text) {
+  return `\`${text}\``;
+}
+
 function parseDateInput(str) {
   if (!str) return null;
 
@@ -50,6 +54,63 @@ function parseDateInput(str) {
   }
 
   return null;
+}
+
+function getDaysRemaining(endDateStr) {
+  const end = parseDateInput(endDateStr);
+  if (!end) return 0;
+
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  end.setHours(0, 0, 0, 0);
+
+  const diffMs = end - now;
+  return Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+}
+
+// ✅ NEW: Handle expired probations
+async function handleExpiredProbations(rows, banChannel) {
+  let updated = false;
+
+  for (const r of rows) {
+
+    if (r[2] !== "Probation") continue;
+
+    const daysRemaining = getDaysRemaining(r[6]);
+
+    // Already processed
+    if (Number(r[4]) === 0) continue;
+
+    // Still active
+    if (daysRemaining > 0) continue;
+
+    // Mark as ended
+    r[4] = 0;
+    updated = true;
+
+    // Send message
+    try {
+      await banChannel.send(
+        `🔔 PROBATION ENDED for ${formatUser(r[1])}`
+      );
+    } catch (err) {
+      console.error("PROBATION ENDED SEND ERROR:", err);
+    }
+
+    // Edit original message
+    if (r[9]) {
+      try {
+        const msg = await banChannel.messages.fetch(r[9]);
+        await msg.edit(
+          `${formatUser(r[1])} — Probation\nEnded ${r[6]}`
+        );
+      } catch (err) {
+        console.error("PROBATION MESSAGE EDIT ERROR:", err);
+      }
+    }
+  }
+
+  return updated;
 }
 
 async function logAudit(action, moderator, user = "") {
@@ -109,16 +170,19 @@ async function writeRows(rows) {
 // ================= FORMATTERS =================
 
 const formatEventBan = r =>
-`${r[1]} — ${r[3]}-Event ${r[2]} Ban Started ${r[5]}
+`${formatUser(r[1])} — ${r[3]}-Event ${r[2]} Ban Started ${r[5]}
 ${r[4]} Events Remaining
 Reason: ${r[7] || "No reason provided"}`;
 
-const formatProbation = r =>
-`${r[1]} — Probation
+const formatProbation = r => {
+  const daysRemaining = getDaysRemaining(r[6]);
+
+  return `${formatUser(r[1])} — Probation
 Started ${r[5]}
 Ends ${r[6]}
-${r[4]} Days Remaining
+${daysRemaining} Days Remaining
 Reason: ${r[7] || "No reason provided"}`;
+};
 
 // ================= COMMAND =================
 
@@ -196,9 +260,7 @@ async function handleEventBan(interaction) {
       return interaction.editReply("No permission.");
     }
 
-    const sub = interaction.options.getSubcommand();
-    const rows = await getRows();
-
+    // ✅ Get channel FIRST
     let banChannel;
     try {
       banChannel = await interaction.guild.channels.fetch(BAN_CHANNEL_ID);
@@ -208,6 +270,17 @@ async function handleEventBan(interaction) {
       return interaction.editReply("Ban channel not accessible.");
     }
 
+    // ✅ THEN get rows
+    const rows = await getRows();
+
+    // ✅ Auto-expire probations
+    const probationUpdated = await handleExpiredProbations(rows, banChannel);
+    if (probationUpdated) {
+      await writeRows(rows);
+    }
+
+    const sub = interaction.options.getSubcommand();
+
     // ===== APPLY =====
     if (sub === "apply") {
 
@@ -215,10 +288,6 @@ async function handleEventBan(interaction) {
       const type = interaction.options.getString("type");
       const events = interaction.options.getInteger("events");
       const reason = interaction.options.getString("reason");
-
-      if (!user || !type || !events) {
-        return interaction.editReply("Invalid input.");
-      }
 
       const row = [
         user.id,
@@ -233,14 +302,7 @@ async function handleEventBan(interaction) {
         ""
       ];
 
-      let msg;
-      try {
-        msg = await banChannel.send(formatEventBan(row));
-      } catch (err) {
-        console.error("SEND ERROR:", err);
-        return interaction.editReply("Failed to send message.");
-      }
-
+      const msg = await banChannel.send(formatEventBan(row));
       row[9] = msg.id;
 
       rows.push(row);
@@ -258,10 +320,6 @@ async function handleEventBan(interaction) {
       const days = interaction.options.getInteger("days");
       const reason = interaction.options.getString("reason");
       const startInput = interaction.options.getString("start");
-
-      if (!user || !days) {
-        return interaction.editReply("Invalid input.");
-      }
 
       let startDate = startInput ? parseDateInput(startInput) : new Date();
 
@@ -287,14 +345,7 @@ async function handleEventBan(interaction) {
         ""
       ];
 
-      let msg;
-      try {
-        msg = await banChannel.send(formatProbation(row));
-      } catch (err) {
-        console.error("SEND ERROR:", err);
-        return interaction.editReply("Failed to send message.");
-      }
-
+      const msg = await banChannel.send(formatProbation(row));
       row[9] = msg.id;
 
       rows.push(row);
@@ -311,19 +362,13 @@ async function handleEventBan(interaction) {
       const type = interaction.options.getString("type");
       const events = interaction.options.getInteger("events");
 
-      if (!type || !events) {
-        return interaction.editReply("Invalid input.");
-      }
-
-      const typeLower = type.toLowerCase();
-
       for (const r of rows) {
 
         if (r[2] === "Probation") continue;
 
         const rowType = (r[2] || "").toLowerCase();
 
-        if ((typeLower === "all" || rowType === typeLower) && Number(r[4]) > 0) {
+        if ((type.toLowerCase() === "all" || rowType === type.toLowerCase()) && Number(r[4]) > 0) {
 
           r[4] = Math.max(0, Number(r[4]) - events);
           r[6] = today();
@@ -351,23 +396,27 @@ async function handleEventBan(interaction) {
         r => r[2] !== "Probation" && Number(r[4]) > 0
       );
 
-      const probations = rows.filter(
-        r => r[2] === "Probation" && Number(r[4]) > 0
-      );
+      const probations = rows
+        .filter(r => r[2] === "Probation")
+        .map(r => ({
+          row: r,
+          daysRemaining: getDaysRemaining(r[6])
+        }))
+        .filter(p => p.daysRemaining > 0);
 
       let text = "**Active Event Bans**\n";
 
       text += activeBans.length
         ? activeBans.map(r =>
-          `${r[1]} — ${r[2]} | ${r[4]} events remaining`
+          `${formatUser(r[1])} — ${r[2]} | ${r[4]} events remaining`
         ).join("\n")
         : "None";
 
       text += "\n\n**Active Probations**\n";
 
       text += probations.length
-        ? probations.map(r =>
-          `${r[1]} — ${r[4]} days remaining (ends ${r[6]})`
+        ? probations.map(p =>
+          `${formatUser(p.row[1])} — ${p.daysRemaining} days remaining (ends ${p.row[6]})`
         ).join("\n")
         : "None";
 
