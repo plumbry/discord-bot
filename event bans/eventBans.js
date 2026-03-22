@@ -32,7 +32,6 @@ const sheets = google.sheets({ version: "v4", auth });
 const today = () => new Date().toLocaleDateString("en-GB");
 
 function parseDateInput(str) {
-
   if (!str) return null;
 
   const iso = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -40,66 +39,71 @@ function parseDateInput(str) {
 
   let match;
 
-  if (match = str.match(iso)) {
-    const [,y,m,d] = match;
-    return new Date(Number(y), Number(m)-1, Number(d));
+  if ((match = str.match(iso))) {
+    const [, y, m, d] = match;
+    return new Date(Number(y), Number(m) - 1, Number(d));
   }
 
-  if (match = str.match(uk)) {
-    const [,d,m,y] = match;
-    return new Date(Number(y), Number(m)-1, Number(d));
+  if ((match = str.match(uk))) {
+    const [, d, m, y] = match;
+    return new Date(Number(y), Number(m) - 1, Number(d));
   }
 
   return null;
 }
 
 async function logAudit(action, moderator, user = "") {
-
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: SHEET_ID,
-    range: `${AUDIT_SHEET}!A2:D`,
-    valueInputOption: "RAW",
-    requestBody: {
-      values: [[
-        today(),
-        action,
-        moderator.tag,
-        user?.tag || user
-      ]]
-    }
-  });
-
+  try {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SHEET_ID,
+      range: `${AUDIT_SHEET}!A2:D`,
+      valueInputOption: "RAW",
+      requestBody: {
+        values: [[
+          today(),
+          action,
+          moderator.tag,
+          user?.tag || user
+        ]]
+      }
+    });
+  } catch (err) {
+    console.error("AUDIT LOG ERROR:", err);
+  }
 }
 
 async function getRows() {
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `${EVENT_SHEET}!A2:J`
+    });
 
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID,
-    range: `${EVENT_SHEET}!A2:J`
-  });
-
-  return res.data.values || [];
-
+    return res.data.values || [];
+  } catch (err) {
+    console.error("GET ROWS ERROR:", err);
+    return [];
+  }
 }
 
 async function writeRows(rows) {
-
-  await sheets.spreadsheets.values.clear({
-    spreadsheetId: SHEET_ID,
-    range: `${EVENT_SHEET}!A2:J`
-  });
-
-  if (rows.length) {
-
-    await sheets.spreadsheets.values.append({
+  try {
+    await sheets.spreadsheets.values.clear({
       spreadsheetId: SHEET_ID,
-      range: `${EVENT_SHEET}!A2:J`,
-      valueInputOption: "RAW",
-      requestBody: { values: rows }
+      range: `${EVENT_SHEET}!A2:J`
     });
 
+    if (rows.length) {
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: SHEET_ID,
+        range: `${EVENT_SHEET}!A2:J`,
+        valueInputOption: "RAW",
+        requestBody: { values: rows }
+      });
+    }
+  } catch (err) {
+    console.error("WRITE ROWS ERROR:", err);
   }
-
 }
 
 // ================= FORMATTERS =================
@@ -122,7 +126,6 @@ const eventBanCommand = new SlashCommandBuilder()
 .setName("eventban")
 .setDescription("Event ban management")
 
-// APPLY BAN
 .addSubcommand(s =>
   s.setName("apply")
     .setDescription("Apply an event ban")
@@ -143,7 +146,6 @@ const eventBanCommand = new SlashCommandBuilder()
       o.setName("reason").setDescription("Reason").setRequired(true))
 )
 
-// PROBATION
 .addSubcommand(s =>
   s.setName("probation")
     .setDescription("Apply probation (days)")
@@ -159,7 +161,6 @@ const eventBanCommand = new SlashCommandBuilder()
         .setRequired(false))
 )
 
-// EVENT PASSED
 .addSubcommand(s =>
   s.setName("eventpassed")
     .setDescription("Reduce remaining bans")
@@ -178,7 +179,6 @@ const eventBanCommand = new SlashCommandBuilder()
         .setRequired(true))
 )
 
-// SUMMARY
 .addSubcommand(s =>
   s.setName("summary")
     .setDescription("Show active bans and probations")
@@ -188,174 +188,202 @@ const eventBanCommand = new SlashCommandBuilder()
 
 async function handleEventBan(interaction) {
 
-  await interaction.deferReply();
+  try {
 
-  if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels))
-    return interaction.editReply("No permission.");
+    await interaction.deferReply();
 
-  const sub = interaction.options.getSubcommand();
-  const rows = await getRows();
-  const banChannel = await interaction.guild.channels.fetch(BAN_CHANNEL_ID);
-
-  // APPLY EVENT BAN
-
-  if (sub === "apply") {
-
-    const user = interaction.options.getUser("user");
-    const type = interaction.options.getString("type");
-    const events = interaction.options.getInteger("events");
-    const reason = interaction.options.getString("reason");
-
-    const row = [
-      user.id,
-      user.tag,
-      type,
-      events,
-      events,
-      today(),
-      today(),
-      reason,
-      interaction.user.tag,
-      ""
-    ];
-
-    const msg = await banChannel.send(formatEventBan(row));
-
-    row[9] = msg.id;
-
-    rows.push(row);
-
-    await writeRows(rows);
-
-    await logAudit(`Applied ${events}-event ${type} ban`, interaction.user, user);
-
-    return interaction.editReply("✅ Event ban applied.");
-  }
-
-  // APPLY PROBATION
-
-  if (sub === "probation") {
-
-    const user = interaction.options.getUser("user");
-    const days = interaction.options.getInteger("days");
-    const reason = interaction.options.getString("reason");
-    const startInput = interaction.options.getString("start");
-
-    let startDate;
-
-    if (startInput) {
-
-      startDate = parseDateInput(startInput);
-
-      if (!startDate)
-        return interaction.editReply(
-          "Invalid date format. Use **YYYY-MM-DD** or **DD/MM/YYYY**."
-        );
-
-    } else {
-
-      startDate = new Date();
-
+    if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+      return interaction.editReply("No permission.");
     }
 
-    const endDate = new Date(startDate);
-    endDate.setDate(endDate.getDate() + days);
+    const sub = interaction.options.getSubcommand();
+    const rows = await getRows();
 
-    const format = d => d.toLocaleDateString("en-GB");
+    let banChannel;
+    try {
+      banChannel = await interaction.guild.channels.fetch(BAN_CHANNEL_ID);
+      if (!banChannel) throw new Error("Channel not found");
+    } catch (err) {
+      console.error("BAN CHANNEL ERROR:", err);
+      return interaction.editReply("Ban channel not accessible.");
+    }
 
-    const row = [
-      user.id,
-      user.tag,
-      "Probation",
-      days,
-      days,
-      format(startDate),
-      format(endDate),
-      reason,
-      interaction.user.tag,
-      ""
-    ];
+    // ===== APPLY =====
+    if (sub === "apply") {
 
-    const msg = await banChannel.send(formatProbation(row));
+      const user = interaction.options.getUser("user");
+      const type = interaction.options.getString("type");
+      const events = interaction.options.getInteger("events");
+      const reason = interaction.options.getString("reason");
 
-    row[9] = msg.id;
-
-    rows.push(row);
-
-    await writeRows(rows);
-
-    await logAudit(`Applied ${days}-day probation`, interaction.user, user);
-
-    return interaction.editReply("✅ Probation applied.");
-  }
-
-  // EVENT PASSED
-
-  if (sub === "eventpassed") {
-
-    const type = interaction.options.getString("type").toLowerCase();
-    const events = interaction.options.getInteger("events");
-
-    for (const r of rows) {
-
-      if (r[2] === "Probation") continue;
-
-      const rowType = r[2].toLowerCase();
-
-      if ((type === "all" || rowType === type) && Number(r[4]) > 0) {
-
-        r[4] = Math.max(0, Number(r[4]) - events);
-        r[6] = today();
-
-        if (r[9]) {
-
-          try {
-            const msg = await banChannel.messages.fetch(r[9]);
-            await msg.edit(formatEventBan(r));
-          } catch {}
-
-        }
-
+      if (!user || !type || !events) {
+        return interaction.editReply("Invalid input.");
       }
 
+      const row = [
+        user.id,
+        user.tag,
+        type,
+        events,
+        events,
+        today(),
+        today(),
+        reason,
+        interaction.user.tag,
+        ""
+      ];
+
+      let msg;
+      try {
+        msg = await banChannel.send(formatEventBan(row));
+      } catch (err) {
+        console.error("SEND ERROR:", err);
+        return interaction.editReply("Failed to send message.");
+      }
+
+      row[9] = msg.id;
+
+      rows.push(row);
+
+      await writeRows(rows);
+      await logAudit(`Applied ${events}-event ${type} ban`, interaction.user, user);
+
+      return interaction.editReply("✅ Event ban applied.");
     }
 
-    await writeRows(rows);
+    // ===== PROBATION =====
+    if (sub === "probation") {
 
-    return interaction.editReply("✅ Event bans updated.");
-  }
+      const user = interaction.options.getUser("user");
+      const days = interaction.options.getInteger("days");
+      const reason = interaction.options.getString("reason");
+      const startInput = interaction.options.getString("start");
 
-  // SUMMARY
+      if (!user || !days) {
+        return interaction.editReply("Invalid input.");
+      }
 
-  if (sub === "summary") {
+      let startDate = startInput ? parseDateInput(startInput) : new Date();
 
-    const activeBans = rows.filter(
-      r => r[2] !== "Probation" && Number(r[4]) > 0
-    );
+      if (startInput && !startDate) {
+        return interaction.editReply("Invalid date format.");
+      }
 
-    const probations = rows.filter(
-      r => r[2] === "Probation" && Number(r[4]) > 0
-    );
+      const endDate = new Date(startDate);
+      endDate.setDate(endDate.getDate() + days);
 
-    let text = "";
+      const format = d => d.toLocaleDateString("en-GB");
 
-    text += "**Active Event Bans**\n";
+      const row = [
+        user.id,
+        user.tag,
+        "Probation",
+        days,
+        days,
+        format(startDate),
+        format(endDate),
+        reason,
+        interaction.user.tag,
+        ""
+      ];
 
-    text += activeBans.length
-      ? activeBans.map(r =>
-        `${r[1]} — ${r[2]} | ${r[4]} events remaining`
-      ).join("\n")
-      : "None";
+      let msg;
+      try {
+        msg = await banChannel.send(formatProbation(row));
+      } catch (err) {
+        console.error("SEND ERROR:", err);
+        return interaction.editReply("Failed to send message.");
+      }
 
-    text += "\n\n**Active Probations**\n";
+      row[9] = msg.id;
 
-    text += probations.length
-      ? probations.map(r =>
-        `${r[1]} — ${r[4]} days remaining (ends ${r[6]})`
-      ).join("\n")
-      : "None";
+      rows.push(row);
 
-    return interaction.editReply(text);
+      await writeRows(rows);
+      await logAudit(`Applied ${days}-day probation`, interaction.user, user);
+
+      return interaction.editReply("✅ Probation applied.");
+    }
+
+    // ===== EVENT PASSED =====
+    if (sub === "eventpassed") {
+
+      const type = interaction.options.getString("type");
+      const events = interaction.options.getInteger("events");
+
+      if (!type || !events) {
+        return interaction.editReply("Invalid input.");
+      }
+
+      const typeLower = type.toLowerCase();
+
+      for (const r of rows) {
+
+        if (r[2] === "Probation") continue;
+
+        const rowType = (r[2] || "").toLowerCase();
+
+        if ((typeLower === "all" || rowType === typeLower) && Number(r[4]) > 0) {
+
+          r[4] = Math.max(0, Number(r[4]) - events);
+          r[6] = today();
+
+          if (r[9]) {
+            try {
+              const msg = await banChannel.messages.fetch(r[9]);
+              await msg.edit(formatEventBan(r));
+            } catch (err) {
+              console.error("MESSAGE EDIT ERROR:", err);
+            }
+          }
+        }
+      }
+
+      await writeRows(rows);
+
+      return interaction.editReply("✅ Event bans updated.");
+    }
+
+    // ===== SUMMARY =====
+    if (sub === "summary") {
+
+      const activeBans = rows.filter(
+        r => r[2] !== "Probation" && Number(r[4]) > 0
+      );
+
+      const probations = rows.filter(
+        r => r[2] === "Probation" && Number(r[4]) > 0
+      );
+
+      let text = "**Active Event Bans**\n";
+
+      text += activeBans.length
+        ? activeBans.map(r =>
+          `${r[1]} — ${r[2]} | ${r[4]} events remaining`
+        ).join("\n")
+        : "None";
+
+      text += "\n\n**Active Probations**\n";
+
+      text += probations.length
+        ? probations.map(r =>
+          `${r[1]} — ${r[4]} days remaining (ends ${r[6]})`
+        ).join("\n")
+        : "None";
+
+      return interaction.editReply(text);
+    }
+
+  } catch (error) {
+
+    console.error("HANDLE EVENT BAN FATAL ERROR:", error);
+
+    try {
+      return interaction.editReply("Something went wrong.");
+    } catch {
+      return;
+    }
+
   }
 
 }

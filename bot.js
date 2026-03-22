@@ -53,7 +53,6 @@ function isGirlVerified(userId) {
 }
 
 async function addGirlVerified(user) {
-
   if (girlCache.has(user.id)) return;
 
   try {
@@ -67,11 +66,9 @@ async function addGirlVerified(user) {
     });
 
     girlCache.add(user.id);
-
   } catch (err) {
     console.error("SHEETS ERROR:", err);
   }
-
 }
 // ===== GIRL ROLE SYSTEM END =====
 
@@ -143,9 +140,7 @@ const commandFiles = fs
   .filter(file => file.endsWith(".js"));
 
 for (const file of commandFiles) {
-
   try {
-
     const command = require(`./commands/${file}`);
 
     if (!command?.data || !command?.execute) {
@@ -154,28 +149,19 @@ for (const file of commandFiles) {
     }
 
     client.commands.set(command.data.name, command);
-
   } catch (err) {
-
     console.error(`Error loading command: ${file}`);
     console.error(err);
-
   }
-
 }
-
-// ================= DROP MAP FUNCTION =================
-// (unchanged)
 
 // ================= READY =================
 
 client.once("ready", async () => {
-
   console.log(`Logged in as ${client.user.tag}`);
 
   startBanExpiryChecker(client);
-
-  await loadGirlCache(); // 🔥 load cache on startup
+  await loadGirlCache();
 
   const rest = new REST({ version: "10" })
     .setToken(process.env.DISCORD_TOKEN);
@@ -203,73 +189,64 @@ client.once("ready", async () => {
   if (dm.startDMScheduler) {
     dm.startDMScheduler(client);
   }
-
-});
-
-// ================= MESSAGE CREATE =================
-
-client.on("messageCreate", async message => {
-
-  if (message.author.bot) return;
-
-  if (message.channel.id !== YUNITE_LOG_CHANNEL) return;
-
-  const content = message.content.toLowerCase();
-
-  if (
-    !content.includes("matches are running") &&
-    !content.includes("test dropmap")
-  ) return;
-
-  closeDropmap(message.guild);
-
 });
 
 // ================= INTERACTIONS =================
 
 client.on("interactionCreate", async interaction => {
 
-  if (interaction.isChatInputCommand()) {
+  if (!interaction.isChatInputCommand()) return;
+
+  try {
 
     if (interaction.commandName === "verify")
-      return handleVerify(interaction);
+      return await handleVerify(interaction);
 
     if (interaction.commandName === "eventban")
-      return handleEventBan(interaction);
+      return await handleEventBan(interaction);
 
     if (interaction.commandName === "recentban")
-      return handleRecentBan(interaction);
+      return await handleRecentBan(interaction);
 
     if (interaction.commandName === "myban") {
       await interaction.deferReply({ ephemeral: true });
-      return handleMyBan(interaction);
+      return await handleMyBan(interaction);
     }
 
     if (interaction.commandName === "dm" && dm.handleDM)
-      return dm.handleDM(interaction);
+      return await dm.handleDM(interaction);
 
     const command = client.commands.get(interaction.commandName);
-
     if (!command) return;
 
+    await command.execute(interaction);
+
+  } catch (error) {
+
+    console.error(`ERROR in command ${interaction.commandName}:`, error);
+
     try {
-      await command.execute(interaction);
-    } catch (error) {
-      console.error(error);
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp({
+          content: "There was an error executing this command.",
+          ephemeral: true
+        });
+      } else {
+        await interaction.reply({
+          content: "There was an error executing this command.",
+          ephemeral: true
+        });
+      }
+    } catch (err) {
+      console.error("Failed to send error reply:", err);
     }
 
-  }
-
-  if (interaction.isButton()) {
-
-    if (!interaction.customId.startsWith("staff_")) return;
-
-    // unchanged button logic...
   }
 
 });
 
-// ===== GIRL ROLE TRACKING =====
+// ================= GIRL ROLE TRACKING =================
+
 client.on("guildMemberUpdate", async (oldMember, newMember) => {
 
   const hadRole = oldMember.roles.cache.has(ROLE_ID);
@@ -284,8 +261,6 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
   }
 
 });
-// ===== END TRACKING =====
-
 
 // ================= MEMBER JOIN =================
 
@@ -294,21 +269,20 @@ client.on("guildMemberAdd", async (member) => {
   await handleWelcome(member);
 
   try {
-
     if (isGirlVerified(member.id)) {
       const role = member.guild.roles.cache.get(ROLE_ID);
       if (role) {
         await member.roles.add(role);
       }
     }
-
   } catch (err) {
     console.error("Girl role reassign error:", err);
   }
 
 });
 
-// ===== SAFE LOGIN (prevents Fly exit) =====
+// ================= LOGIN =================
+
 client.login(process.env.DISCORD_TOKEN)
   .then(() => console.log("Bot login successful"))
   .catch(err => console.error("Login error:", err));
