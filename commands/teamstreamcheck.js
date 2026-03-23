@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require("discord.js");
+const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 
 const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)/gi;
 const ACCEPTED_EMOJI_ID = "1405510864496361482";
@@ -18,7 +18,6 @@ async function fetchAllMessages(channel) {
       }
     }
 
-    // Permission checks
     const perms = channel.permissionsFor(channel.client.user);
 
     if (!perms?.has(PermissionFlagsBits.ViewChannel)) {
@@ -61,7 +60,7 @@ async function fetchAllMessages(channel) {
 }
 
 /**
- * Extract teams from signup channel
+ * Extract teams from signup channel (robust)
  */
 async function getTeams(signupChannel) {
   const messages = await fetchAllMessages(signupChannel);
@@ -70,24 +69,40 @@ async function getTeams(signupChannel) {
   for (const msg of messages) {
     if (msg.author.bot) continue;
 
-    const reactions = msg.reactions.cache;
+    let accepted = false;
 
-    const accepted = reactions.some(
-      r => r.emoji.id === ACCEPTED_EMOJI_ID && r.count > 0
-    );
+    // Force accurate reaction check
+    for (const reaction of msg.reactions.cache.values()) {
+      if (reaction.emoji.id === ACCEPTED_EMOJI_ID) {
+        try {
+          const users = await reaction.users.fetch();
+          if (users.size > 0) {
+            accepted = true;
+            break;
+          }
+        } catch (e) {
+          console.log(`⚠️ Failed reaction fetch for message ${msg.id}`);
+        }
+      }
+    }
 
     if (!accepted) continue;
 
-    const members = [...msg.mentions.users.values()].map(u => u.id);
+    const members = msg.mentions.users.size
+      ? [...msg.mentions.users.keys()]
+      : [];
 
     if (members.length >= 1) {
       teams.push({
-        number: teams.length + 1,
+        number: messages.indexOf(msg) + 1, // stable numbering
         members
       });
+    } else {
+      console.log(`⚠️ No members found in message ${msg.id}`);
     }
   }
 
+  console.log(`✅ Teams detected: ${teams.length}`);
   return teams;
 }
 
@@ -121,7 +136,7 @@ module.exports = {
 
   async execute(interaction) {
     try {
-      // 🔧 Handle threads properly
+      // Handle threads properly
       const baseChannel = interaction.channel.isThread?.()
         ? interaction.channel.parent
         : interaction.channel;
@@ -135,23 +150,30 @@ module.exports = {
         });
       }
 
-      console.log("📁 Category:", category.id);
+      console.log("📁 Category:", category.name);
 
-      // 🔧 Safer channel resolution (not just cache)
+      // Find signup channel (EXCLUDING solo channels)
       let signupChannel = category.children.cache.find(c => {
         if (!c.isTextBased()) return false;
 
         const name = c.name.toLowerCase();
-        return (
+
+        const isSignup =
           name.includes("sign-ups") ||
           name.includes("signups") ||
-          name.includes("teams")
-        );
+          name.includes("teams");
+
+        const isSolo =
+          name.includes("solo") ||
+          name.includes("lfg") ||
+          name.includes("free-agent");
+
+        return isSignup && !isSolo;
       });
 
-      // Fallback: fetch channels if not cached
+      // Fallback if not cached
       if (!signupChannel) {
-        console.log("⚠️ Signup channel not in cache, fetching...");
+        console.log("⚠️ Signup not in cache, fetching...");
         const fetched = await interaction.guild.channels.fetch();
 
         signupChannel = fetched.find(c => {
@@ -159,23 +181,30 @@ module.exports = {
           if (!c.isTextBased()) return false;
 
           const name = c.name.toLowerCase();
-          return (
+
+          const isSignup =
             name.includes("sign-ups") ||
             name.includes("signups") ||
-            name.includes("teams")
-          );
+            name.includes("teams");
+
+          const isSolo =
+            name.includes("solo") ||
+            name.includes("lfg") ||
+            name.includes("free-agent");
+
+          return isSignup && !isSolo;
         });
       }
 
       if (!signupChannel) {
         return interaction.reply({
-          content: "Could not find a sign-ups channel in this category.",
+          content: "Could not find a team sign-ups channel in this category.",
           ephemeral: true
         });
       }
 
-      console.log("📝 Signup Channel:", signupChannel.id);
-      console.log("📺 Stream Channel:", interaction.channel.id);
+      console.log("📝 Using signup channel:", signupChannel.name);
+      console.log("📺 Using stream channel:", interaction.channel.name);
 
       await interaction.reply("Scanning accepted teams and stream submissions...");
 
