@@ -3,9 +3,6 @@ const {
   GatewayIntentBits,
   REST,
   Routes,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
   ChannelType
 } = require("discord.js");
 
@@ -36,6 +33,16 @@ const sheets = google.sheets({ version: "v4", auth });
 let girlCache = new Set();
 let girlCacheReady = false;
 
+// 🔥 STRONG ID NORMALISER (fixes your issue)
+function cleanId(value) {
+  if (!value) return null;
+
+  return String(value)
+    .normalize("NFKC")       // unicode cleanup
+    .replace(/[^\d]/g, "")   // keep digits only
+    .trim();
+}
+
 async function loadGirlCache() {
   try {
     const res = await sheets.spreadsheets.values.get({
@@ -45,24 +52,22 @@ async function loadGirlCache() {
 
     girlCache = new Set(
       (res.data.values || [])
-        .map(r => String(r[0]).trim())
-        .filter(Boolean)
+        .map(r => cleanId(r[0]))
+        .filter(id => id && id.length >= 17)
     );
 
     girlCacheReady = true;
 
     console.log("✅ Girl cache loaded:", girlCache.size);
+    console.log("🔍 Sample cache:", [...girlCache].slice(0, 5));
+
   } catch (err) {
     console.error("❌ Failed to load Girl Role cache:", err);
   }
 }
 
-function isGirlVerified(userId) {
-  return girlCache.has(String(userId).trim());
-}
-
 async function addGirlVerified(user) {
-  const id = String(user.id).trim();
+  const id = cleanId(user.id);
 
   if (girlCache.has(id)) return;
 
@@ -77,8 +82,11 @@ async function addGirlVerified(user) {
     });
 
     girlCache.add(id);
+
+    console.log("✅ Added to sheet:", user.tag);
+
   } catch (err) {
-    console.error("SHEETS ERROR:", err);
+    console.error("❌ SHEETS ERROR:", err);
   }
 }
 // ===== GIRL ROLE SYSTEM END =====
@@ -115,9 +123,6 @@ const { startBanExpiryChecker } = require("./banExpiryChecker");
 
 const dm = require("./commands/dm");
 
-const gamecallModule = require("./commands/gamecall");
-const activeCalls = gamecallModule.activeCalls || new Map();
-
 // ================= CONSTANTS =================
 
 const GUILD_ID = "1371615693392576580";
@@ -151,15 +156,11 @@ for (const file of commandFiles) {
   try {
     const command = require(`./commands/${file}`);
 
-    if (!command?.data || !command?.execute) {
-      console.log(`Skipping invalid command: ${file}`);
-      continue;
-    }
+    if (!command?.data || !command?.execute) continue;
 
     client.commands.set(command.data.name, command);
   } catch (err) {
-    console.error(`Error loading command: ${file}`);
-    console.error(err);
+    console.error(`Error loading command: ${file}`, err);
   }
 }
 
@@ -204,18 +205,20 @@ client.once("ready", async () => {
 
 client.on("guildMemberAdd", async (member) => {
 
+  console.log("👋 MEMBER JOIN:", member.user.tag);
+
   await handleWelcome(member);
 
   try {
-    const id = String(member.id).trim();
+    const id = cleanId(member.id);
 
-    // Ensure cache is ready
     if (!girlCacheReady) {
-      console.log("⏳ Cache not ready, loading...");
+      console.log("⏳ Cache not ready — reloading...");
       await loadGirlCache();
     }
 
-    console.log("🔍 Checking girl role for:", id);
+    console.log("🔍 Checking ID:", id);
+    console.log("📦 Cache contains:", girlCache.has(id));
 
     if (girlCache.has(id)) {
       const role = member.guild.roles.cache.get(ROLE_ID);
@@ -224,19 +227,19 @@ client.on("guildMemberAdd", async (member) => {
         await member.roles.add(role);
         console.log("✅ Girl role reapplied to", member.user.tag);
       } else {
-        console.log("❌ Role not found in guild");
+        console.log("❌ Role not found");
       }
     } else {
-      console.log("❌ User not in girl cache");
+      console.log("❌ User not in cache");
     }
 
   } catch (err) {
-    console.error("Girl role reassign error:", err);
+    console.error("❌ Girl role reassign error:", err);
   }
 
 });
 
-// ================= GIRL ROLE TRACKING =================
+// ================= ROLE TRACKING =================
 
 client.on("guildMemberUpdate", async (oldMember, newMember) => {
 
@@ -246,7 +249,6 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
   if (!hadRole && hasRole) {
     try {
       await addGirlVerified(newMember.user);
-      console.log("✅ Saved girl role:", newMember.user.tag);
     } catch (err) {
       console.error("Error saving girl role:", err);
     }
