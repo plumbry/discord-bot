@@ -34,6 +34,7 @@ const auth = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: "v4", auth });
 
 let girlCache = new Set();
+let girlCacheReady = false;
 
 async function loadGirlCache() {
   try {
@@ -48,9 +49,11 @@ async function loadGirlCache() {
         .filter(Boolean)
     );
 
-    console.log("Girl cache loaded:", girlCache.size);
+    girlCacheReady = true;
+
+    console.log("✅ Girl cache loaded:", girlCache.size);
   } catch (err) {
-    console.error("Failed to load Girl Role cache:", err);
+    console.error("❌ Failed to load Girl Role cache:", err);
   }
 }
 
@@ -119,12 +122,9 @@ const activeCalls = gamecallModule.activeCalls || new Map();
 
 const GUILD_ID = "1371615693392576580";
 const YUNITE_LOG_CHANNEL = "1371615781393137788";
-const BOT_LOG_CHANNEL = "1471082166535454780";
 
 const DROP_MAP_COOLDOWN = 5 * 60 * 1000;
 let lastDropmapClose = 0;
-
-const ACTIVITY_WINDOW = 15 * 60 * 1000;
 
 // ================= CLIENT =================
 
@@ -169,6 +169,7 @@ client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
   startBanExpiryChecker(client);
+
   await loadGirlCache();
 
   const rest = new REST({ version: "10" })
@@ -199,162 +200,38 @@ client.once("ready", async () => {
   }
 });
 
-// ================= DROP MAP LISTENER (FIXED) =================
+// ================= MEMBER JOIN (FIXED) =================
 
-client.on("messageCreate", async (message) => {
+client.on("guildMemberAdd", async (member) => {
+
+  await handleWelcome(member);
+
   try {
-    if (message.channel.id !== YUNITE_LOG_CHANNEL) return;
-    if (!message.author.bot) return;
-    if (!message.embeds?.length) return;
+    const id = String(member.id).trim();
 
-    const embed = message.embeds[0];
+    // Ensure cache is ready
+    if (!girlCacheReady) {
+      console.log("⏳ Cache not ready, loading...");
+      await loadGirlCache();
+    }
 
-    if (!embed.title || !embed.title.toLowerCase().includes("matchmaking result")) return;
+    console.log("🔍 Checking girl role for:", id);
 
-    const description = embed.description || "";
+    if (girlCache.has(id)) {
+      const role = member.guild.roles.cache.get(ROLE_ID);
 
-    const lines = description.split("\n");
-
-    let tournamentName = null;
-
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].toLowerCase().includes("tournament")) {
-        tournamentName = lines[i + 1]?.trim();
-        break;
+      if (role) {
+        await member.roles.add(role);
+        console.log("✅ Girl role reapplied to", member.user.tag);
+      } else {
+        console.log("❌ Role not found in guild");
       }
+    } else {
+      console.log("❌ User not in girl cache");
     }
-
-    if (!tournamentName) {
-      console.log("❌ Tournament not found");
-      return;
-    }
-
-    const keywordMatch = tournamentName.match(
-      /(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i
-    );
-
-    if (!keywordMatch) {
-      console.log("❌ No weekday in tournament:", tournamentName);
-      return;
-    }
-
-    const keyword = keywordMatch[1].toLowerCase();
-
-    const keywordMap = {
-      monday: ["mon"],
-      tuesday: ["tue"],
-      wednesday: ["wed"],
-      thursday: ["thu"],
-      friday: ["fri"],
-      saturday: ["sat"],
-      sunday: ["sun"]
-    };
-
-    const possibleMatches = [keyword, ...(keywordMap[keyword] || [])];
-
-    const guild = message.guild;
-
-    const category = guild.channels.cache.find(
-      c =>
-        c.type === ChannelType.GuildCategory &&
-        possibleMatches.some(k => c.name.toLowerCase().includes(k))
-    );
-
-    if (!category) {
-      console.log("❌ Category not found");
-      return;
-    }
-
-    const channelsInCategory = guild.channels.cache.filter(
-      c => c.parentId === category.id
-    );
-
-    const dropmapChannel = channelsInCategory.find(c =>
-      c.isTextBased() &&
-      (
-        c.name.toLowerCase().includes("dropmap") ||
-        c.name.toLowerCase().includes("drop-map") ||
-        c.name.toLowerCase().includes("drop map")
-      )
-    );
-
-    if (!dropmapChannel) {
-      console.log("❌ Dropmap channel not found");
-      return;
-    }
-
-    const nowTime = Date.now();
-
-    if (nowTime - lastDropmapClose < DROP_MAP_COOLDOWN) {
-      console.log("⏱️ Cooldown active");
-      return;
-    }
-
-    lastDropmapClose = nowTime;
-
-    await dropmapChannel.send("DROPMAP CLOSED UNTIL NEXT GAME");
-
-    console.log("✅ Dropmap sent:", {
-      tournamentName,
-      category: category.name,
-      channel: dropmapChannel.name
-    });
 
   } catch (err) {
-    console.error("❌ Dropmap listener error:", err);
-  }
-});
-
-// ================= INTERACTIONS =================
-
-client.on("interactionCreate", async interaction => {
-
-  if (!interaction.isChatInputCommand()) return;
-
-  try {
-
-    if (interaction.commandName === "verify")
-      return await handleVerify(interaction);
-
-    if (interaction.commandName === "eventban")
-      return await handleEventBan(interaction);
-
-    if (interaction.commandName === "recentban")
-      return await handleRecentBan(interaction);
-
-    if (interaction.commandName === "myban") {
-      await interaction.deferReply({ ephemeral: true });
-      return await handleMyBan(interaction);
-    }
-
-    if (interaction.commandName === "dm" && dm.handleDM)
-      return await dm.handleDM(interaction);
-
-    const command = client.commands.get(interaction.commandName);
-    if (!command) return;
-
-    await command.execute(interaction);
-
-  } catch (error) {
-
-    console.error(`ERROR in command ${interaction.commandName}:`, error);
-
-    try {
-      if (interaction.deferred || interaction.replied) {
-        await interaction.followUp({
-          content: "There was an error executing this command.",
-          ephemeral: true
-        });
-      } else {
-        await interaction.reply({
-          content: "There was an error executing this command.",
-          ephemeral: true
-        });
-      }
-    } catch (err) {
-      console.error("Failed to send error reply:", err);
-    }
-
+    console.error("Girl role reassign error:", err);
   }
 
 });
@@ -369,30 +246,10 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
   if (!hadRole && hasRole) {
     try {
       await addGirlVerified(newMember.user);
+      console.log("✅ Saved girl role:", newMember.user.tag);
     } catch (err) {
       console.error("Error saving girl role:", err);
     }
-  }
-
-});
-
-// ================= MEMBER JOIN =================
-
-client.on("guildMemberAdd", async (member) => {
-
-  await handleWelcome(member);
-
-  try {
-    const id = String(member.id).trim();
-
-    if (girlCache.has(id)) {
-      const role = member.guild.roles.cache.get(ROLE_ID);
-      if (role) {
-        await member.roles.add(role);
-      }
-    }
-  } catch (err) {
-    console.error("Girl role reassign error:", err);
   }
 
 });
