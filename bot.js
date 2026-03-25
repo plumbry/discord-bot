@@ -33,13 +33,12 @@ const sheets = google.sheets({ version: "v4", auth });
 let girlCache = new Set();
 let girlCacheReady = false;
 
-// 🔥 STRONG ID NORMALISER (fixes your issue)
 function cleanId(value) {
   if (!value) return null;
 
   return String(value)
-    .normalize("NFKC")       // unicode cleanup
-    .replace(/[^\d]/g, "")   // keep digits only
+    .normalize("NFKC")
+    .replace(/[^\d]/g, "")
     .trim();
 }
 
@@ -59,8 +58,6 @@ async function loadGirlCache() {
     girlCacheReady = true;
 
     console.log("✅ Girl cache loaded:", girlCache.size);
-    console.log("🔍 Sample cache:", [...girlCache].slice(0, 5));
-
   } catch (err) {
     console.error("❌ Failed to load Girl Role cache:", err);
   }
@@ -84,13 +81,11 @@ async function addGirlVerified(user) {
     girlCache.add(id);
 
     console.log("✅ Added to sheet:", user.tag);
-
   } catch (err) {
     console.error("❌ SHEETS ERROR:", err);
   }
 }
 // ===== GIRL ROLE SYSTEM END =====
-
 
 // ================= ERROR HANDLING =================
 
@@ -201,10 +196,9 @@ client.once("ready", async () => {
   }
 });
 
-// ================= MEMBER JOIN (FIXED) =================
+// ================= MEMBER JOIN =================
 
 client.on("guildMemberAdd", async (member) => {
-
   console.log("👋 MEMBER JOIN:", member.user.tag);
 
   await handleWelcome(member);
@@ -213,12 +207,8 @@ client.on("guildMemberAdd", async (member) => {
     const id = cleanId(member.id);
 
     if (!girlCacheReady) {
-      console.log("⏳ Cache not ready — reloading...");
       await loadGirlCache();
     }
-
-    console.log("🔍 Checking ID:", id);
-    console.log("📦 Cache contains:", girlCache.has(id));
 
     if (girlCache.has(id)) {
       const role = member.guild.roles.cache.get(ROLE_ID);
@@ -226,23 +216,16 @@ client.on("guildMemberAdd", async (member) => {
       if (role) {
         await member.roles.add(role);
         console.log("✅ Girl role reapplied to", member.user.tag);
-      } else {
-        console.log("❌ Role not found");
       }
-    } else {
-      console.log("❌ User not in cache");
     }
-
   } catch (err) {
     console.error("❌ Girl role reassign error:", err);
   }
-
 });
 
 // ================= ROLE TRACKING =================
 
 client.on("guildMemberUpdate", async (oldMember, newMember) => {
-
   const hadRole = oldMember.roles.cache.has(ROLE_ID);
   const hasRole = newMember.roles.cache.has(ROLE_ID);
 
@@ -253,7 +236,37 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
       console.error("Error saving girl role:", err);
     }
   }
+});
 
+// ================= COMMAND HANDLER (FIXED) =================
+
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  const command = client.commands.get(interaction.commandName);
+
+  if (!command) {
+    console.log("❌ Command not found:", interaction.commandName);
+    return;
+  }
+
+  try {
+    await command.execute(interaction, client);
+  } catch (error) {
+    console.error(`❌ Error executing ${interaction.commandName}:`, error);
+
+    if (interaction.replied || interaction.deferred) {
+      await interaction.followUp({
+        content: "There was an error executing this command.",
+        ephemeral: true
+      });
+    } else {
+      await interaction.reply({
+        content: "There was an error executing this command.",
+        ephemeral: true
+      });
+    }
+  }
 });
 
 // ================= LOGIN =================
