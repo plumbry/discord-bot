@@ -9,84 +9,6 @@ const {
 const fs = require("fs");
 const path = require("path");
 
-// ===== GIRL ROLE SYSTEM START =====
-const { google } = require("googleapis");
-
-const ROLE_ID = "1371652325629755472";
-const GIRL_ROLE_SHEET = "Girl Role";
-const SHEET_ID = "1K5BcAIM-Of9buZVmBzdtGRvjJO2XP9ZAPbFIzE5j1ZM";
-
-const credentials = JSON.parse(
-  Buffer.from(
-    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
-    "base64"
-  ).toString("utf8")
-);
-
-const auth = new google.auth.GoogleAuth({
-  credentials,
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-});
-
-const sheets = google.sheets({ version: "v4", auth });
-
-let girlCache = new Set();
-let girlCacheReady = false;
-
-function cleanId(value) {
-  if (!value) return null;
-
-  return String(value)
-    .normalize("NFKC")
-    .replace(/[^\d]/g, "")
-    .trim();
-}
-
-async function loadGirlCache() {
-  try {
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `${GIRL_ROLE_SHEET}!A:A`
-    });
-
-    girlCache = new Set(
-      (res.data.values || [])
-        .map(r => cleanId(r[0]))
-        .filter(id => id && id.length >= 17)
-    );
-
-    girlCacheReady = true;
-
-    console.log("✅ Girl cache loaded:", girlCache.size);
-  } catch (err) {
-    console.error("❌ Failed to load Girl Role cache:", err);
-  }
-}
-
-async function addGirlVerified(user) {
-  const id = cleanId(user.id);
-
-  if (girlCache.has(id)) return;
-
-  try {
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SHEET_ID,
-      range: `${GIRL_ROLE_SHEET}!A:B`,
-      valueInputOption: "RAW",
-      requestBody: {
-        values: [[id, user.tag]]
-      }
-    });
-
-    girlCache.add(id);
-
-    console.log("✅ Added to sheet:", user.tag);
-  } catch (err) {
-    console.error("❌ SHEETS ERROR:", err);
-  }
-}
-// ===== GIRL ROLE SYSTEM END =====
-
 // ================= ERROR HANDLING =================
 
 process.on("unhandledRejection", error => {
@@ -122,9 +44,6 @@ const dm = require("./commands/dm");
 
 const GUILD_ID = "1371615693392576580";
 const YUNITE_LOG_CHANNEL = "1371615781393137788";
-
-const DROP_MAP_COOLDOWN = 5 * 60 * 1000;
-let lastDropmapClose = 0;
 
 // ================= CLIENT =================
 
@@ -166,8 +85,6 @@ client.once("ready", async () => {
 
   startBanExpiryChecker(client);
 
-  await loadGirlCache();
-
   const rest = new REST({ version: "10" })
     .setToken(process.env.DISCORD_TOKEN);
 
@@ -178,6 +95,7 @@ client.once("ready", async () => {
     myBanCommand
   ];
 
+  // include dynamic commands
   for (const command of client.commands.values()) {
     commands.push(command.data);
   }
@@ -191,6 +109,8 @@ client.once("ready", async () => {
     { body: commandJSON }
   );
 
+  console.log("✅ Commands registered");
+
   if (dm.startDMScheduler) {
     dm.startDMScheduler(client);
   }
@@ -199,61 +119,61 @@ client.once("ready", async () => {
 // ================= MEMBER JOIN =================
 
 client.on("guildMemberAdd", async (member) => {
-  console.log("👋 MEMBER JOIN:", member.user.tag);
-
   await handleWelcome(member);
-
-  try {
-    const id = cleanId(member.id);
-
-    if (!girlCacheReady) {
-      await loadGirlCache();
-    }
-
-    if (girlCache.has(id)) {
-      const role = member.guild.roles.cache.get(ROLE_ID);
-
-      if (role) {
-        await member.roles.add(role);
-        console.log("✅ Girl role reapplied to", member.user.tag);
-      }
-    }
-  } catch (err) {
-    console.error("❌ Girl role reassign error:", err);
-  }
 });
 
-// ================= ROLE TRACKING =================
-
-client.on("guildMemberUpdate", async (oldMember, newMember) => {
-  const hadRole = oldMember.roles.cache.has(ROLE_ID);
-  const hasRole = newMember.roles.cache.has(ROLE_ID);
-
-  if (!hadRole && hasRole) {
-    try {
-      await addGirlVerified(newMember.user);
-    } catch (err) {
-      console.error("Error saving girl role:", err);
-    }
-  }
-});
-
-// ================= COMMAND HANDLER (FIXED) =================
+// ================= INTERACTIONS =================
 
 client.on("interactionCreate", async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
 
-  const command = client.commands.get(interaction.commandName);
-
-  if (!command) {
-    console.log("❌ Command not found:", interaction.commandName);
+  // ===== BUTTON HANDLING (for verify buttons etc.) =====
+  if (interaction.isButton()) {
+    try {
+      await handleVerify(interaction, client);
+    } catch (err) {
+      console.error("❌ Button error:", err);
+    }
     return;
   }
 
+  // ===== SLASH COMMANDS =====
+  if (!interaction.isChatInputCommand()) return;
+
   try {
+    // 🔥 CRITICAL FIX — route verify manually
+    if (interaction.commandName === "verify") {
+      return handleVerify(interaction, client);
+    }
+
+    if (interaction.commandName === "eventban") {
+      return handleEventBan(interaction);
+    }
+
+    if (interaction.commandName === "recentban") {
+      return handleRecentBan(interaction);
+    }
+
+    if (interaction.commandName === "myban") {
+      await interaction.deferReply({ ephemeral: true });
+      return handleMyBan(interaction);
+    }
+
+    if (interaction.commandName === "dm" && dm.handleDM) {
+      return dm.handleDM(interaction);
+    }
+
+    // ===== COMMAND MAP =====
+    const command = client.commands.get(interaction.commandName);
+
+    if (!command) {
+      console.log("❌ Command not found:", interaction.commandName);
+      return;
+    }
+
     await command.execute(interaction, client);
+
   } catch (error) {
-    console.error(`❌ Error executing ${interaction.commandName}:`, error);
+    console.error(`❌ Interaction error:`, error);
 
     if (interaction.replied || interaction.deferred) {
       await interaction.followUp({
