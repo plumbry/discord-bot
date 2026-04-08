@@ -1,3 +1,4 @@
+```js
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 const { google } = require("googleapis");
 const fetch = require("node-fetch");
@@ -22,7 +23,6 @@ const auth = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: "v4", auth });
 
 function parseDuration(duration) {
-
   const match = duration.match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/);
 
   const h = parseInt(match?.[1] || 0);
@@ -30,26 +30,21 @@ function parseDuration(duration) {
   const s = parseInt(match?.[3] || 0);
 
   return h * 3600 + m * 60 + s;
-
 }
 
 function vodOverlaps(vod, start, end) {
-
   const vodStart = new Date(vod.created_at);
   const duration = parseDuration(vod.duration);
   const vodEnd = new Date(vodStart.getTime() + duration * 1000);
 
   return vodStart < end && vodEnd > start;
-
 }
 
 async function fetchAllMessages(channel) {
-
   let messages = [];
   let lastId;
 
   while (true) {
-
     const options = { limit: 100 };
     if (lastId) options.before = lastId;
 
@@ -58,20 +53,16 @@ async function fetchAllMessages(channel) {
 
     messages.push(...batch.values());
     lastId = batch.last().id;
-
   }
 
   return messages;
-
 }
 
 async function getAcceptedTeams(signupChannel) {
-
   const messages = await fetchAllMessages(signupChannel);
   const teams = [];
 
   for (const msg of messages) {
-
     if (msg.author.bot) continue;
 
     const reactions = msg.reactions.cache;
@@ -85,44 +76,31 @@ async function getAcceptedTeams(signupChannel) {
     const members = [...msg.mentions.users.values()].map(u => u.id);
 
     if (members.length) {
-
-      teams.push({
-        members
-      });
-
+      teams.push({ members });
     }
-
   }
 
   return teams;
-
 }
 
 async function getStreamLinks(streamChannel) {
-
   const messages = await fetchAllMessages(streamChannel);
-
   const streams = new Map();
 
   for (const msg of messages) {
-
     if (msg.author.bot) continue;
 
     const match = msg.content.match(TWITCH_REGEX);
     if (!match) continue;
 
     const twitch = match[1].toLowerCase();
-
     streams.set(msg.author.id, twitch);
-
   }
 
   return streams;
-
 }
 
 async function getAccessToken() {
-
   const res = await fetch("https://id.twitch.tv/oauth2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -134,11 +112,9 @@ async function getAccessToken() {
 
   const data = await res.json();
   return data.access_token;
-
 }
 
 async function getUserId(username, token) {
-
   const res = await fetch(
     `https://api.twitch.tv/helix/users?login=${username}`,
     {
@@ -151,11 +127,9 @@ async function getUserId(username, token) {
 
   const data = await res.json();
   return data.data?.[0]?.id;
-
 }
 
 async function getRecentVods(userId, token) {
-
   const res = await fetch(
     `https://api.twitch.tv/helix/videos?user_id=${userId}&type=archive&first=5`,
     {
@@ -168,22 +142,18 @@ async function getRecentVods(userId, token) {
 
   const data = await res.json();
   return data.data || [];
-
 }
 
 async function appendRows(rows) {
-
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
     range: `${SHEET_NAME}!A1`,
     valueInputOption: "RAW",
     requestBody: { values: rows }
   });
-
 }
 
 module.exports = {
-
   data: new SlashCommandBuilder()
     .setName("vodreport")
     .setDescription("Check Twitch VOD compliance for event")
@@ -199,35 +169,36 @@ module.exports = {
 
     const category = interaction.channel.parent;
 
-    const signupChannel = category.children.cache.find(c => {
+    if (!category) {
+      return interaction.reply({
+        content: "This command must be used inside a category.",
+        ephemeral: true
+      });
+    }
 
-      if (!c.isTextBased()) return false;
+    const channels = interaction.guild.channels.cache;
 
-      const name = c.name.toLowerCase();
+    const signupChannel = channels.find(c =>
+      c.parentId === category.id &&
+      c.isTextBased() &&
+      (
+        c.name.toLowerCase().includes("signups") ||
+        c.name.toLowerCase().includes("sign-ups") ||
+        c.name.toLowerCase().includes("teams")
+      )
+    );
 
-      return (
-        name.includes("signups") ||
-        name.includes("sign-ups") ||
-        name.includes("teams")
-      );
-
-    });
-
-    const streamChannel = category.children.cache.find(c => {
-
-      if (!c.isTextBased()) return false;
-
-      return c.name.toLowerCase().includes("twitch-stream");
-
-    });
+    const streamChannel = channels.find(c =>
+      c.parentId === category.id &&
+      c.isTextBased() &&
+      c.name.toLowerCase().includes("twitch-stream")
+    );
 
     if (!signupChannel || !streamChannel) {
-
       return interaction.reply({
         content: "Could not locate signups or twitch-stream channel.",
         ephemeral: true
       });
-
     }
 
     await interaction.reply("Scanning teams and Twitch streams...");
@@ -249,10 +220,8 @@ module.exports = {
       const streamer = team.members.find(id => streams.has(id));
 
       if (!streamer) {
-
         missing.push(`Team missing stream: ${team.members.map(m => `<@${m}>`).join(" ")}`);
         continue;
-
       }
 
       const twitch = streams.get(streamer);
@@ -266,11 +235,9 @@ module.exports = {
       const userId = await getUserId(twitch, token);
 
       if (userId) {
-
         const vods = await getRecentVods(userId, token);
 
         if (vods.length) {
-
           lastStream = vods[0].created_at;
 
           for (const vod of vods) {
@@ -289,13 +256,9 @@ module.exports = {
               valid = true;
               note = "Public VOD overlaps event";
               break;
-
             }
-
           }
-
         }
-
       }
 
       if (!valid) missing.push(twitch);
@@ -312,7 +275,6 @@ module.exports = {
         new Date().toISOString(),
         `<@${interaction.user.id}>`
       ]);
-
     }
 
     await appendRows(rows);
@@ -320,18 +282,13 @@ module.exports = {
     let summary = `VOD Report Complete\n\n`;
 
     if (missing.length) {
-
       summary += `Issues Found (${missing.length})\n`;
       summary += missing.join("\n");
-
     } else {
-
       summary += "All teams submitted valid VODs.";
-
     }
 
     await interaction.followUp(summary);
-
   }
-
 };
+```
