@@ -192,14 +192,27 @@ module.exports = {
 
       const signupChannel = channels.find(c => {
         if (c.parentId !== category.id || !c.isTextBased()) return false;
+
         const name = normalize(c.name);
-        return name.includes("signup") || name.includes("teams");
+
+        // ❌ EXCLUDE solo channels
+        if (name.includes("solo")) return false;
+
+        return (
+          name.includes("signup") ||
+          name.includes("teams")
+        );
       });
 
       const streamChannel = channels.find(c => {
         if (c.parentId !== category.id || !c.isTextBased()) return false;
+
         const name = normalize(c.name);
-        return name.includes("twitch") && (name.includes("stream") || name.includes("link"));
+
+        return (
+          name.includes("twitch") &&
+          (name.includes("stream") || name.includes("link"))
+        );
       });
 
       console.log("Signup:", signupChannel?.name);
@@ -207,7 +220,7 @@ module.exports = {
 
       if (!signupChannel || !streamChannel) {
         return interaction.reply({
-          content: "Could not locate signups or twitch channel.",
+          content: "Could not locate correct signup or twitch channel.",
           ephemeral: true
         });
       }
@@ -221,7 +234,6 @@ module.exports = {
       console.log("Streams:", streams.size);
 
       const token = await getAccessToken();
-
       if (!token) throw new Error("Failed to get Twitch token");
 
       const date = interaction.options.getString("date");
