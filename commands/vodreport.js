@@ -21,6 +21,11 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: "v4", auth });
 
+/* ---------------- UTIL ---------------- */
+
+const normalize = str =>
+  str.toLowerCase().replace(/[^a-z0-9]/g, "");
+
 function parseDuration(duration) {
   const match = duration.match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/);
 
@@ -38,6 +43,8 @@ function vodOverlaps(vod, start, end) {
 
   return vodStart < end && vodEnd > start;
 }
+
+/* ---------------- DISCORD HELPERS ---------------- */
 
 async function fetchAllMessages(channel) {
   let messages = [];
@@ -96,7 +103,8 @@ async function getStreamLinks(streamChannel) {
   return streams;
 }
 
-// ✅ FIXED: no string concat, no syntax risk
+/* ---------------- TWITCH ---------------- */
+
 async function getAccessToken() {
   const params = new URLSearchParams({
     client_id: process.env.TWITCH_CLIENT_ID,
@@ -144,6 +152,8 @@ async function getRecentVods(userId, token) {
   return data.data || [];
 }
 
+/* ---------------- GOOGLE SHEETS ---------------- */
+
 async function appendRows(rows) {
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
@@ -152,6 +162,8 @@ async function appendRows(rows) {
     requestBody: { values: rows }
   });
 }
+
+/* ---------------- COMMAND ---------------- */
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -178,21 +190,28 @@ module.exports = {
 
     const channels = interaction.guild.channels.cache;
 
-    const signupChannel = channels.find(c =>
-      c.parentId === category.id &&
-      c.isTextBased() &&
-      (
-        c.name.toLowerCase().includes("signups") ||
-        c.name.toLowerCase().includes("sign-ups") ||
-        c.name.toLowerCase().includes("teams")
-      )
-    );
+    const signupChannel = channels.find(c => {
+      if (c.parentId !== category.id || !c.isTextBased()) return false;
 
-    const streamChannel = channels.find(c =>
-      c.parentId === category.id &&
-      c.isTextBased() &&
-      c.name.toLowerCase().includes("twitch-stream")
-    );
+      const name = normalize(c.name);
+
+      return (
+        name.includes("signup") ||
+        name.includes("signups") ||
+        name.includes("teams")
+      );
+    });
+
+    const streamChannel = channels.find(c => {
+      if (c.parentId !== category.id || !c.isTextBased()) return false;
+
+      const name = normalize(c.name);
+
+      return (
+        name.includes("twitch") &&
+        (name.includes("stream") || name.includes("link"))
+      );
+    });
 
     if (!signupChannel || !streamChannel) {
       return interaction.reply({
