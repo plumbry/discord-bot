@@ -21,47 +21,48 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: "v4", auth });
 
-/* ---------------- UTIL ---------------- */
+/* ---------- UTIL ---------- */
 
 const normalize = str =>
   str.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 function parseDuration(duration) {
   const match = duration.match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/);
-
-  const h = parseInt(match?.[1] || 0);
-  const m = parseInt(match?.[2] || 0);
-  const s = parseInt(match?.[3] || 0);
-
-  return h * 3600 + m * 60 + s;
+  return (parseInt(match?.[1] || 0) * 3600) +
+         (parseInt(match?.[2] || 0) * 60) +
+         (parseInt(match?.[3] || 0));
 }
 
 function vodOverlaps(vod, start, end) {
   const vodStart = new Date(vod.created_at);
-  const duration = parseDuration(vod.duration);
-  const vodEnd = new Date(vodStart.getTime() + duration * 1000);
-
+  const vodEnd = new Date(vodStart.getTime() + parseDuration(vod.duration) * 1000);
   return vodStart < end && vodEnd > start;
 }
 
-/* ---------------- DISCORD HELPERS ---------------- */
+/* ---------- DISCORD HELPERS ---------- */
 
 async function fetchAllMessages(channel) {
-  let messages = [];
-  let lastId;
+  try {
+    let messages = [];
+    let lastId;
 
-  while (true) {
-    const options = { limit: 100 };
-    if (lastId) options.before = lastId;
+    while (true) {
+      const options = { limit: 100 };
+      if (lastId) options.before = lastId;
 
-    const batch = await channel.messages.fetch(options);
-    if (!batch.size) break;
+      const batch = await channel.messages.fetch(options);
+      if (!batch.size) break;
 
-    messages.push(...batch.values());
-    lastId = batch.last().id;
+      messages.push(...batch.values());
+      lastId = batch.last().id;
+    }
+
+    return messages;
+
+  } catch (err) {
+    console.error(`Failed fetching messages in ${channel?.name}:`, err.message);
+    return [];
   }
-
-  return messages;
 }
 
 async function getAcceptedTeams(signupChannel) {
@@ -79,9 +80,7 @@ async function getAcceptedTeams(signupChannel) {
 
     const members = [...msg.mentions.users.values()].map(u => u.id);
 
-    if (members.length) {
-      teams.push({ members });
-    }
+    if (members.length) teams.push({ members });
   }
 
   return teams;
@@ -103,7 +102,7 @@ async function getStreamLinks(streamChannel) {
   return streams;
 }
 
-/* ---------------- TWITCH ---------------- */
+/* ---------- TWITCH ---------- */
 
 async function getAccessToken() {
   const params = new URLSearchParams({
@@ -152,7 +151,7 @@ async function getRecentVods(userId, token) {
   return data.data || [];
 }
 
-/* ---------------- GOOGLE SHEETS ---------------- */
+/* ---------- SHEETS ---------- */
 
 async function appendRows(rows) {
   await sheets.spreadsheets.values.append({
@@ -163,7 +162,7 @@ async function appendRows(rows) {
   });
 }
 
-/* ---------------- COMMAND ---------------- */
+/* ---------- COMMAND ---------- */
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -178,133 +177,147 @@ module.exports = {
       o.setName("end").setDescription("HH:MM UTC").setRequired(true)),
 
   async execute(interaction) {
+    try {
 
-    const category = interaction.channel.parent;
+      const category = interaction.channel.parent;
 
-    if (!category) {
-      return interaction.reply({
-        content: "This command must be used inside a category.",
-        ephemeral: true
-      });
-    }
-
-    const channels = interaction.guild.channels.cache;
-
-    const signupChannel = channels.find(c => {
-      if (c.parentId !== category.id || !c.isTextBased()) return false;
-
-      const name = normalize(c.name);
-
-      return (
-        name.includes("signup") ||
-        name.includes("signups") ||
-        name.includes("teams")
-      );
-    });
-
-    const streamChannel = channels.find(c => {
-      if (c.parentId !== category.id || !c.isTextBased()) return false;
-
-      const name = normalize(c.name);
-
-      return (
-        name.includes("twitch") &&
-        (name.includes("stream") || name.includes("link"))
-      );
-    });
-
-    if (!signupChannel || !streamChannel) {
-      return interaction.reply({
-        content: "Could not locate signups or twitch-stream channel.",
-        ephemeral: true
-      });
-    }
-
-    await interaction.reply("Scanning teams and Twitch streams...");
-
-    const teams = await getAcceptedTeams(signupChannel);
-    const streams = await getStreamLinks(streamChannel);
-
-    const token = await getAccessToken();
-
-    const date = interaction.options.getString("date");
-    const start = new Date(`${date}T${interaction.options.getString("start")}:00Z`);
-    const end = new Date(`${date}T${interaction.options.getString("end")}:00Z`);
-
-    const rows = [];
-    const missing = [];
-
-    for (const team of teams) {
-
-      const streamer = team.members.find(id => streams.has(id));
-
-      if (!streamer) {
-        missing.push(`Team missing stream: ${team.members.map(m => `<@${m}>`).join(" ")}`);
-        continue;
+      if (!category) {
+        return interaction.reply({
+          content: "This command must be used inside a category.",
+          ephemeral: true
+        });
       }
 
-      const twitch = streams.get(streamer);
+      const channels = interaction.guild.channels.cache;
 
-      let valid = false;
-      let lastStream = "";
-      let vodStart = "";
-      let vodEnd = "";
-      let note = "No public VOD";
+      const signupChannel = channels.find(c => {
+        if (c.parentId !== category.id || !c.isTextBased()) return false;
+        const name = normalize(c.name);
+        return name.includes("signup") || name.includes("teams");
+      });
 
-      const userId = await getUserId(twitch, token);
+      const streamChannel = channels.find(c => {
+        if (c.parentId !== category.id || !c.isTextBased()) return false;
+        const name = normalize(c.name);
+        return name.includes("twitch") && (name.includes("stream") || name.includes("link"));
+      });
 
-      if (userId) {
-        const vods = await getRecentVods(userId, token);
+      console.log("Signup:", signupChannel?.name);
+      console.log("Stream:", streamChannel?.name);
 
-        if (vods.length) {
-          lastStream = vods[0].created_at;
+      if (!signupChannel || !streamChannel) {
+        return interaction.reply({
+          content: "Could not locate signups or twitch channel.",
+          ephemeral: true
+        });
+      }
 
-          for (const vod of vods) {
-            if (vod.viewable !== "public") continue;
+      await interaction.reply("Scanning teams and Twitch streams...");
 
-            if (vodOverlaps(vod, start, end)) {
-              const startDate = new Date(vod.created_at);
-              const duration = parseDuration(vod.duration);
-              const endDate = new Date(startDate.getTime() + duration * 1000);
+      const teams = await getAcceptedTeams(signupChannel);
+      const streams = await getStreamLinks(streamChannel);
 
-              vodStart = startDate.toISOString();
-              vodEnd = endDate.toISOString();
+      console.log("Teams:", teams.length);
+      console.log("Streams:", streams.size);
 
-              valid = true;
-              note = "Public VOD overlaps event";
-              break;
+      const token = await getAccessToken();
+
+      if (!token) throw new Error("Failed to get Twitch token");
+
+      const date = interaction.options.getString("date");
+      const start = new Date(`${date}T${interaction.options.getString("start")}:00Z`);
+      const end = new Date(`${date}T${interaction.options.getString("end")}:00Z`);
+
+      const rows = [];
+      const missing = [];
+
+      for (const team of teams) {
+
+        const streamer = team.members.find(id => streams.has(id));
+
+        if (!streamer) {
+          missing.push(`Team missing stream: ${team.members.map(m => `<@${m}>`).join(" ")}`);
+          continue;
+        }
+
+        const twitch = streams.get(streamer);
+
+        let valid = false;
+        let lastStream = "";
+        let vodStart = "";
+        let vodEnd = "";
+        let note = "No public VOD";
+
+        const userId = await getUserId(twitch, token);
+
+        if (userId) {
+          const vods = await getRecentVods(userId, token);
+
+          if (vods.length) {
+            lastStream = vods[0].created_at;
+
+            for (const vod of vods) {
+              if (vod.viewable !== "public") continue;
+
+              if (vodOverlaps(vod, start, end)) {
+                const startDate = new Date(vod.created_at);
+                const endDate = new Date(startDate.getTime() + parseDuration(vod.duration) * 1000);
+
+                vodStart = startDate.toISOString();
+                vodEnd = endDate.toISOString();
+
+                valid = true;
+                note = "Public VOD overlaps event";
+                break;
+              }
             }
           }
         }
+
+        if (!valid) missing.push(twitch);
+
+        rows.push([
+          category.name,
+          `<@${streamer}>`,
+          twitch,
+          lastStream,
+          vodStart,
+          vodEnd,
+          valid ? "YES" : "NO",
+          note,
+          new Date().toISOString(),
+          `<@${interaction.user.id}>`
+        ]);
       }
 
-      if (!valid) missing.push(twitch);
+      await appendRows(rows);
 
-      rows.push([
-        category.name,
-        `<@${streamer}>`,
-        twitch,
-        lastStream,
-        vodStart,
-        vodEnd,
-        valid ? "YES" : "NO",
-        note,
-        new Date().toISOString(),
-        `<@${interaction.user.id}>`
-      ]);
+      let summary = `VOD Report Complete\n\n`;
+
+      if (missing.length) {
+        summary += `Issues Found (${missing.length})\n${missing.join("\n")}`;
+      } else {
+        summary += "All teams submitted valid VODs.";
+      }
+
+      await interaction.followUp(summary);
+
+    } catch (err) {
+      console.error("VODREPORT ERROR:", err);
+
+      const msg = err?.message || "Unknown error";
+
+      if (!interaction.replied) {
+        await interaction.reply({
+          content: `Error: ${msg}`,
+          ephemeral: true
+        });
+      } else {
+        await interaction.followUp({
+          content: `Error: ${msg}`,
+          ephemeral: true
+        });
+      }
     }
-
-    await appendRows(rows);
-
-    let summary = `VOD Report Complete\n\n`;
-
-    if (missing.length) {
-      summary += `Issues Found (${missing.length})\n`;
-      summary += missing.join("\n");
-    } else {
-      summary += "All teams submitted valid VODs.";
-    }
-
-    await interaction.followUp(summary);
   }
 };
