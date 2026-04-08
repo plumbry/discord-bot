@@ -1,4 +1,3 @@
-```js
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 const { google } = require("googleapis");
 const fetch = require("node-fetch");
@@ -65,9 +64,7 @@ async function getAcceptedTeams(signupChannel) {
   for (const msg of messages) {
     if (msg.author.bot) continue;
 
-    const reactions = msg.reactions.cache;
-
-    const accepted = reactions.some(
+    const accepted = msg.reactions.cache.some(
       r => r.emoji.id === ACCEPTED_EMOJI_ID && r.count > 0
     );
 
@@ -93,21 +90,24 @@ async function getStreamLinks(streamChannel) {
     const match = msg.content.match(TWITCH_REGEX);
     if (!match) continue;
 
-    const twitch = match[1].toLowerCase();
-    streams.set(msg.author.id, twitch);
+    streams.set(msg.author.id, match[1].toLowerCase());
   }
 
   return streams;
 }
 
+// ✅ FIXED: no string concat, no syntax risk
 async function getAccessToken() {
+  const params = new URLSearchParams({
+    client_id: process.env.TWITCH_CLIENT_ID,
+    client_secret: process.env.TWITCH_CLIENT_SECRET,
+    grant_type: "client_credentials"
+  });
+
   const res = await fetch("https://id.twitch.tv/oauth2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body:
-      `client_id=${process.env.TWITCH_CLIENT_ID}` +
-      `&client_secret=${process.env.TWITCH_CLIENT_SECRET}` +
-      `&grant_type=client_credentials`
+    body: params.toString()
   });
 
   const data = await res.json();
@@ -241,11 +241,9 @@ module.exports = {
           lastStream = vods[0].created_at;
 
           for (const vod of vods) {
-
             if (vod.viewable !== "public") continue;
 
             if (vodOverlaps(vod, start, end)) {
-
               const startDate = new Date(vod.created_at);
               const duration = parseDuration(vod.duration);
               const endDate = new Date(startDate.getTime() + duration * 1000);
@@ -291,4 +289,3 @@ module.exports = {
     await interaction.followUp(summary);
   }
 };
-```
