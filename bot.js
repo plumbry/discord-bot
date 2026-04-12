@@ -189,6 +189,68 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
 
+// ================= DROPMAP AUTO CLOSE =================
+
+client.on("messageCreate", async (message) => {
+  try {
+    if (message.channel.id !== YUNITE_LOG_CHANNEL) return;
+    if (!message.author.bot) return;
+
+    const embed = message.embeds?.[0];
+    if (!embed) return;
+
+    const title = embed.title?.toLowerCase() || "";
+    if (!title.includes("custom game matchmaking result")) return;
+
+    console.log("🎯 Matchmaking result detected");
+
+    const channels = await message.guild.channels.fetch();
+
+    // STEP 1: Find category that has a "chat" channel (active event)
+    let activeCategory = null;
+
+    for (const channel of channels.values()) {
+      if (!channel.isTextBased()) continue;
+
+      const name = channel.name.toLowerCase();
+
+      if (name.includes("chat") && channel.parentId) {
+        const parent = channels.get(channel.parentId);
+        if (parent && parent.type === ChannelType.GuildCategory) {
+          activeCategory = parent;
+          break;
+        }
+      }
+    }
+
+    if (!activeCategory) {
+      console.log("❌ No active category with chat channel found");
+      return;
+    }
+
+    console.log("📁 Active category:", activeCategory.name);
+
+    // STEP 2: Find dropmap channel in that category
+    const dropmapChannel = channels.find(c =>
+      c.parentId === activeCategory.id &&
+      c.isTextBased() &&
+      c.name.toLowerCase().includes("dropmap")
+    );
+
+    if (!dropmapChannel) {
+      console.log("❌ Dropmap channel not found in:", activeCategory.name);
+      return;
+    }
+
+    console.log("📍 Posting to:", dropmapChannel.name);
+
+    await dropmapChannel.send("🚫 DROPMAP CLOSED UNTIL NEXT GAME");
+
+  } catch (err) {
+    console.error("❌ Dropmap auto-close error:", err);
+  }
+});
+
 // ================= LOGIN =================
 
 client.login(process.env.DISCORD_TOKEN)
