@@ -1,9 +1,5 @@
 app = "welcome-ping"
 primary_region = "lhr"
 
-[build]
-
-[env]
-
 [processes]
 app = "npm start"
