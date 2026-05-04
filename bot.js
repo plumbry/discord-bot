@@ -1,14 +1,30 @@
-require("dotenv").config();
+console.log("=== BOT STARTING ===");
+
 const {
   Client,
   GatewayIntentBits,
   REST,
-  Routes,
-  ChannelType
+  Routes
 } = require("discord.js");
 
 const fs = require("fs");
 const path = require("path");
+
+// ================= SAFE REQUIRE =================
+
+function safeRequire(label, paths) {
+  for (const p of paths) {
+    try {
+      const mod = require(p);
+      console.log(`✅ Loaded ${label} from ${p}`);
+      return mod;
+    } catch (err) {
+      console.log(`⚠️ Failed ${label} from ${p}`);
+    }
+  }
+  console.error(`❌ FAILED TO LOAD: ${label}`);
+  return {};
+}
 
 // ================= ERROR HANDLING =================
 
@@ -22,11 +38,31 @@ process.on("uncaughtException", error => {
 
 // ================= IMPORT COMMAND MODULES =================
 
+// Handles BOTH your current structure AND fixed structure
+const welcomeModule = safeRequire("welcome", [
+  "./welcome-ping",
+  "./welcome ping",
+]);
+
+const eventBanModule = safeRequire("event bans", [
+  "./event-bans/eventBans",
+  "./event bans/eventBans",
+]);
+
+const banExpiryModule = safeRequire("banExpiryChecker", [
+  "./banExpiryChecker"
+]);
+
+const dm = safeRequire("dm", [
+  "./commands/dm"
+]);
+
+// Destructure safely
 const {
   verifyCommand,
   handleVerify,
   handleWelcome
-} = require("./welcome ping");
+} = welcomeModule;
 
 const {
   eventBanCommand,
@@ -35,16 +71,13 @@ const {
   handleEventBan,
   handleRecentBan,
   handleMyBan
-} = require("./event bans/eventBans");
+} = eventBanModule;
 
-const { startBanExpiryChecker } = require("./banExpiryChecker");
-
-const dm = require("./commands/dm");
+const { startBanExpiryChecker } = banExpiryModule;
 
 // ================= CONSTANTS =================
 
 const GUILD_ID = "1371615693392576580";
-const YUNITE_LOG_CHANNEL = "1371615781393137788";
 
 // ================= CLIENT =================
 
@@ -63,33 +96,44 @@ client.commands = new Map();
 
 const commandsPath = path.join(__dirname, "commands");
 
-const commandFiles = fs
-  .readdirSync(commandsPath)
-  .filter(file => file.endsWith(".js"));
+if (!fs.existsSync(commandsPath)) {
+  console.error("❌ Commands folder missing");
+} else {
+  const commandFiles = fs
+    .readdirSync(commandsPath)
+    .filter(file => file.endsWith(".js"));
 
-for (const file of commandFiles) {
-  try {
-    const command = require(`./commands/${file}`);
+  for (const file of commandFiles) {
+    try {
+      const command = require(`./commands/${file}`);
 
-    if (!command?.data || !command?.execute) {
-      console.log(`❌ Skipped invalid command: ${file}`);
-      continue;
+      if (!command?.data || !command?.execute) {
+        console.log(`❌ Skipped invalid command: ${file}`);
+        continue;
+      }
+
+      console.log(`✅ Loaded command: ${command.data.name}`);
+      client.commands.set(command.data.name, command);
+
+    } catch (err) {
+      console.error(`❌ Error loading command: ${file}`, err);
     }
-
-    console.log(`✅ Loaded command: ${command.data.name}`);
-
-    client.commands.set(command.data.name, command);
-  } catch (err) {
-    console.error(`Error loading command: ${file}`, err);
   }
 }
 
 // ================= READY =================
 
 client.once("ready", async () => {
-  console.log(`Logged in as ${client.user.tag}`);
+  console.log(`🚀 Logged in as ${client.user.tag}`);
 
-  startBanExpiryChecker(client);
+  try {
+    if (startBanExpiryChecker) {
+      startBanExpiryChecker(client);
+      console.log("✅ Ban expiry checker started");
+    }
+  } catch (err) {
+    console.error("❌ Ban expiry checker failed:", err);
+  }
 
   const rest = new REST({ version: "10" })
     .setToken(process.env.DISCORD_TOKEN);
@@ -99,9 +143,9 @@ client.once("ready", async () => {
     eventBanCommand,
     recentBanCommand,
     myBanCommand
-  ];
+  ].filter(Boolean);
 
-  // include dynamic commands
+  // dynamic commands
   for (const command of client.commands.values()) {
     commands.push(command.data);
   }
@@ -110,18 +154,33 @@ client.once("ready", async () => {
     .filter(c => c && typeof c.toJSON === "function")
     .map(c => c.toJSON());
 
-  console.log("REGISTERING COMMANDS:");
+  console.log("📦 REGISTERING COMMANDS:");
   commandJSON.forEach(cmd => console.log(`- ${cmd.name}`));
 
-  await rest.put(
-    Routes.applicationGuildCommands(client.user.id, GUILD_ID),
-    { body: commandJSON }
-  );
+  try {
+    await rest.put(
+      Routes.applicationGuildCommands(client.user.id, GUILD_ID),
+      { body: commandJSON }
+    );
+    console.log("✅ Commands registered");
+  } catch (err) {
+    console.error("❌ Command registration failed:", err);
+  }
 
-  console.log("✅ Commands registered");
-
-  if (dm.startDMScheduler) {
-    dm.startDMScheduler(client);
+  // SAFE DM START
+  try {
+    if (
+      dm.startDMScheduler &&
+      process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 &&
+      process.env.SPREADSHEET_ID
+    ) {
+      dm.startDMScheduler(client);
+      console.log("✅ DM scheduler started");
+    } else {
+      console.log("⚠️ DM scheduler disabled (missing env vars)");
+    }
+  } catch (err) {
+    console.error("❌ DM scheduler failed:", err);
   }
 });
 
@@ -129,31 +188,30 @@ client.once("ready", async () => {
 
 client.on("interactionCreate", async (interaction) => {
 
-  if (interaction.isButton()) {
-    try {
-      await handleVerify(interaction, client);
-    } catch (err) {
-      console.error("❌ Button error:", err);
-    }
-    return;
-  }
-
-  if (!interaction.isChatInputCommand()) return;
-
   try {
-    if (interaction.commandName === "verify") {
+
+    if (interaction.isButton()) {
+      if (handleVerify) {
+        return handleVerify(interaction, client);
+      }
+      return;
+    }
+
+    if (!interaction.isChatInputCommand()) return;
+
+    if (interaction.commandName === "verify" && handleVerify) {
       return handleVerify(interaction, client);
     }
 
-    if (interaction.commandName === "eventban") {
+    if (interaction.commandName === "eventban" && handleEventBan) {
       return handleEventBan(interaction);
     }
 
-    if (interaction.commandName === "recentban") {
+    if (interaction.commandName === "recentban" && handleRecentBan) {
       return handleRecentBan(interaction);
     }
 
-    if (interaction.commandName === "myban") {
+    if (interaction.commandName === "myban" && handleMyBan) {
       await interaction.deferReply({ ephemeral: true });
       return handleMyBan(interaction);
     }
@@ -169,29 +227,31 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    console.log(`▶ Executing command: ${interaction.commandName}`);
-
+    console.log(`▶ Executing: ${interaction.commandName}`);
     await command.execute(interaction, client);
 
   } catch (error) {
-    console.error(`❌ Interaction error:`, error);
 
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp({
-        content: "There was an error executing this command.",
-        ephemeral: true
-      });
-    } else {
-      await interaction.reply({
-        content: "There was an error executing this command.",
-        ephemeral: true
-      });
-    }
+    console.error("❌ Interaction error:", error);
+
+    try {
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp({
+          content: "There was an error executing this command.",
+          ephemeral: true
+        });
+      } else {
+        await interaction.reply({
+          content: "There was an error executing this command.",
+          ephemeral: true
+        });
+      }
+    } catch {}
   }
 });
 
 // ================= LOGIN =================
 
 client.login(process.env.DISCORD_TOKEN)
-  .then(() => console.log("Bot login successful"))
-  .catch(err => console.error("Login error:", err));
+  .then(() => console.log("✅ Bot login successful"))
+  .catch(err => console.error("❌ Login error:", err));
