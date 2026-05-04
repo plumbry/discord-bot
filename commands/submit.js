@@ -9,7 +9,11 @@ const SHEET_NAME = 'Player_Scores';
 const GUILD_ID = '1371615693392576580';
 const YUNITE_API_KEY = 'dceb92dd-a9f4-441c-80ad-331c03e3a16b';
 
-const GOOGLE_CREDS_BASE64 = 'PASTE_YOUR_BASE64_HERE';
+const GOOGLE_CREDS_BASE64 = process.env.GOOGLE_CREDS_BASE64;
+
+if (!GOOGLE_CREDS_BASE64) {
+  throw new Error('Missing GOOGLE_CREDS_BASE64');
+}
 
 // ===== GOOGLE AUTH =====
 const auth = new google.auth.GoogleAuth({
