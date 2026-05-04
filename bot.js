@@ -71,7 +71,12 @@ for (const file of commandFiles) {
   try {
     const command = require(`./commands/${file}`);
 
-    if (!command?.data || !command?.execute) continue;
+    if (!command?.data || !command?.execute) {
+      console.log(`❌ Skipped invalid command: ${file}`);
+      continue;
+    }
+
+    console.log(`✅ Loaded command: ${command.data.name}`);
 
     client.commands.set(command.data.name, command);
   } catch (err) {
@@ -105,6 +110,9 @@ client.once("ready", async () => {
     .filter(c => c && typeof c.toJSON === "function")
     .map(c => c.toJSON());
 
+  console.log("REGISTERING COMMANDS:");
+  commandJSON.forEach(cmd => console.log(`- ${cmd.name}`));
+
   await rest.put(
     Routes.applicationGuildCommands(client.user.id, GUILD_ID),
     { body: commandJSON }
@@ -117,17 +125,10 @@ client.once("ready", async () => {
   }
 });
 
-// ================= MEMBER JOIN =================
-
-client.on("guildMemberAdd", async (member) => {
-  await handleWelcome(member);
-});
-
 // ================= INTERACTIONS =================
 
 client.on("interactionCreate", async (interaction) => {
 
-  // ===== BUTTON HANDLING (for verify buttons etc.) =====
   if (interaction.isButton()) {
     try {
       await handleVerify(interaction, client);
@@ -137,11 +138,9 @@ client.on("interactionCreate", async (interaction) => {
     return;
   }
 
-  // ===== SLASH COMMANDS =====
   if (!interaction.isChatInputCommand()) return;
 
   try {
-    // 🔥 CRITICAL FIX — route verify manually
     if (interaction.commandName === "verify") {
       return handleVerify(interaction, client);
     }
@@ -163,13 +162,14 @@ client.on("interactionCreate", async (interaction) => {
       return dm.handleDM(interaction);
     }
 
-    // ===== COMMAND MAP =====
     const command = client.commands.get(interaction.commandName);
 
     if (!command) {
       console.log("❌ Command not found:", interaction.commandName);
       return;
     }
+
+    console.log(`▶ Executing command: ${interaction.commandName}`);
 
     await command.execute(interaction, client);
 
@@ -187,68 +187,6 @@ client.on("interactionCreate", async (interaction) => {
         ephemeral: true
       });
     }
-  }
-});
-
-// ================= DROPMAP AUTO CLOSE =================
-
-client.on("messageCreate", async (message) => {
-  try {
-    if (message.channel.id !== YUNITE_LOG_CHANNEL) return;
-    if (!message.author.bot) return;
-
-    const embed = message.embeds?.[0];
-    if (!embed) return;
-
-    const title = embed.title?.toLowerCase() || "";
-    if (!title.includes("custom game matchmaking result")) return;
-
-    console.log("🎯 Matchmaking result detected");
-
-    const channels = await message.guild.channels.fetch();
-
-    // STEP 1: Find category that has a "chat" channel (active event)
-    let activeCategory = null;
-
-    for (const channel of channels.values()) {
-      if (!channel.isTextBased()) continue;
-
-      const name = channel.name.toLowerCase();
-
-      if (name.includes("chat") && channel.parentId) {
-        const parent = channels.get(channel.parentId);
-        if (parent && parent.type === ChannelType.GuildCategory) {
-          activeCategory = parent;
-          break;
-        }
-      }
-    }
-
-    if (!activeCategory) {
-      console.log("❌ No active category with chat channel found");
-      return;
-    }
-
-    console.log("📁 Active category:", activeCategory.name);
-
-    // STEP 2: Find dropmap channel in that category
-    const dropmapChannel = channels.find(c =>
-      c.parentId === activeCategory.id &&
-      c.isTextBased() &&
-      c.name.toLowerCase().includes("dropmap")
-    );
-
-    if (!dropmapChannel) {
-      console.log("❌ Dropmap channel not found in:", activeCategory.name);
-      return;
-    }
-
-    console.log("📍 Posting to:", dropmapChannel.name);
-
-    await dropmapChannel.send("🚫 DROPMAP CLOSED UNTIL NEXT GAME");
-
-  } catch (err) {
-    console.error("❌ Dropmap auto-close error:", err);
   }
 });
 
