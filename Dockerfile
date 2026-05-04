@@ -2,10 +2,14 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm install
-
+# Copy EVERYTHING first (important)
 COPY . .
 
-# 🔥 FORCE execution (no npm abstraction)
+# Install deps AFTER copy (ensures files exist)
+RUN npm install
+
+# Debug: list files in container
+RUN ls -la
+
+# Force execution
 CMD ["node", "bot.js"]
