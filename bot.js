@@ -37,10 +37,10 @@ console.log("ENV CHECK:", {
 
 // ================= SAFE IMPORTS =================
 
-let verifyCommand, handleVerify, handleWelcome;
+let verifyCommand, handleVerify;
 
 try {
-  ({ verifyCommand, handleVerify, handleWelcome } = require("./welcome-ping"));
+  ({ verifyCommand, handleVerify } = require("./welcome-ping"));
   console.log("✅ welcome module loaded");
 } catch (err) {
   console.error("❌ Failed to load welcome module:", err.message);
@@ -141,17 +141,35 @@ client.once("ready", async () => {
     commands.push(cmd.data);
   }
 
+  // ✅ DEBUG BLOCK (THIS IS THE IMPORTANT FIX)
+  const commandJSON = [];
+
+  for (const c of commands) {
+    try {
+      if (!c) continue;
+
+      if (!c.name) {
+        console.error("❌ Command missing name:", c);
+        continue;
+      }
+
+      const json = c.toJSON();
+
+      commandJSON.push(json);
+
+    } catch (err) {
+      console.error("❌ BAD COMMAND:", c?.name);
+      console.error(err);
+    }
+  }
+
   try {
     await rest.put(
       Routes.applicationGuildCommands(
         client.user.id,
         "1371615693392576580"
       ),
-      {
-        body: commands
-          .filter(c => c?.toJSON)
-          .map(c => c.toJSON())
-      }
+      { body: commandJSON }
     );
 
     console.log("✅ Slash commands registered");
@@ -204,7 +222,7 @@ client.on("interactionCreate", async (interaction) => {
 
 });
 
-// ================= HEALTH SERVER (REQUIRED FOR FLY) =================
+// ================= HEALTH SERVER =================
 
 const PORT = process.env.PORT || 8080;
 
