@@ -1,5 +1,6 @@
-```js
 console.log("=== BOT STARTING ===");
+
+// ================= CORE =================
 
 const {
   Client,
@@ -27,6 +28,13 @@ process.on("uncaughtException", error => {
 const SUBMIT_SHEET_ID = process.env.SUBMIT_SHEET_ID;
 const MAIN_SHEET_ID = process.env.MAIN_SHEET_ID;
 
+console.log("ENV CHECK:", {
+  DISCORD_TOKEN: !!process.env.DISCORD_TOKEN,
+  GOOGLE: !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
+  MAIN: !!MAIN_SHEET_ID,
+  SUBMIT: !!SUBMIT_SHEET_ID
+});
+
 // ================= IMPORT MODULES =================
 
 const {
@@ -35,18 +43,28 @@ const {
   handleWelcome
 } = require("./welcome ping");
 
+// ✅ FIXED: only import what actually exists
 const {
   eventBanCommand,
-  recentBanCommand,
-  myBanCommand,
-  handleEventBan,
-  handleRecentBan,
-  handleMyBan
+  handleEventBan
 } = require("./event bans/eventBans");
 
-const { startBanExpiryChecker } = require("./banExpiryChecker");
+// Optional modules (safe require)
+let startBanExpiryChecker;
+try {
+  ({ startBanExpiryChecker } = require("./banExpiryChecker"));
+  console.log("✅ banExpiryChecker loaded");
+} catch (err) {
+  console.error("❌ Failed to load banExpiryChecker:", err.message);
+}
 
-const dm = require("./commands/dm");
+let dm = null;
+try {
+  dm = require("./commands/dm");
+  console.log("✅ DM module loaded");
+} catch (err) {
+  console.error("⚠️ DM module not loaded:", err.message);
+}
 
 // ================= CLIENT =================
 
@@ -61,6 +79,8 @@ const client = new Client({
 });
 
 client.commands = new Map();
+
+console.log("=== CLIENT CREATED ===");
 
 // ================= LOAD COMMANDS =================
 
@@ -79,7 +99,7 @@ for (const file of commandFiles) {
     client.commands.set(command.data.name, command);
 
   } catch (err) {
-    console.error(`Error loading command: ${file}`, err);
+    console.error(`❌ Error loading command: ${file}`, err);
   }
 }
 
@@ -98,9 +118,7 @@ client.once("ready", async () => {
 
   const commands = [
     verifyCommand,
-    eventBanCommand,
-    recentBanCommand,
-    myBanCommand
+    eventBanCommand
   ];
 
   for (const command of client.commands.values()) {
@@ -111,15 +129,25 @@ client.once("ready", async () => {
     .filter(c => c?.toJSON)
     .map(c => c.toJSON());
 
-  await rest.put(
-    Routes.applicationGuildCommands(client.user.id, "1371615693392576580"),
-    { body: commandJSON }
-  );
+  try {
+    await rest.put(
+      Routes.applicationGuildCommands(client.user.id, "1371615693392576580"),
+      { body: commandJSON }
+    );
+    console.log("✅ Slash commands registered");
+  } catch (err) {
+    console.error("❌ Command registration failed:", err);
+  }
 
-  // ✅ DM scheduler uses MAIN sheet
-  if (dm.startDMScheduler && MAIN_SHEET_ID) {
-    dm.startDMScheduler(client, MAIN_SHEET_ID);
-    console.log("✅ DM scheduler started");
+  // ================= DM SCHEDULER =================
+
+  if (dm?.startDMScheduler && MAIN_SHEET_ID) {
+    try {
+      dm.startDMScheduler(client, MAIN_SHEET_ID);
+      console.log("✅ DM scheduler started");
+    } catch (err) {
+      console.error("❌ DM scheduler error:", err);
+    }
   } else {
     console.log("⚠️ DM scheduler disabled");
   }
@@ -132,28 +160,26 @@ client.on("interactionCreate", async (interaction) => {
 
   if (!interaction.isChatInputCommand()) return;
 
-  if (interaction.commandName === "verify")
-    return handleVerify(interaction);
+  try {
 
-  if (interaction.commandName === "eventban")
-    return handleEventBan(interaction);
+    if (interaction.commandName === "verify")
+      return handleVerify(interaction);
 
-  if (interaction.commandName === "recentban")
-    return handleRecentBan(interaction);
+    if (interaction.commandName === "eventban")
+      return handleEventBan(interaction);
 
-  if (interaction.commandName === "myban") {
-    await interaction.deferReply({ ephemeral: true });
-    return handleMyBan(interaction);
+    const command = client.commands.get(interaction.commandName);
+
+    if (!command) return;
+
+    await command.execute(interaction, {
+      SUBMIT_SHEET_ID,
+      MAIN_SHEET_ID
+    });
+
+  } catch (err) {
+    console.error("❌ Interaction error:", err);
   }
-
-  const command = client.commands.get(interaction.commandName);
-
-  if (!command) return;
-
-  await command.execute(interaction, {
-    SUBMIT_SHEET_ID,
-    MAIN_SHEET_ID
-  });
 
 });
 
@@ -173,4 +199,3 @@ http.createServer((req, res) => {
 client.login(process.env.DISCORD_TOKEN)
   .then(() => console.log("✅ Bot login successful"))
   .catch(err => console.error("❌ Login error:", err));
-```
