@@ -1,15 +1,15 @@
-FROM node:20-slim
+# Use Node 20 (safe with your engines)
+FROM node:20-alpine
 
+# Create app directory
 WORKDIR /app
 
-# Copy package files first (important for cache)
-COPY package.json package-lock.json ./
+# Install dependencies first (better caching)
+COPY package*.json ./
+RUN npm install --omit=dev
 
-# Install production dependencies
-RUN npm ci --omit=dev
-
-# Copy the rest of the app
+# Copy rest of the bot
 COPY . .
 
 # Start the bot
-CMD ["node", "bot.js"]
+CMD ["npm", "start"]
