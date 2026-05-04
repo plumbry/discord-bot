@@ -1,8 +1,8 @@
-```js
 const {
   SlashCommandBuilder,
   PermissionFlagsBits
 } = require("discord.js");
+
 const { google } = require("googleapis");
 
 // ================= CONSTANTS =================
@@ -12,7 +12,7 @@ const AUDIT_RANGE = "Audit Log!A:G";
 
 const ROLE_DELAY_MS = 900;
 
-// ================= GOOGLE SHEETS =================
+// ================= GOOGLE =================
 const credentials = JSON.parse(
   Buffer.from(
     process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
@@ -28,10 +28,10 @@ const auth = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: "v4", auth });
 
 // ================= HELPERS =================
-const delay = ms => new Promise(r => setTimeout(r, ms));
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 const isoNow = () => new Date().toISOString();
 
-async function logAudit({ action, moderator, context }) {
+async function logAudit(data) {
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
     range: AUDIT_RANGE,
@@ -39,12 +39,12 @@ async function logAudit({ action, moderator, context }) {
     requestBody: {
       values: [[
         isoNow(),
-        action,
-        moderator.id,
-        moderator.tag,
+        data.action,
+        data.moderator.id,
+        data.moderator.tag,
         "",
         "",
-        context
+        data.context
       ]]
     }
   });
@@ -66,7 +66,7 @@ module.exports = {
 
     if (!process.env.MAIN_SHEET_ID) {
       return interaction.reply({
-        content: "❌ MAIN_SHEET_ID is not configured.",
+        content: "MAIN_SHEET_ID is not configured.",
         ephemeral: true
       });
     }
@@ -76,7 +76,7 @@ module.exports = {
 
     if (role.managed) {
       return interaction.reply({
-        content: "❌ This role is managed by an integration and cannot be removed.",
+        content: "This role is managed and cannot be removed.",
         ephemeral: true
       });
     }
@@ -85,18 +85,18 @@ module.exports = {
 
     if (role.position >= botMember.roles.highest.position) {
       return interaction.reply({
-        content: "❌ I cannot remove this role because it is equal to or higher than my highest role.",
+        content: "I cannot remove this role due to role hierarchy.",
         ephemeral: true
       });
     }
 
     await guild.members.fetch();
 
-    const members = [...role.members.values()].filter(m => !m.user.bot);
+    const members = Array.from(role.members.values()).filter(m => !m.user.bot);
 
     if (members.length === 0) {
       return interaction.reply({
-        content: "ℹ️ No members currently have this role.",
+        content: "No members currently have this role.",
         ephemeral: true
       });
     }
@@ -104,7 +104,7 @@ module.exports = {
     await interaction.deferReply({ ephemeral: true });
 
     await interaction.editReply(
-      `⏳ Removing ${role} from **${members.length}** members…`
+      "Removing role from " + members.length + " members..."
     );
 
     let removed = 0;
@@ -113,41 +113,53 @@ module.exports = {
     for (const member of members) {
       try {
         if (!member.roles.cache.has(role.id)) continue;
+
         await member.roles.remove(role);
         removed++;
+
       } catch {
         failed++;
       }
+
       await delay(ROLE_DELAY_MS);
     }
 
     const result =
-      `✅ **Role clear complete**\n` +
-      `Role: ${role}\n` +
-      `Removed from: **${removed}** members\n` +
-      `Failed/skipped: **${failed}**`;
+      "Role clear complete\n" +
+      "Role: " + role.name + "\n" +
+      "Removed from: " + removed + "\n" +
+      "Failed/skipped: " + failed;
 
     await interaction.editReply(result);
 
+    // ================= LOG CHANNEL =================
+
     try {
       const logChannel = await guild.channels.fetch(LOG_CHANNEL_ID);
+
       await logChannel.send(
-        `🏷️ **Role Cleared**\n` +
-        `Moderator: ${interaction.user.tag}\n` +
-        `Role: ${role}\n` +
-        `Removed from: **${removed}** members`
+        "Role Cleared\n" +
+        "Moderator: " + interaction.user.tag + "\n" +
+        "Role: " + role.name + "\n" +
+        "Removed from: " + removed
       );
+
     } catch {}
+
+    // ================= SHEET AUDIT =================
 
     try {
       await logAudit({
         action: "ROLE_CLEAR",
         moderator: interaction.user,
-        context: `role=${role.id} removed=${removed} failed=${failed}`
+        context:
+          "role=" + role.id +
+          " removed=" + removed +
+          " failed=" + failed
       });
+
     } catch (err) {
       console.error("[ROLECLEAR AUDIT ERROR]", err);
     }
   }
 };
-```

@@ -1,8 +1,8 @@
-```js id="x9r5we"
 const {
   SlashCommandBuilder,
   PermissionFlagsBits
 } = require("discord.js");
+
 const { google } = require("googleapis");
 
 // ================= CONSTANTS =================
@@ -13,7 +13,7 @@ const AUDIT_RANGE = "Audit Log!A:G";
 const MESSAGE_SCAN_LIMIT = 100;
 const ROLE_DELAY_MS = 750;
 
-// ================= GOOGLE SHEETS =================
+// ================= GOOGLE =================
 const credentials = JSON.parse(
   Buffer.from(
     process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
@@ -29,10 +29,10 @@ const auth = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: "v4", auth });
 
 // ================= HELPERS =================
-const delay = ms => new Promise(r => setTimeout(r, ms));
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 const isoNow = () => new Date().toISOString();
 
-async function logAudit({ action, moderator, context }) {
+async function logAudit(data) {
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
     range: AUDIT_RANGE,
@@ -40,12 +40,12 @@ async function logAudit({ action, moderator, context }) {
     requestBody: {
       values: [[
         isoNow(),
-        action,
-        moderator.id,
-        moderator.tag,
+        data.action,
+        data.moderator.id,
+        data.moderator.tag,
         "",
         "",
-        context
+        data.context
       ]]
     }
   });
@@ -55,7 +55,7 @@ async function logAudit({ action, moderator, context }) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("roletagged")
-    .setDescription("Give a role to all users mentioned in this channel")
+    .setDescription("Give a role to all users mentioned in recent messages")
     .addRoleOption(o =>
       o.setName("role")
         .setDescription("Role to give to tagged users")
@@ -67,7 +67,7 @@ module.exports = {
 
     if (!process.env.MAIN_SHEET_ID) {
       return interaction.reply({
-        content: "❌ MAIN_SHEET_ID is not configured.",
+        content: "MAIN_SHEET_ID is not configured.",
         ephemeral: true
       });
     }
@@ -76,7 +76,7 @@ module.exports = {
     const channel = interaction.channel;
     const guild = interaction.guild;
 
-    await interaction.reply("🔍 Scanning tagged users…");
+    await interaction.reply("Scanning tagged users...");
 
     const messages = await channel.messages.fetch({ limit: MESSAGE_SCAN_LIMIT });
 
@@ -89,7 +89,7 @@ module.exports = {
     }
 
     if (taggedUserIds.size === 0) {
-      return interaction.editReply("❌ No tagged users found in recent messages.");
+      return interaction.editReply("No tagged users found in recent messages.");
     }
 
     await guild.members.fetch();
@@ -115,33 +115,40 @@ module.exports = {
     }
 
     const resultMessage =
-      `✅ **Role assignment complete**\n` +
-      `Role: ${role}\n` +
-      `Added to: **${added}** members\n` +
-      `Already had role: **${skipped}**`;
+      "Role assignment complete\n" +
+      "Role: " + role.name + "\n" +
+      "Added to: " + added + " members\n" +
+      "Already had role: " + skipped;
 
     await interaction.editReply(resultMessage);
 
+    // ================= LOG CHANNEL =================
     try {
       const logChannel = await guild.channels.fetch(LOG_CHANNEL_ID);
+
       await logChannel.send(
-        `🏷️ **Role Assigned via /roletagged**\n` +
-        `Moderator: ${interaction.user.tag}\n` +
-        `Channel: ${channel}\n` +
-        `Role: ${role}\n` +
-        `Added to: **${added}** members`
+        "Role Assigned via /roletagged\n" +
+        "Moderator: " + interaction.user.tag + "\n" +
+        "Channel: " + channel.id + "\n" +
+        "Role: " + role.name + "\n" +
+        "Added to: " + added
       );
+
     } catch {}
 
+    // ================= SHEET AUDIT =================
     try {
       await logAudit({
         action: "ROLE_TAGGED_ASSIGN",
         moderator: interaction.user,
-        context: `role=${role.id} channel=${channel.id} added=${added}`
+        context:
+          "role=" + role.id +
+          " channel=" + channel.id +
+          " added=" + added
       });
+
     } catch (err) {
       console.error("[ROLETAGGED AUDIT ERROR]", err);
     }
   }
 };
-```
