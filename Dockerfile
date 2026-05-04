@@ -1,15 +1,11 @@
-# Use Node 20 (safe with your engines)
 FROM node:20-alpine
 
-# Create app directory
 WORKDIR /app
 
-# Install dependencies first (better caching)
 COPY package*.json ./
-RUN npm install --omit=dev
+RUN npm install
 
-# Copy rest of the bot
 COPY . .
 
-# Start the bot
-CMD ["npm", "start"]
+# 🔥 FORCE execution (no npm abstraction)
+CMD ["node", "bot.js"]
