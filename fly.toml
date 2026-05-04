@@ -2,4 +2,4 @@ app = "welcome-ping"
 primary_region = "lhr"
 
 [processes]
-app = "npm start"
+app = "node bot.js"
