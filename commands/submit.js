@@ -13,11 +13,21 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName('submit')
     .setDescription('Submit Yunite leaderboard')
+
+    // ✅ FIXED
     .addStringOption(opt =>
-      opt.setName('tournamentid').setRequired(true)
+      opt
+        .setName('tournamentid')
+        .setDescription('Yunite tournament ID') // <-- REQUIRED
+        .setRequired(true)
     )
+
+    // ✅ FIXED
     .addIntegerOption(opt =>
-      opt.setName('session').setRequired(true)
+      opt
+        .setName('session')
+        .setDescription('Session number (1–12)') // <-- REQUIRED
+        .setRequired(true)
     ),
 
   async execute(interaction) {
@@ -26,7 +36,6 @@ module.exports = {
     await interaction.deferReply();
 
     try {
-      // ===== ENV (SAFE LOAD) =====
       const SPREADSHEET_ID = process.env.SUBMIT_SHEET_ID;
       const YUNITE_API_KEY = process.env.YUNITE_API_KEY;
       const GOOGLE_CREDS_BASE64 = process.env.GOOGLE_CREDS_BASE64;
@@ -35,7 +44,6 @@ module.exports = {
         return interaction.editReply('❌ Missing environment variables');
       }
 
-      // ===== GOOGLE AUTH (SAFE) =====
       const creds = JSON.parse(
         Buffer.from(GOOGLE_CREDS_BASE64, 'base64').toString()
       );
@@ -47,13 +55,11 @@ module.exports = {
 
       const sheets = google.sheets({ version: 'v4', auth });
 
-      // ===== INPUT =====
       const tournamentId = interaction.options.getString('tournamentid');
       const session = interaction.options.getInteger('session');
 
       console.log({ tournamentId, session });
 
-      // ===== FETCH YUNITE =====
       const url = `https://yunite.xyz/api/v3/guild/${GUILD_ID}/tournaments/${tournamentId}/leaderboard`;
 
       const response = await axios.get(url, {
@@ -69,7 +75,6 @@ module.exports = {
         return interaction.editReply('❌ No players found');
       }
 
-      // ===== READ SHEET =====
       const sheetRes = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
         range: `${SHEET_NAME}!A2:AZ`,
@@ -84,7 +89,6 @@ module.exports = {
 
       const startCol = getSessionStartColumn(session);
 
-      // ===== PROCESS =====
       for (const p of players) {
         const epicId = p.epicId || p.id;
         const username = p.name || 'Unknown';
@@ -117,7 +121,6 @@ module.exports = {
         row[startCol + 3] = games[3];
       }
 
-      // ===== WRITE =====
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
         range: `${SHEET_NAME}!A2`,
