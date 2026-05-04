@@ -14,19 +14,17 @@ module.exports = {
     .setName('submit')
     .setDescription('Submit Yunite leaderboard')
 
-    // ✅ FIXED
     .addStringOption(opt =>
       opt
         .setName('tournamentid')
-        .setDescription('Yunite tournament ID') // <-- REQUIRED
+        .setDescription('Yunite tournament ID')
         .setRequired(true)
     )
 
-    // ✅ FIXED
     .addIntegerOption(opt =>
       opt
         .setName('session')
-        .setDescription('Session number (1–12)') // <-- REQUIRED
+        .setDescription('Session number (1–12)')
         .setRequired(true)
     ),
 
@@ -38,14 +36,24 @@ module.exports = {
     try {
       const SPREADSHEET_ID = process.env.SUBMIT_SHEET_ID;
       const YUNITE_API_KEY = process.env.YUNITE_API_KEY;
-      const GOOGLE_CREDS_BASE64 = process.env.GOOGLE_CREDS_BASE64;
 
+      // ✅ FIXED ENV NAME
+      const GOOGLE_CREDS_BASE64 =
+        process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64;
+
+      // ✅ BETTER DEBUG
       if (!SPREADSHEET_ID || !YUNITE_API_KEY || !GOOGLE_CREDS_BASE64) {
+        console.error("ENV DEBUG:", {
+          SPREADSHEET_ID: !!SPREADSHEET_ID,
+          YUNITE_API_KEY: !!YUNITE_API_KEY,
+          GOOGLE_CREDS_BASE64: !!GOOGLE_CREDS_BASE64
+        });
+
         return interaction.editReply('❌ Missing environment variables');
       }
 
       const creds = JSON.parse(
-        Buffer.from(GOOGLE_CREDS_BASE64, 'base64').toString()
+        Buffer.from(GOOGLE_CREDS_BASE64, 'base64').toString('utf8')
       );
 
       const auth = new google.auth.GoogleAuth({
