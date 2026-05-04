@@ -1,3 +1,4 @@
+```js
 const {
   SlashCommandBuilder,
   PermissionFlagsBits
@@ -6,7 +7,7 @@ const { google } = require("googleapis");
 
 // ================= CONSTANTS =================
 const LOG_CHANNEL_ID = "1471082166535454780";
-const SHEET_ID = "1K5BcAIM-Of9buZVmBzdtGRvjJO2XP9ZAPbFIzE5j1ZM";
+const SHEET_ID = process.env.MAIN_SHEET_ID;
 const AUDIT_RANGE = "Audit Log!A:G";
 
 const ROLE_DELAY_MS = 900;
@@ -62,10 +63,17 @@ module.exports = {
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
   async execute(interaction) {
+
+    if (!process.env.MAIN_SHEET_ID) {
+      return interaction.reply({
+        content: "❌ MAIN_SHEET_ID is not configured.",
+        ephemeral: true
+      });
+    }
+
     const role = interaction.options.getRole("role");
     const guild = interaction.guild;
 
-    // ===== SAFETY CHECKS =====
     if (role.managed) {
       return interaction.reply({
         content: "❌ This role is managed by an integration and cannot be removed.",
@@ -82,7 +90,6 @@ module.exports = {
       });
     }
 
-    // ✅ FETCH ALL MEMBERS (prevents stale role.members)
     await guild.members.fetch();
 
     const members = [...role.members.values()].filter(m => !m.user.bot);
@@ -94,7 +101,6 @@ module.exports = {
       });
     }
 
-    // ✅ DEFER TO PREVENT TIMEOUT
     await interaction.deferReply({ ephemeral: true });
 
     await interaction.editReply(
@@ -123,7 +129,6 @@ module.exports = {
 
     await interaction.editReply(result);
 
-    // Log channel
     try {
       const logChannel = await guild.channels.fetch(LOG_CHANNEL_ID);
       await logChannel.send(
@@ -134,7 +139,6 @@ module.exports = {
       );
     } catch {}
 
-    // Audit log
     try {
       await logAudit({
         action: "ROLE_CLEAR",
@@ -146,3 +150,4 @@ module.exports = {
     }
   }
 };
+```

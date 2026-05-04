@@ -27,7 +27,7 @@ module.exports = {
 
     try {
       // ===== ENV (SAFE LOAD) =====
-      const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
+      const SPREADSHEET_ID = process.env.SUBMIT_SHEET_ID;
       const YUNITE_API_KEY = process.env.YUNITE_API_KEY;
       const GOOGLE_CREDS_BASE64 = process.env.GOOGLE_CREDS_BASE64;
 

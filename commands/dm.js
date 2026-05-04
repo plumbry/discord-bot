@@ -1,3 +1,4 @@
+```js
 const {
   SlashCommandBuilder,
   ActionRowBuilder,
@@ -18,33 +19,13 @@ const USER_DM_DELAY_MS = 750;
 
 let schedulerRunning = false;
 
-/*
-Sheet columns (A → O)
-
-0  jobId
-1  targetType
-2  targetId
-3  message
-4  send_at
-5  status
-6  moderatorId
-7  created_at
-8  sent_at
-9  failed_users
-10 error
-11 cancelled_by
-12 cancelled_at
-13 preview_message_id
-14 guild_id
-*/
-
 /* ===================== ENV ===================== */
 
 if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64)
   throw new Error("Missing GOOGLE_SERVICE_ACCOUNT_JSON_BASE64");
 
-if (!process.env.SPREADSHEET_ID)
-  throw new Error("Missing SPREADSHEET_ID");
+if (!process.env.MAIN_SHEET_ID)
+  throw new Error("Missing MAIN_SHEET_ID");
 
 /* ===================== GOOGLE AUTH ===================== */
 
@@ -83,7 +64,7 @@ function parseUTCDateTime(date, time) {
 async function updateRow(rowNumber, row) {
 
   await sheets.spreadsheets.values.update({
-    spreadsheetId: process.env.SPREADSHEET_ID,
+    spreadsheetId: process.env.MAIN_SHEET_ID,
     range: `${SHEET_NAME}!A${rowNumber}:Z${rowNumber}`,
     valueInputOption: "RAW",
     requestBody: { values: [row] }
@@ -152,13 +133,9 @@ async function handleDM(interaction) {
   let sendAt = "";
 
   try {
-
     sendAt = parseUTCDateTime(date, time);
-
   } catch {
-
     return interaction.editReply("❌ Invalid date/time (UTC).");
-
   }
 
   const jobId = crypto.randomUUID();
@@ -185,7 +162,6 @@ async function handleDM(interaction) {
     );
 
   const buttons = new ActionRowBuilder().addComponents(
-
     new ButtonBuilder()
       .setCustomId(`dm_confirm:${jobId}`)
       .setLabel("Confirm")
@@ -195,7 +171,6 @@ async function handleDM(interaction) {
       .setCustomId(`dm_cancel:${jobId}`)
       .setLabel("Cancel")
       .setStyle(ButtonStyle.Danger)
-
   );
 
   const channel = await interaction.client.channels.fetch(MOD_CHANNEL_ID);
@@ -206,13 +181,10 @@ async function handleDM(interaction) {
   });
 
   await sheets.spreadsheets.values.append({
-
-    spreadsheetId: process.env.SPREADSHEET_ID,
+    spreadsheetId: process.env.MAIN_SHEET_ID,
     range: `${SHEET_NAME}!A:Z`,
     valueInputOption: "RAW",
-
     requestBody: {
-
       values: [[
         jobId,
         isUser ? "user" : "role",
@@ -230,13 +202,10 @@ async function handleDM(interaction) {
         previewMessage.id,
         interaction.guildId
       ]]
-
     }
-
   });
 
   await interaction.editReply("✅ Preview posted.");
-
 }
 
 /* ===================== BUTTON HANDLER ===================== */
@@ -248,7 +217,7 @@ async function handleDMButton(interaction) {
   await interaction.deferUpdate();
 
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: process.env.SPREADSHEET_ID,
+    spreadsheetId: process.env.MAIN_SHEET_ID,
     range: `${SHEET_NAME}!A2:Z`
   });
 
@@ -272,24 +241,18 @@ async function handleDMButton(interaction) {
     await interaction.message.edit({ components: [] });
 
     return;
-
   }
 
   if (action === "dm_confirm") {
 
     if (!row[4]) {
-
       row[4] = nowISO();
       row[5] = "scheduled";
-
       await updateRow(rowNumber, row);
-
     }
 
     await interaction.message.edit({ components: [] });
-
   }
-
 }
 
 /* ===================== SCHEDULER ===================== */
@@ -305,7 +268,7 @@ function startDMScheduler(client) {
     try {
 
       const res = await sheets.spreadsheets.values.get({
-        spreadsheetId: process.env.SPREADSHEET_ID,
+        spreadsheetId: process.env.MAIN_SHEET_ID,
         range: `${SHEET_NAME}!A2:Z`
       });
 
@@ -353,20 +316,14 @@ function startDMScheduler(client) {
             for (const member of members.values()) {
 
               try {
-
                 await member.send(row[3]);
                 sent++;
-
               } catch {
-
                 failed.push(member.id);
-
               }
 
               await delay(ROLE_DM_DELAY_MS);
-
             }
-
           }
 
           row[5] =
@@ -380,35 +337,28 @@ function startDMScheduler(client) {
 
           row[5] = "failed";
           row[10] = err.message;
-
         }
 
         row[9] = failed.join(",");
 
         await updateRow(rowNumber, row);
-
       }
 
     } finally {
-
       schedulerRunning = false;
-
     }
 
   }, 30000);
-
 }
 
 /* ===================== EXPORTS ===================== */
 
 module.exports = {
-
   data: dmCommand,
   execute: handleDM,
-
   dmCommand,
   handleDM,
   handleDMButton,
   startDMScheduler
-
 };
+```

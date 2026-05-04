@@ -3,7 +3,7 @@ const { google } = require("googleapis");
 
 // ================= CONFIG =================
 
-const SHEET_ID = "1K5BcAIM-Of9buZVmBzdtGRvjJO2XP9ZAPbFIzE5j1ZM";
+const SHEET_ID = process.env.MAIN_SHEET_ID;
 const EVENT_SHEET = "Event Bans";
 const BAN_CHANNEL_ID = "1472795189515915466";
 
@@ -36,6 +36,10 @@ async function execute(interaction) {
 
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64) {
     return interaction.editReply("❌ Google credentials are not configured.");
+  }
+
+  if (!process.env.MAIN_SHEET_ID) {
+    return interaction.editReply("❌ MAIN_SHEET_ID is not configured.");
   }
 
   let credentials;
@@ -116,7 +120,6 @@ async function execute(interaction) {
 
       edited++;
 
-      // avoid rate limits
       await new Promise(resolve => setTimeout(resolve, 300));
 
     } catch {

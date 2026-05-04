@@ -1,3 +1,4 @@
+```js id="x9r5we"
 const {
   SlashCommandBuilder,
   PermissionFlagsBits
@@ -6,7 +7,7 @@ const { google } = require("googleapis");
 
 // ================= CONSTANTS =================
 const LOG_CHANNEL_ID = "1471082166535454780";
-const SHEET_ID = "1K5BcAIM-Of9buZVmBzdtGRvjJO2XP9ZAPbFIzE5j1ZM";
+const SHEET_ID = process.env.MAIN_SHEET_ID;
 const AUDIT_RANGE = "Audit Log!A:G";
 
 const MESSAGE_SCAN_LIMIT = 100;
@@ -42,8 +43,8 @@ async function logAudit({ action, moderator, context }) {
         action,
         moderator.id,
         moderator.tag,
-        "",               // Target User ID (bulk action)
-        "",               // Target User Tag
+        "",
+        "",
         context
       ]]
     }
@@ -63,13 +64,20 @@ module.exports = {
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
   async execute(interaction) {
+
+    if (!process.env.MAIN_SHEET_ID) {
+      return interaction.reply({
+        content: "❌ MAIN_SHEET_ID is not configured.",
+        ephemeral: true
+      });
+    }
+
     const role = interaction.options.getRole("role");
     const channel = interaction.channel;
     const guild = interaction.guild;
 
     await interaction.reply("🔍 Scanning tagged users…");
 
-    // Fetch recent messages
     const messages = await channel.messages.fetch({ limit: MESSAGE_SCAN_LIMIT });
 
     const taggedUserIds = new Set();
@@ -84,7 +92,6 @@ module.exports = {
       return interaction.editReply("❌ No tagged users found in recent messages.");
     }
 
-    // Ensure full member cache
     await guild.members.fetch();
 
     let added = 0;
@@ -102,24 +109,19 @@ module.exports = {
       try {
         await member.roles.add(role);
         added++;
-      } catch {
-        // ignore individual failures
-      }
+      } catch {}
 
       await delay(ROLE_DELAY_MS);
     }
 
-    // ================= FEEDBACK =================
     const resultMessage =
       `✅ **Role assignment complete**\n` +
       `Role: ${role}\n` +
       `Added to: **${added}** members\n` +
       `Already had role: **${skipped}**`;
 
-    // Reply in invoking channel
     await interaction.editReply(resultMessage);
 
-    // Post in log channel
     try {
       const logChannel = await guild.channels.fetch(LOG_CHANNEL_ID);
       await logChannel.send(
@@ -129,11 +131,8 @@ module.exports = {
         `Role: ${role}\n` +
         `Added to: **${added}** members`
       );
-    } catch {
-      // logging channel failure should not block
-    }
+    } catch {}
 
-    // ================= AUDIT LOG =================
     try {
       await logAudit({
         action: "ROLE_TAGGED_ASSIGN",
@@ -145,3 +144,4 @@ module.exports = {
     }
   }
 };
+```

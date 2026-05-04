@@ -21,7 +21,7 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: "v4", auth });
 
-const SPREADSHEET_ID = "1K5BcAIM-Of9buZVmBzdtGRvjJO2XP9ZAPbFIzE5j1ZM";
+const SPREADSHEET_ID = process.env.MAIN_SHEET_ID;
 const WELCOME_DM_RANGE = "Welcome DMs!A:E";
 
 // ================= AUTO DM MESSAGE (VERBATIM) =================
@@ -50,7 +50,7 @@ const verifyCommand = new SlashCommandBuilder()
       .setRequired(true)
   );
 
-// ================= VERIFY MESSAGE (UNCHANGED) =================
+// ================= VERIFY MESSAGE =================
 const VERIFY_MESSAGE = memberMention =>
 `Hi ${memberMention}, we need to woman verify you if possible please! We have 2 ways we can do this:
 
@@ -92,7 +92,6 @@ async function handleWelcome(member) {
       await member.roles.add(role);
     }
 
-    // ---------- AUTO DM + LOG ----------
     try {
       await member.send(WELCOME_DM);
       await logWelcomeDM(member, "SENT");
@@ -104,7 +103,6 @@ async function handleWelcome(member) {
       );
     }
 
-    // ---------- EXISTING PUBLIC WELCOME ----------
     welcomeQueue.push(member.id);
 
     if (!welcomeTimeout) {

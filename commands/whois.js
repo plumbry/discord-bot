@@ -7,7 +7,7 @@ const {
 const { google } = require('googleapis');
 
 // ================= CONSTANT =================
-const EVENT_BANS_SHEET_ID = '1K5BcAIM-Of9buZVmBzdtGRvjJO2XP9ZAPbFIzE5j1ZM';
+const EVENT_BANS_SHEET_ID = process.env.MAIN_SHEET_ID;
 
 /**
  * Google Sheets auth helper
@@ -43,6 +43,13 @@ module.exports = {
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
   async execute(interaction) {
+
+    if (!process.env.MAIN_SHEET_ID) {
+      return interaction.editReply({
+        content: '❌ MAIN_SHEET_ID is not configured.'
+      });
+    }
+
     await interaction.deferReply({ ephemeral: true });
 
     const targetUser = interaction.options.getUser('user');
@@ -56,13 +63,11 @@ module.exports = {
       });
     }
 
-    // Roles (excluding @everyone)
     const roles = member.roles.cache
       .filter(r => r.id !== guild.id)
       .map(r => r.name)
       .join(', ') || 'None';
 
-    // Event ban lookup
     let eventBanStatus = 'None';
 
     try {

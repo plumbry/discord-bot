@@ -2,7 +2,7 @@ const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 const { google } = require("googleapis");
 const { getAccessToken, getLiveStreams } = require("../twitchBatch");
 
-const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
+const SPREADSHEET_ID = process.env.MAIN_SHEET_ID;
 const SHEET_NAME = "'Live Check'";
 
 const credentials = JSON.parse(

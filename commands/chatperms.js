@@ -7,7 +7,7 @@ const { google } = require('googleapis');
 
 // ================= CONSTANTS =================
 const LOG_CHANNEL_ID = '1471082166535454780';
-const AUDIT_SHEET_ID = '1K5BcAIM-Of9buZVmBzdtGRvjJO2XP9ZAPbFIzE5j1ZM';
+const AUDIT_SHEET_ID = process.env.MAIN_SHEET_ID;
 const AUDIT_RANGE = 'Audit Log!A:G';
 
 // ================= GOOGLE SHEETS =================
@@ -58,6 +58,14 @@ module.exports = {
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
   async execute(interaction) {
+
+    if (!process.env.MAIN_SHEET_ID) {
+      return interaction.reply({
+        content: '❌ MAIN_SHEET_ID is not configured.',
+        ephemeral: true
+      });
+    }
+
     const subcommand = interaction.options.getSubcommand();
     const targetUser = interaction.options.getUser('user');
     const channel = interaction.channel;
@@ -72,7 +80,6 @@ module.exports = {
       });
     }
 
-    // ❌ Block mods/admins
     if (
       member.permissions.has(PermissionFlagsBits.ManageRoles) ||
       member.permissions.has(PermissionFlagsBits.Administrator)
@@ -86,7 +93,6 @@ module.exports = {
     let action;
     let message;
 
-    // ================= TOGGLE =================
     if (subcommand === 'toggle') {
       const overwrite = channel.permissionOverwrites.cache.get(member.id);
       const currentlyDenied = overwrite?.deny?.has(PermissionFlagsBits.SendMessages);
@@ -103,7 +109,6 @@ module.exports = {
         : `🔓 Chat enabled for ${member} in ${channel}`;
     }
 
-    // ================= UNDO =================
     if (subcommand === 'undo') {
       const overwrite = channel.permissionOverwrites.cache.get(member.id);
 
@@ -120,14 +125,12 @@ module.exports = {
       message = `↩️ Channel permission overwrite removed for ${member} in ${channel}`;
     }
 
-    // ================= POST SUCCESS MESSAGE =================
     const logChannel = await guild.channels.fetch(LOG_CHANNEL_ID).catch(() => null);
 
     if (logChannel) {
       await logChannel.send({ content: message });
     }
 
-    // ================= AUDIT LOG =================
     try {
       const sheets = getSheetsClient();
 
@@ -151,7 +154,6 @@ module.exports = {
       console.error('[CHATPERMS AUDIT LOG ERROR]', err);
     }
 
-    // ================= ACK =================
     await interaction.reply({
       content: '✅ Action completed.',
       ephemeral: true

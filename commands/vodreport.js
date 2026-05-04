@@ -2,7 +2,7 @@ const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 const { google } = require("googleapis");
 const fetch = require("node-fetch");
 
-const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
+const SPREADSHEET_ID = process.env.MAIN_SHEET_ID;
 const SHEET_NAME = "'VOD Report'";
 const ACCEPTED_EMOJI_ID = "1405510864496361482";
 const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)/i;
@@ -195,7 +195,6 @@ module.exports = {
 
         const name = normalize(c.name);
 
-        // ❌ EXCLUDE solo channels
         if (name.includes("solo")) return false;
 
         return (
@@ -229,9 +228,6 @@ module.exports = {
 
       const teams = await getAcceptedTeams(signupChannel);
       const streams = await getStreamLinks(streamChannel);
-
-      console.log("Teams:", teams.length);
-      console.log("Streams:", streams.size);
 
       const token = await getAccessToken();
       if (!token) throw new Error("Failed to get Twitch token");
