@@ -1,5 +1,10 @@
 app = "welcome-ping"
 primary_region = "lhr"
 
-[processes]
-app = "node bot.js"
+[env]
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  auto_start_machines = true
+  auto_stop_machines = false
