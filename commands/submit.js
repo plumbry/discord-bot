@@ -12,7 +12,7 @@ function getSessionStartColumn(session) {
 }
 
 const MIN_COLUMNS = 52;
-const MIN_ROWS = 200; // 🔥 IMPORTANT: prevents "write to bottom"
+const MIN_ROWS = 200;
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -53,7 +53,6 @@ module.exports = {
 
       const tournamentId = interaction.options.getString('tournamentid');
       const session = interaction.options.getInteger('session');
-
       const startCol = getSessionStartColumn(session);
 
       console.log({ tournamentId, session, startCol });
@@ -80,17 +79,19 @@ module.exports = {
 
       let rows = sheetRes.data.values || [];
 
-      console.log("Rows returned from Google:", rows.length);
-
-      // 🔥 CRITICAL FIX: FORCE ROW COUNT
+      // 🔥 ensure stable row count
       while (rows.length < MIN_ROWS) {
         rows.push([]);
       }
 
+      // ================= BUILD PLAYER MAP =================
       const playerMap = new Map();
 
       rows.forEach((row, i) => {
-        if (row[1]) playerMap.set(row[1], i); // epicId in column B
+        const epicId = row[1];
+        if (epicId && !playerMap.has(epicId)) {
+          playerMap.set(epicId, i);
+        }
       });
 
       // ================= LOAD PENALTIES =================
@@ -104,6 +105,9 @@ module.exports = {
       );
 
       const newPenaltyRows = [];
+
+      // 🔒 prevents duplicate players in same run
+      const seenThisRun = new Set();
 
       let totalPlayers = 0;
 
@@ -119,17 +123,20 @@ module.exports = {
 
         for (const user of team.users || []) {
 
+          const epicId = user.epicId;
+          if (!epicId || seenThisRun.has(epicId)) continue;
+
+          seenThisRun.add(epicId);
           totalPlayers++;
 
-          const epicId = user.epicId;
           const username = user.name || 'Unknown';
 
-          let rowIndex;
+          let rowIndex = playerMap.get(epicId);
 
-          if (playerMap.has(epicId)) {
-            rowIndex = playerMap.get(epicId);
-          } else {
-            // 🔥 FIRST EMPTY ROW, NOT rows.length
+          // ✅ assign row ONLY if new player
+          if (rowIndex === undefined) {
+
+            // find first empty row safely
             rowIndex = rows.findIndex(r => !r[1]);
 
             if (rowIndex === -1) {
@@ -142,9 +149,11 @@ module.exports = {
 
           const row = rows[rowIndex];
 
+          // identity
           row[0] = username;
           row[1] = epicId;
 
+          // session-specific write ONLY
           row[startCol]     = games[0];
           row[startCol + 1] = games[1];
           row[startCol + 2] = games[2];
