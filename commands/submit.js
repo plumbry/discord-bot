@@ -4,6 +4,7 @@ const { google } = require('googleapis');
 
 const GUILD_ID = '1371615693392576580';
 const SHEET_NAME = 'Player_Scores';
+const PENALTIES_SHEET = 'Penalties';
 
 // C = index 2
 function getSessionStartColumn(session) {
@@ -78,9 +79,10 @@ module.exports = {
         return interaction.editReply('❌ No teams found');
       }
 
-      // ================= BUILD FRESH DATA =================
+      // ================= BUILD PLAYER DATA =================
       const rows = [];
       const playerMap = new Map();
+      const penaltyRows = [];
 
       const startCol = getSessionStartColumn(session);
 
@@ -95,7 +97,7 @@ module.exports = {
 
         while (games.length < 4) games.push(0);
 
-        const penaltyCount = (team.corrections || []).length;
+        const corrections = team.corrections || [];
 
         for (const user of team.users || []) {
 
@@ -116,22 +118,36 @@ module.exports = {
 
           const row = rows[rowIndex];
 
-          // Columns
-          row[0] = username; // A
-          row[1] = epicId;   // B
+          // Player sheet
+          row[0] = username;
+          row[1] = epicId;
 
-          // Scores
           row[startCol]     = games[0];
           row[startCol + 1] = games[1];
           row[startCol + 2] = games[2];
           row[startCol + 3] = games[3];
 
-          // Penalties
-          row[PENALTY_COL] = penaltyCount;
+          // Penalty COUNT still stored in AY
+          row[PENALTY_COL] = corrections.length;
+
+          // ================= PENALTY LOGGING =================
+          for (const c of corrections) {
+            penaltyRows.push([
+              c.timestamp || new Date().toISOString(),
+              tournamentId,
+              session,
+              epicId,
+              username,
+              team.teamId,
+              c.amount || 0,
+              c.reason || "",
+              c.id || ""
+            ]);
+          }
         }
       }
 
-      // ================= FORCE CLEAN MATRIX =================
+      // ================= CLEAN MATRIX =================
       const MAX_COLS = Math.max(startCol + 4, PENALTY_COL + 1);
 
       const cleanRows = rows.map(r => {
@@ -142,21 +158,28 @@ module.exports = {
         return newRow;
       });
 
-      console.log("SAMPLE CLEAN ROW:", cleanRows[0]);
-      console.log("FINAL ROW COUNT:", cleanRows.length);
-
-      // ================= WRITE =================
-      const res = await sheets.spreadsheets.values.update({
+      // ================= WRITE PLAYER SCORES =================
+      await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
         range: `${SHEET_NAME}!A3`,
         valueInputOption: 'RAW',
         requestBody: { values: cleanRows },
       });
 
-      console.log("WRITE RESPONSE:", res.data);
+      // ================= WRITE PENALTIES =================
+      if (penaltyRows.length > 0) {
+        await sheets.spreadsheets.values.append({
+          spreadsheetId: SPREADSHEET_ID,
+          range: `${PENALTIES_SHEET}!A:I`,
+          valueInputOption: 'RAW',
+          requestBody: { values: penaltyRows },
+        });
+
+        console.log("Penalties logged:", penaltyRows.length);
+      }
 
       await interaction.editReply(
-        `✅ Submitted ${totalPlayers} players`
+        `✅ Submitted ${totalPlayers} players\n⚠️ Logged ${penaltyRows.length} penalties`
       );
 
     } catch (err) {
