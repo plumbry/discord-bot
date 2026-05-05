@@ -13,14 +13,12 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName('submit')
     .setDescription('Submit Yunite leaderboard')
-
     .addStringOption(opt =>
       opt
         .setName('tournamentid')
         .setDescription('Yunite tournament ID')
         .setRequired(true)
     )
-
     .addIntegerOption(opt =>
       opt
         .setName('session')
@@ -29,11 +27,12 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    console.log('COMMAND STARTED');
+    console.log('=== SUBMIT COMMAND STARTED ===');
 
     await interaction.deferReply();
 
     try {
+      // ================= ENV =================
       const SPREADSHEET_ID = process.env.SUBMIT_SHEET_ID;
       const YUNITE_API_KEY = process.env.YUNITE_API_KEY;
       const GOOGLE_CREDS_BASE64 =
@@ -49,6 +48,7 @@ module.exports = {
         return interaction.editReply('❌ Missing environment variables');
       }
 
+      // ================= GOOGLE AUTH =================
       const creds = JSON.parse(
         Buffer.from(GOOGLE_CREDS_BASE64, 'base64').toString('utf8')
       );
@@ -60,24 +60,30 @@ module.exports = {
 
       const sheets = google.sheets({ version: 'v4', auth });
 
+      // ================= INPUT =================
       const tournamentId = interaction.options.getString('tournamentid');
       const session = interaction.options.getInteger('session');
 
       console.log({ tournamentId, session });
 
+      // ================= FETCH API =================
       const url = `https://yunite.xyz/api/v3/guild/${GUILD_ID}/tournaments/${tournamentId}/leaderboard`;
 
       const response = await axios.get(url, {
-        headers: { 'Y-API-Key': YUNITE_API_KEY },
+        headers: { 'Y-Api-Token': YUNITE_API_KEY }, // ✅ correct header
       });
 
-      // ✅ FIX: API RETURNS TEAMS, NOT PLAYERS
-      const teams = Array.isArray(response.data) ? response.data : [];
+      const teams = Array.isArray(response.data)
+        ? response.data
+        : response.data?.data || [];
+
+      console.log("Teams fetched:", teams.length);
 
       if (!teams.length) {
         return interaction.editReply('❌ No teams found');
       }
 
+      // ================= READ SHEET =================
       const sheetRes = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
         range: `${SHEET_NAME}!A2:AZ`,
@@ -94,12 +100,14 @@ module.exports = {
 
       let totalPlayers = 0;
 
-      // ✅ CORE FIX: TEAM → USERS → GAME LIST
+      // ================= PROCESS =================
       for (const team of teams) {
 
-        const games = (team.gameList || []).map(g => g.score || 0);
+        // ✅ Only counted games
+        const games = (team.gameList || [])
+          .filter(g => g.counts)
+          .map(g => g.score || 0);
 
-        // ensure 4 columns
         while (games.length < 4) games.push(0);
 
         for (const user of team.users || []) {
@@ -124,7 +132,7 @@ module.exports = {
           row[0] = epicId;
           row[1] = username;
 
-          // ✅ TEAM SCORES APPLIED TO EACH PLAYER
+          // ✅ Apply team scores to each player
           row[startCol]     = games[0];
           row[startCol + 1] = games[1];
           row[startCol + 2] = games[2];
@@ -132,6 +140,23 @@ module.exports = {
         }
       }
 
+      // ================= FIX SPARSE ROWS =================
+      const MAX_COLS = startCol + 4;
+
+      for (let i = 0; i < rows.length; i++) {
+        if (!rows[i]) rows[i] = [];
+
+        for (let j = 0; j < MAX_COLS; j++) {
+          if (rows[i][j] === undefined) {
+            rows[i][j] = "";
+          }
+        }
+      }
+
+      console.log("ROW COUNT:", rows.length);
+      console.log("FIRST ROW:", rows[0]);
+
+      // ================= WRITE =================
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
         range: `${SHEET_NAME}!A2`,
@@ -144,7 +169,7 @@ module.exports = {
       );
 
     } catch (err) {
-      console.error(err);
+      console.error("SUBMIT ERROR:", err);
 
       try {
         await interaction.editReply(`❌ ${err.message}`);
