@@ -36,12 +36,9 @@ module.exports = {
     try {
       const SPREADSHEET_ID = process.env.SUBMIT_SHEET_ID;
       const YUNITE_API_KEY = process.env.YUNITE_API_KEY;
-
-      // ✅ FIXED ENV NAME
       const GOOGLE_CREDS_BASE64 =
         process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64;
 
-      // ✅ BETTER DEBUG
       if (!SPREADSHEET_ID || !YUNITE_API_KEY || !GOOGLE_CREDS_BASE64) {
         console.error("ENV DEBUG:", {
           SPREADSHEET_ID: !!SPREADSHEET_ID,
@@ -74,13 +71,11 @@ module.exports = {
         headers: { 'Y-API-Key': YUNITE_API_KEY },
       });
 
-      const players =
-        response.data?.players ||
-        response.data?.data ||
-        [];
+      // ✅ FIX: API RETURNS TEAMS, NOT PLAYERS
+      const teams = Array.isArray(response.data) ? response.data : [];
 
-      if (!players.length) {
-        return interaction.editReply('❌ No players found');
+      if (!teams.length) {
+        return interaction.editReply('❌ No teams found');
       }
 
       const sheetRes = await sheets.spreadsheets.values.get({
@@ -97,36 +92,44 @@ module.exports = {
 
       const startCol = getSessionStartColumn(session);
 
-      for (const p of players) {
-        const epicId = p.epicId || p.id;
-        const username = p.name || 'Unknown';
+      let totalPlayers = 0;
 
-        const games = [
-          p.matches?.[0]?.points || 0,
-          p.matches?.[1]?.points || 0,
-          p.matches?.[2]?.points || 0,
-          p.matches?.[3]?.points || 0,
-        ];
+      // ✅ CORE FIX: TEAM → USERS → GAME LIST
+      for (const team of teams) {
 
-        let rowIndex;
+        const games = (team.gameList || []).map(g => g.score || 0);
 
-        if (playerMap.has(epicId)) {
-          rowIndex = playerMap.get(epicId);
-        } else {
-          rowIndex = rows.length;
-          rows.push([]);
-          playerMap.set(epicId, rowIndex);
+        // ensure 4 columns
+        while (games.length < 4) games.push(0);
+
+        for (const user of team.users || []) {
+
+          totalPlayers++;
+
+          const epicId = user.epicId;
+          const username = user.name || 'Unknown';
+
+          let rowIndex;
+
+          if (playerMap.has(epicId)) {
+            rowIndex = playerMap.get(epicId);
+          } else {
+            rowIndex = rows.length;
+            rows.push([]);
+            playerMap.set(epicId, rowIndex);
+          }
+
+          const row = rows[rowIndex];
+
+          row[0] = epicId;
+          row[1] = username;
+
+          // ✅ TEAM SCORES APPLIED TO EACH PLAYER
+          row[startCol]     = games[0];
+          row[startCol + 1] = games[1];
+          row[startCol + 2] = games[2];
+          row[startCol + 3] = games[3];
         }
-
-        const row = rows[rowIndex];
-
-        row[0] = epicId;
-        row[1] = username;
-
-        row[startCol] = games[0];
-        row[startCol + 1] = games[1];
-        row[startCol + 2] = games[2];
-        row[startCol + 3] = games[3];
       }
 
       await sheets.spreadsheets.values.update({
@@ -137,7 +140,7 @@ module.exports = {
       });
 
       await interaction.editReply(
-        `✅ Submitted ${players.length} players`
+        `✅ Submitted ${totalPlayers} players`
       );
 
     } catch (err) {
