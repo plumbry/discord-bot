@@ -29,6 +29,8 @@ module.exports = {
     ),
 
   async execute(interaction) {
+    console.log("=== SUBMIT COMMAND STARTED ===");
+
     await interaction.deferReply();
 
     try {
@@ -38,6 +40,7 @@ module.exports = {
         process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64;
 
       if (!SPREADSHEET_ID || !YUNITE_API_KEY || !GOOGLE_CREDS_BASE64) {
+        console.error("❌ ENV MISSING");
         return interaction.editReply('❌ Missing environment variables');
       }
 
@@ -55,6 +58,8 @@ module.exports = {
       const tournamentId = interaction.options.getString('tournamentid');
       const session = interaction.options.getInteger('session');
 
+      console.log({ tournamentId, session });
+
       // ================= FETCH =================
       const response = await axios.get(
         `https://yunite.xyz/api/v3/guild/${GUILD_ID}/tournaments/${tournamentId}/leaderboard`,
@@ -67,11 +72,13 @@ module.exports = {
         ? response.data
         : response.data?.data || [];
 
+      console.log("Teams fetched:", teams.length);
+
       if (!teams.length) {
         return interaction.editReply('❌ No teams found');
       }
 
-      // ================= READ SHEET (START AT ROW 3) =================
+      // ================= READ SHEET =================
       const sheetRes = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
         range: `${SHEET_NAME}!A3:AZ`,
@@ -79,10 +86,12 @@ module.exports = {
 
       const rows = sheetRes.data.values || [];
 
+      console.log("ROW COUNT:", rows.length);
+
       const playerMap = new Map();
 
       rows.forEach((row, i) => {
-        const epicId = row[1]; // B column
+        const epicId = row[1];
         if (epicId) playerMap.set(epicId, i);
       });
 
@@ -93,7 +102,6 @@ module.exports = {
       // ================= PROCESS =================
       for (const team of teams) {
 
-        // games (only counted)
         const games = (team.gameList || [])
           .filter(g => g.counts)
           .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
@@ -101,7 +109,6 @@ module.exports = {
 
         while (games.length < 4) games.push(0);
 
-        // penalties
         const penaltyCount = (team.corrections || []).length;
 
         for (const user of team.users || []) {
@@ -123,48 +130,48 @@ module.exports = {
 
           const row = rows[rowIndex];
 
-          // ✅ CORRECT COLUMN ORDER
-          row[0] = username; // A
-          row[1] = epicId;   // B
+          row[0] = username;
+          row[1] = epicId;
 
-          // scores
           row[startCol]     = games[0];
           row[startCol + 1] = games[1];
           row[startCol + 2] = games[2];
           row[startCol + 3] = games[3];
 
-          // penalties (AY)
           row[PENALTY_COL] = penaltyCount;
         }
       }
 
-      // ================= FIX SPARSE ROWS =================
+      // ================= FORCE CLEAN MATRIX =================
       const MAX_COLS = Math.max(startCol + 4, PENALTY_COL + 1);
 
-      for (let i = 0; i < rows.length; i++) {
-        if (!rows[i]) rows[i] = [];
-
-        for (let j = 0; j < MAX_COLS; j++) {
-          if (rows[i][j] === undefined) {
-            rows[i][j] = "";
-          }
+      const cleanRows = rows.map(r => {
+        const newRow = [];
+        for (let i = 0; i < MAX_COLS; i++) {
+          newRow[i] = r?.[i] ?? "";
         }
-      }
+        return newRow;
+      });
 
-      // ================= WRITE BACK TO ROW 3 =================
-      await sheets.spreadsheets.values.update({
+      console.log("SAMPLE CLEAN ROW:", cleanRows[0]);
+      console.log("FINAL ROW COUNT:", cleanRows.length);
+
+      // ================= WRITE =================
+      const res = await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
         range: `${SHEET_NAME}!A3`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: rows },
+        valueInputOption: 'RAW',
+        requestBody: { values: cleanRows },
       });
+
+      console.log("WRITE RESPONSE:", res.data);
 
       await interaction.editReply(
         `✅ Submitted ${totalPlayers} players`
       );
 
     } catch (err) {
-      console.error(err);
+      console.error("❌ SUBMIT ERROR:", err);
 
       try {
         await interaction.editReply(`❌ ${err.message}`);
