@@ -11,9 +11,6 @@ function getSessionStartColumn(session) {
   return 2 + (session - 1) * 4;
 }
 
-// AY column index (0-based)
-const PENALTY_COL = 50;
-
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('submit')
@@ -45,6 +42,7 @@ module.exports = {
         return interaction.editReply('❌ Missing environment variables');
       }
 
+      // ================= GOOGLE AUTH =================
       const creds = JSON.parse(
         Buffer.from(GOOGLE_CREDS_BASE64, 'base64').toString('utf8')
       );
@@ -56,6 +54,7 @@ module.exports = {
 
       const sheets = google.sheets({ version: 'v4', auth });
 
+      // ================= INPUT =================
       const tournamentId = interaction.options.getString('tournamentid');
       const session = interaction.options.getInteger('session');
 
@@ -79,7 +78,7 @@ module.exports = {
         return interaction.editReply('❌ No teams found');
       }
 
-      // ================= BUILD PLAYER DATA =================
+      // ================= BUILD DATA =================
       const rows = [];
       const playerMap = new Map();
       const penaltyRows = [];
@@ -90,6 +89,7 @@ module.exports = {
 
       for (const team of teams) {
 
+        // Get counted games only
         const games = (team.gameList || [])
           .filter(g => g.counts)
           .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
@@ -118,15 +118,14 @@ module.exports = {
 
           const row = rows[rowIndex];
 
-          // Player sheet
-          row[0] = username;
-          row[1] = epicId;
+          // ================= PLAYER DATA =================
+          row[0] = username; // Column A
+          row[1] = epicId;   // Column B
 
           row[startCol]     = games[0];
           row[startCol + 1] = games[1];
           row[startCol + 2] = games[2];
           row[startCol + 3] = games[3];
-
 
           // ================= PENALTY LOGGING =================
           for (const c of corrections) {
@@ -146,7 +145,7 @@ module.exports = {
       }
 
       // ================= CLEAN MATRIX =================
-      const MAX_COLS = Math.max(startCol + 4, PENALTY_COL + 1);
+      const MAX_COLS = startCol + 4;
 
       const cleanRows = rows.map(r => {
         const newRow = [];
@@ -155,6 +154,8 @@ module.exports = {
         }
         return newRow;
       });
+
+      console.log("FINAL ROW COUNT:", cleanRows.length);
 
       // ================= WRITE PLAYER SCORES =================
       await sheets.spreadsheets.values.update({
