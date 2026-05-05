@@ -78,28 +78,14 @@ module.exports = {
         return interaction.editReply('❌ No teams found');
       }
 
-      // ================= READ SHEET =================
-      const sheetRes = await sheets.spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_NAME}!A3:AZ`,
-      });
-
-      const rows = sheetRes.data.values || [];
-
-      console.log("ROW COUNT:", rows.length);
-
+      // ================= BUILD FRESH DATA =================
+      const rows = [];
       const playerMap = new Map();
-
-      rows.forEach((row, i) => {
-        const epicId = row[1];
-        if (epicId) playerMap.set(epicId, i);
-      });
 
       const startCol = getSessionStartColumn(session);
 
       let totalPlayers = 0;
 
-      // ================= PROCESS =================
       for (const team of teams) {
 
         const games = (team.gameList || [])
@@ -130,14 +116,17 @@ module.exports = {
 
           const row = rows[rowIndex];
 
-          row[0] = username;
-          row[1] = epicId;
+          // Columns
+          row[0] = username; // A
+          row[1] = epicId;   // B
 
+          // Scores
           row[startCol]     = games[0];
           row[startCol + 1] = games[1];
           row[startCol + 2] = games[2];
           row[startCol + 3] = games[3];
 
+          // Penalties
           row[PENALTY_COL] = penaltyCount;
         }
       }
