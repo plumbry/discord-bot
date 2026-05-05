@@ -6,7 +6,6 @@ const GUILD_ID = '1371615693392576580';
 const SHEET_NAME = 'Player_Scores';
 const PENALTIES_SHEET = 'Penalties';
 
-// C = index 2
 function getSessionStartColumn(session) {
   return 2 + (session - 1) * 4;
 }
@@ -27,8 +26,6 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    console.log("=== SUBMIT COMMAND STARTED ===");
-
     await interaction.deferReply();
 
     try {
@@ -37,12 +34,6 @@ module.exports = {
       const GOOGLE_CREDS_BASE64 =
         process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64;
 
-      if (!SPREADSHEET_ID || !YUNITE_API_KEY || !GOOGLE_CREDS_BASE64) {
-        console.error("❌ ENV MISSING");
-        return interaction.editReply('❌ Missing environment variables');
-      }
-
-      // ================= GOOGLE AUTH =================
       const creds = JSON.parse(
         Buffer.from(GOOGLE_CREDS_BASE64, 'base64').toString('utf8')
       );
@@ -54,50 +45,62 @@ module.exports = {
 
       const sheets = google.sheets({ version: 'v4', auth });
 
-      // ================= INPUT =================
       const tournamentId = interaction.options.getString('tournamentid');
       const session = interaction.options.getInteger('session');
 
-      console.log({ tournamentId, session });
+      const startCol = getSessionStartColumn(session);
 
-      // ================= FETCH =================
+      // ================= FETCH API =================
       const response = await axios.get(
         `https://yunite.xyz/api/v3/guild/${GUILD_ID}/tournaments/${tournamentId}/leaderboard`,
-        {
-          headers: { 'Y-Api-Token': YUNITE_API_KEY },
-        }
+        { headers: { 'Y-Api-Token': YUNITE_API_KEY } }
       );
 
       const teams = Array.isArray(response.data)
         ? response.data
         : response.data?.data || [];
 
-      console.log("Teams fetched:", teams.length);
-
       if (!teams.length) {
         return interaction.editReply('❌ No teams found');
       }
 
-      // ================= BUILD DATA =================
-      const rows = [];
-      const playerMap = new Map();
-      const penaltyRows = [];
+      // ================= LOAD EXISTING DATA =================
+      const sheetRes = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${SHEET_NAME}!A3:AZ`,
+      });
 
-      const startCol = getSessionStartColumn(session);
+      const rows = sheetRes.data.values || [];
+
+      const playerMap = new Map();
+
+      rows.forEach((row, i) => {
+        if (row[1]) playerMap.set(row[1], i); // EpicID = column B
+      });
+
+      // ================= LOAD EXISTING PENALTIES =================
+      const penaltyRes = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${PENALTIES_SHEET}!I:I`,
+      });
+
+      const existingPenaltyIds = new Set(
+        (penaltyRes.data.values || []).flat()
+      );
+
+      const newPenaltyRows = [];
 
       let totalPlayers = 0;
 
+      // ================= PROCESS =================
       for (const team of teams) {
 
-        // Get counted games only
         const games = (team.gameList || [])
           .filter(g => g.counts)
           .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
           .map(g => g.score || 0);
 
         while (games.length < 4) games.push(0);
-
-        const corrections = team.corrections || [];
 
         for (const user of team.users || []) {
 
@@ -118,46 +121,49 @@ module.exports = {
 
           const row = rows[rowIndex];
 
-          // ================= PLAYER DATA =================
-          row[0] = username; // Column A
-          row[1] = epicId;   // Column B
+          row[0] = username;
+          row[1] = epicId;
 
+          // ✅ ONLY WRITE CURRENT SESSION
           row[startCol]     = games[0];
           row[startCol + 1] = games[1];
           row[startCol + 2] = games[2];
           row[startCol + 3] = games[3];
+        }
 
-          // ================= PENALTY LOGGING =================
-          for (const c of corrections) {
-            penaltyRows.push([
+        // ================= PENALTIES =================
+        for (const c of team.corrections || []) {
+
+          if (!c.id || existingPenaltyIds.has(c.id)) continue;
+
+          for (const user of team.users || []) {
+            newPenaltyRows.push([
               c.timestamp || new Date().toISOString(),
               tournamentId,
               session,
-              epicId,
-              username,
+              user.epicId,
+              user.name || 'Unknown',
               team.teamId,
               c.amount || 0,
               c.reason || "",
-              c.id || ""
+              c.id
             ]);
           }
         }
       }
 
-      // ================= CLEAN MATRIX =================
-      const MAX_COLS = startCol + 4;
+      // ================= NORMALISE ROW LENGTH =================
+      const maxCols = startCol + 4;
 
       const cleanRows = rows.map(r => {
         const newRow = [];
-        for (let i = 0; i < MAX_COLS; i++) {
+        for (let i = 0; i < maxCols; i++) {
           newRow[i] = r?.[i] ?? "";
         }
         return newRow;
       });
 
-      console.log("FINAL ROW COUNT:", cleanRows.length);
-
-      // ================= WRITE PLAYER SCORES =================
+      // ================= WRITE SCORES =================
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
         range: `${SHEET_NAME}!A3`,
@@ -165,28 +171,23 @@ module.exports = {
         requestBody: { values: cleanRows },
       });
 
-      // ================= WRITE PENALTIES =================
-      if (penaltyRows.length > 0) {
+      // ================= WRITE NEW PENALTIES =================
+      if (newPenaltyRows.length > 0) {
         await sheets.spreadsheets.values.append({
           spreadsheetId: SPREADSHEET_ID,
           range: `${PENALTIES_SHEET}!A:I`,
           valueInputOption: 'RAW',
-          requestBody: { values: penaltyRows },
+          requestBody: { values: newPenaltyRows },
         });
-
-        console.log("Penalties logged:", penaltyRows.length);
       }
 
       await interaction.editReply(
-        `✅ Submitted ${totalPlayers} players\n⚠️ Logged ${penaltyRows.length} penalties`
+        `✅ Session ${session} submitted\n👥 ${totalPlayers} players\n⚠️ ${newPenaltyRows.length} new penalties logged`
       );
 
     } catch (err) {
-      console.error("❌ SUBMIT ERROR:", err);
-
-      try {
-        await interaction.editReply(`❌ ${err.message}`);
-      } catch {}
+      console.error(err);
+      await interaction.editReply(`❌ ${err.message}`);
     }
   },
 };
