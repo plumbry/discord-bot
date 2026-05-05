@@ -127,8 +127,6 @@ module.exports = {
           row[startCol + 2] = games[2];
           row[startCol + 3] = games[3];
 
-          // Penalty COUNT still stored in AY
-          row[PENALTY_COL] = corrections.length;
 
           // ================= PENALTY LOGGING =================
           for (const c of corrections) {
