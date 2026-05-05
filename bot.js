@@ -105,6 +105,9 @@ for (const file of commandFiles) {
 
     if (command?.data && command?.execute) {
       client.commands.set(command.data.name, command);
+      console.log("✅ Loaded command:", command.data.name);
+    } else {
+      console.log("⚠️ Skipped invalid command file:", file);
     }
 
   } catch (err) {
@@ -114,11 +117,10 @@ for (const file of commandFiles) {
 
 // ================= READY =================
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
 
   console.log(`🚀 Logged in as ${client.user.tag}`);
 
-  // Start background checker
   if (startBanExpiryChecker) {
     try {
       startBanExpiryChecker(client);
@@ -126,8 +128,6 @@ client.once("ready", async () => {
       console.error("❌ Ban checker failed:", err);
     }
   }
-
-  // ================= REGISTER COMMANDS =================
 
   const rest = new REST({ version: "10" })
     .setToken(process.env.DISCORD_TOKEN);
@@ -141,21 +141,19 @@ client.once("ready", async () => {
     commands.push(cmd.data);
   }
 
-  // ✅ DEBUG BLOCK (THIS IS THE IMPORTANT FIX)
   const commandJSON = [];
 
   for (const c of commands) {
     try {
-      if (!c) continue;
-
-      if (!c.name) {
-        console.error("❌ Command missing name:", c);
+      if (!c || !c.name) {
+        console.error("❌ Invalid command:", c);
         continue;
       }
 
       const json = c.toJSON();
-
       commandJSON.push(json);
+
+      console.log("📦 Registering command:", c.name);
 
     } catch (err) {
       console.error("❌ BAD COMMAND:", c?.name);
@@ -178,7 +176,7 @@ client.once("ready", async () => {
     console.error("❌ Command registration failed:", err);
   }
 
-  // ================= DM SCHEDULER =================
+  // ================= DM =================
 
   if (dm?.startDMScheduler && MAIN_SHEET_ID) {
     try {
@@ -197,6 +195,8 @@ client.once("ready", async () => {
 
 client.on("interactionCreate", async (interaction) => {
 
+  console.log("🔥 Interaction received:", interaction.commandName);
+
   if (!interaction.isChatInputCommand()) return;
 
   try {
@@ -209,7 +209,15 @@ client.on("interactionCreate", async (interaction) => {
 
     const command = client.commands.get(interaction.commandName);
 
-    if (!command) return;
+    if (!command) {
+      console.log("❌ Command not found in Map:", interaction.commandName);
+      return interaction.reply({
+        content: "❌ Command not loaded.",
+        ephemeral: true
+      });
+    }
+
+    console.log("⚡ Executing command:", interaction.commandName);
 
     await command.execute(interaction, {
       SUBMIT_SHEET_ID,
