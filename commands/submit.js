@@ -6,9 +6,13 @@ const GUILD_ID = '1371615693392576580';
 const SHEET_NAME = 'Player_Scores';
 const PENALTIES_SHEET = 'Penalties';
 
+// C = index 2
 function getSessionStartColumn(session) {
   return 2 + (session - 1) * 4;
 }
+
+const MIN_COLUMNS = 52;
+const MIN_ROWS = 200; // 🔥 IMPORTANT: prevents "write to bottom"
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -26,6 +30,8 @@ module.exports = {
     ),
 
   async execute(interaction) {
+    console.log("=== SUBMIT START ===");
+
     await interaction.deferReply();
 
     try {
@@ -50,7 +56,9 @@ module.exports = {
 
       const startCol = getSessionStartColumn(session);
 
-      // ================= FETCH API =================
+      console.log({ tournamentId, session, startCol });
+
+      // ================= FETCH =================
       const response = await axios.get(
         `https://yunite.xyz/api/v3/guild/${GUILD_ID}/tournaments/${tournamentId}/leaderboard`,
         { headers: { 'Y-Api-Token': YUNITE_API_KEY } }
@@ -64,21 +72,28 @@ module.exports = {
         return interaction.editReply('❌ No teams found');
       }
 
-      // ================= LOAD EXISTING DATA =================
+      // ================= LOAD SHEET =================
       const sheetRes = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
         range: `${SHEET_NAME}!A3:AZ`,
       });
 
-      const rows = sheetRes.data.values || [];
+      let rows = sheetRes.data.values || [];
+
+      console.log("Rows returned from Google:", rows.length);
+
+      // 🔥 CRITICAL FIX: FORCE ROW COUNT
+      while (rows.length < MIN_ROWS) {
+        rows.push([]);
+      }
 
       const playerMap = new Map();
 
       rows.forEach((row, i) => {
-        if (row[1]) playerMap.set(row[1], i); // EpicID = column B
+        if (row[1]) playerMap.set(row[1], i); // epicId in column B
       });
 
-      // ================= LOAD EXISTING PENALTIES =================
+      // ================= LOAD PENALTIES =================
       const penaltyRes = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
         range: `${PENALTIES_SHEET}!I:I`,
@@ -114,8 +129,14 @@ module.exports = {
           if (playerMap.has(epicId)) {
             rowIndex = playerMap.get(epicId);
           } else {
-            rowIndex = rows.length;
-            rows.push([]);
+            // 🔥 FIRST EMPTY ROW, NOT rows.length
+            rowIndex = rows.findIndex(r => !r[1]);
+
+            if (rowIndex === -1) {
+              rowIndex = rows.length;
+              rows.push([]);
+            }
+
             playerMap.set(epicId, rowIndex);
           }
 
@@ -124,7 +145,6 @@ module.exports = {
           row[0] = username;
           row[1] = epicId;
 
-          // ✅ ONLY WRITE CURRENT SESSION
           row[startCol]     = games[0];
           row[startCol + 1] = games[1];
           row[startCol + 2] = games[2];
@@ -152,8 +172,8 @@ module.exports = {
         }
       }
 
-      // ================= NORMALISE ROW LENGTH =================
-      const maxCols = startCol + 4;
+      // ================= NORMALISE =================
+      const maxCols = Math.max(MIN_COLUMNS, startCol + 4);
 
       const cleanRows = rows.map(r => {
         const newRow = [];
@@ -163,15 +183,17 @@ module.exports = {
         return newRow;
       });
 
-      // ================= WRITE SCORES =================
+      console.log("Final row count:", cleanRows.length);
+
+      // ================= WRITE =================
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_NAME}!A3`,
+        range: `${SHEET_NAME}!A3:AZ`,
         valueInputOption: 'RAW',
         requestBody: { values: cleanRows },
       });
 
-      // ================= WRITE NEW PENALTIES =================
+      // ================= WRITE PENALTIES =================
       if (newPenaltyRows.length > 0) {
         await sheets.spreadsheets.values.append({
           spreadsheetId: SPREADSHEET_ID,
@@ -182,11 +204,11 @@ module.exports = {
       }
 
       await interaction.editReply(
-        `✅ Session ${session} submitted\n👥 ${totalPlayers} players\n⚠️ ${newPenaltyRows.length} new penalties logged`
+        `✅ Session ${session} submitted\n👥 ${totalPlayers} players\n⚠️ ${newPenaltyRows.length} new penalties`
       );
 
     } catch (err) {
-      console.error(err);
+      console.error("❌ SUBMIT ERROR:", err);
       await interaction.editReply(`❌ ${err.message}`);
     }
   },
