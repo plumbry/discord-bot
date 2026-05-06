@@ -261,7 +261,7 @@ const eventBanCommand =
     )
 
     .setDefaultMemberPermissions(
-      PermissionFlagsBits.ManageGuild
+      PermissionFlagsBits.ManageRoles
     )
 
     .addSubcommand(sub =>
