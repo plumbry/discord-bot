@@ -25,7 +25,9 @@ const credentials = JSON.parse(
 
 const auth = new google.auth.GoogleAuth({
   credentials,
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+  scopes: [
+    "https://www.googleapis.com/auth/spreadsheets"
+  ]
 });
 
 const sheets = google.sheets({
@@ -46,8 +48,11 @@ function parseDateInput(str) {
 
   if (!str) return null;
 
-  const iso = /^(\d{4})-(\d{2})-(\d{2})$/;
-  const uk = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
+  const iso =
+    /^(\d{4})-(\d{2})-(\d{2})$/;
+
+  const uk =
+    /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
 
   let match;
 
@@ -81,7 +86,8 @@ function parseDateInput(str) {
 
 function getDaysRemaining(endDateStr) {
 
-  const end = parseDateInput(endDateStr);
+  const end =
+    parseDateInput(endDateStr);
 
   if (!end) return 0;
 
@@ -94,7 +100,10 @@ function getDaysRemaining(endDateStr) {
 
   return Math.max(
     0,
-    Math.ceil(diffMs / (1000 * 60 * 60 * 24))
+    Math.ceil(
+      diffMs /
+      (1000 * 60 * 60 * 24)
+    )
   );
 
 }
@@ -115,7 +124,10 @@ async function getRows() {
 
   } catch (err) {
 
-    console.error("GET ROWS ERROR:", err);
+    console.error(
+      "GET ROWS ERROR:",
+      err
+    );
 
     return [];
 
@@ -147,7 +159,10 @@ async function writeRows(rows) {
 
   } catch (err) {
 
-    console.error("WRITE ROWS ERROR:", err);
+    console.error(
+      "WRITE ROWS ERROR:",
+      err
+    );
 
   }
 
@@ -177,7 +192,10 @@ async function logAudit(
 
   } catch (err) {
 
-    console.error("AUDIT LOG ERROR:", err);
+    console.error(
+      "AUDIT LOG ERROR:",
+      err
+    );
 
   }
 
@@ -194,13 +212,17 @@ async function handleExpiredProbations(
 
   for (const r of rows) {
 
-    if (r[2] !== "Probation") continue;
+    if (r[2] !== "Probation")
+      continue;
 
     const daysRemaining =
       getDaysRemaining(r[6]);
 
-    if (Number(r[4]) === 0) continue;
-    if (daysRemaining > 0) continue;
+    if (Number(r[4]) === 0)
+      continue;
+
+    if (daysRemaining > 0)
+      continue;
 
     r[4] = 0;
 
@@ -218,28 +240,6 @@ async function handleExpiredProbations(
         "PROBATION ENDED SEND ERROR:",
         err
       );
-
-    }
-
-    if (r[9]) {
-
-      try {
-
-        const msg =
-          await banChannel.messages.fetch(r[9]);
-
-        await msg.edit(
-          `${formatUser(r[1])} — Probation\nEnded ${r[6]}`
-        );
-
-      } catch (err) {
-
-        console.error(
-          "PROBATION MESSAGE EDIT ERROR:",
-          err
-        );
-
-      }
 
     }
 
@@ -266,14 +266,20 @@ const eventBanCommand =
 
     .addSubcommand(sub =>
       sub
+
         .setName("add")
-        .setDescription("Add an event ban")
+
+        .setDescription(
+          "Add an event ban"
+        )
+
         .addUserOption(option =>
           option
             .setName("user")
             .setDescription("User")
             .setRequired(true)
         )
+
         .addStringOption(option =>
           option
             .setName("type")
@@ -290,12 +296,14 @@ const eventBanCommand =
               }
             )
         )
+
         .addStringOption(option =>
           option
             .setName("reason")
             .setDescription("Reason")
             .setRequired(true)
         )
+
         .addStringOption(option =>
           option
             .setName("enddate")
@@ -309,13 +317,20 @@ const eventBanCommand =
     .addSubcommand(sub =>
       sub
         .setName("list")
-        .setDescription("List bans")
+        .setDescription(
+          "List active bans"
+        )
     )
 
     .addSubcommand(sub =>
       sub
+
         .setName("remove")
-        .setDescription("Remove a ban")
+
+        .setDescription(
+          "Remove an event ban"
+        )
+
         .addUserOption(option =>
           option
             .setName("user")
@@ -326,7 +341,9 @@ const eventBanCommand =
 
 // ================= HANDLER =================
 
-async function handleEventBan(interaction) {
+async function handleEventBan(
+  interaction
+) {
 
   await interaction.deferReply({
     ephemeral: true
@@ -342,23 +359,32 @@ async function handleEventBan(interaction) {
         BAN_CHANNEL_ID
       );
 
-    let rows = await getRows();
+    let rows =
+      await getRows();
 
     // ================= ADD =================
 
     if (subcommand === "add") {
 
       const user =
-        interaction.options.getUser("user");
+        interaction.options.getUser(
+          "user"
+        );
 
       const type =
-        interaction.options.getString("type");
+        interaction.options.getString(
+          "type"
+        );
 
       const reason =
-        interaction.options.getString("reason");
+        interaction.options.getString(
+          "reason"
+        );
 
       const endDate =
-        interaction.options.getString("enddate") || "";
+        interaction.options.getString(
+          "enddate"
+        ) || "";
 
       rows.push([
         today(),
@@ -403,7 +429,8 @@ async function handleEventBan(interaction) {
       if (!rows.length) {
 
         return interaction.editReply({
-          content: "No active bans."
+          content:
+            "No active bans."
         });
 
       }
@@ -415,7 +442,8 @@ async function handleEventBan(interaction) {
         .join("\n");
 
       return interaction.editReply({
-        content: text.slice(0, 1900)
+        content:
+          text.slice(0, 1900)
       });
 
     }
@@ -425,18 +453,25 @@ async function handleEventBan(interaction) {
     if (subcommand === "remove") {
 
       const user =
-        interaction.options.getUser("user");
+        interaction.options.getUser(
+          "user"
+        );
 
-      const originalLength = rows.length;
+      const originalLength =
+        rows.length;
 
       rows = rows.filter(
         r => r[1] !== user.tag
       );
 
-      if (rows.length === originalLength) {
+      if (
+        rows.length ===
+        originalLength
+      ) {
 
         return interaction.editReply({
-          content: "❌ User not found."
+          content:
+            "❌ User not found."
         });
 
       }
