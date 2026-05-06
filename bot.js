@@ -72,6 +72,12 @@ try {
 
   console.log("✅ event bans module loaded");
 
+  console.log("EVENT BAN DEBUG:", {
+    exists: !!eventBanCommand,
+    hasToJSON:
+      typeof eventBanCommand?.toJSON === "function"
+  });
+
 } catch (err) {
 
   console.error(
@@ -246,12 +252,13 @@ client.once("clientReady", async () => {
 
     try {
 
-      commandJSON.push(
-        command.data.toJSON()
-      );
+      const json =
+        command.data.toJSON();
+
+      commandJSON.push(json);
 
       console.log(
-        `📦 Registering command: ${command.data.name}`
+        `📦 Registering command: ${json.name}`
       );
 
     } catch (err) {
@@ -268,16 +275,17 @@ client.once("clientReady", async () => {
 
   // ================= VERIFY =================
 
-  if (verifyCommand?.name) {
+  if (verifyCommand) {
 
     try {
 
-      commandJSON.push(
-        verifyCommand.toJSON()
-      );
+      const json =
+        verifyCommand.toJSON();
+
+      commandJSON.push(json);
 
       console.log(
-        `📦 Registering command: ${verifyCommand.name}`
+        `📦 Registering command: ${json.name}`
       );
 
     } catch (err) {
@@ -294,16 +302,17 @@ client.once("clientReady", async () => {
 
   // ================= EVENT BANS =================
 
-  if (eventBanCommand?.name) {
+  if (eventBanCommand) {
 
     try {
 
-      commandJSON.push(
-        eventBanCommand.toJSON()
-      );
+      const json =
+        eventBanCommand.toJSON();
+
+      commandJSON.push(json);
 
       console.log(
-        `📦 Registering command: ${eventBanCommand.name}`
+        `📦 Registering command: ${json.name}`
       );
 
     } catch (err) {
