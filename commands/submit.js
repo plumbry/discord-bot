@@ -79,7 +79,7 @@ module.exports = {
 
       let rows = sheetRes.data.values || [];
 
-      // 🔥 ensure stable row count
+      // ensure stable row count
       while (rows.length < MIN_ROWS) {
         rows.push([]);
       }
@@ -106,7 +106,6 @@ module.exports = {
 
       const newPenaltyRows = [];
 
-      // 🔒 prevents duplicate players in same run
       const seenThisRun = new Set();
 
       let totalPlayers = 0;
@@ -114,12 +113,13 @@ module.exports = {
       // ================= PROCESS =================
       for (const team of teams) {
 
+        // ✅ FIXED: use ALL games, ignore "counts"
         const games = (team.gameList || [])
-          .filter(g => g.counts)
           .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
-          .map(g => g.score || 0);
+          .slice(0, 4)
+          .map(g => g.score ?? "");
 
-        while (games.length < 4) games.push(0);
+        while (games.length < 4) games.push("");
 
         for (const user of team.users || []) {
 
@@ -133,10 +133,8 @@ module.exports = {
 
           let rowIndex = playerMap.get(epicId);
 
-          // ✅ assign row ONLY if new player
           if (rowIndex === undefined) {
 
-            // find first empty row safely
             rowIndex = rows.findIndex(r => !r[1]);
 
             if (rowIndex === -1) {
@@ -149,11 +147,10 @@ module.exports = {
 
           const row = rows[rowIndex];
 
-          // identity
           row[0] = username;
           row[1] = epicId;
 
-          // session-specific write ONLY
+          // session-only write
           row[startCol]     = games[0];
           row[startCol + 1] = games[1];
           row[startCol + 2] = games[2];
