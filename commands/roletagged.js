@@ -82,19 +82,49 @@ module.exports = {
 
     const messages = await channel.messages.fetch({ limit: MESSAGE_SCAN_LIMIT });
 
+    await guild.members.fetch();
+
     const taggedUserIds = new Set();
 
     for (const msg of messages.values()) {
-      for (const user of msg.mentions.users.values()) {
-        if (!user.bot) taggedUserIds.add(user.id);
+
+      const mentionedUsers = [...msg.mentions.users.values()]
+        .filter(user => !user.bot);
+
+      if (mentionedUsers.length === 0) continue;
+
+      let blockedMember = null;
+
+      for (const user of mentionedUsers) {
+        const member = guild.members.cache.get(user.id);
+
+        if (member?.roles.cache.has(BLOCKED_ROLE_ID)) {
+          blockedMember = member;
+          break;
+        }
+      }
+
+      // If ANY player in the message is blocked,
+      // skip ALL players from that message
+      if (blockedMember) {
+        try {
+          await channel.send(
+            `${blockedMember} cannot sign up for the event. Their entire signup message was skipped.`
+          );
+        } catch {}
+
+        continue;
+      }
+
+      // Otherwise add everyone from the message
+      for (const user of mentionedUsers) {
+        taggedUserIds.add(user.id);
       }
     }
 
     if (taggedUserIds.size === 0) {
-      return interaction.editReply("No tagged users found in recent messages.");
+      return interaction.editReply("No eligible tagged users found in recent messages.");
     }
-
-    await guild.members.fetch();
 
     let added = 0;
     let skipped = 0;
@@ -102,16 +132,6 @@ module.exports = {
     for (const userId of taggedUserIds) {
       const member = guild.members.cache.get(userId);
       if (!member) continue;
-
-      if (member.roles.cache.has(BLOCKED_ROLE_ID)) {
-        try {
-          await channel.send(
-            `${member} cannot sign up for the event.`
-          );
-        } catch {}
-
-        continue;
-      }
 
       if (member.roles.cache.has(role.id)) {
         skipped++;
