@@ -58,6 +58,32 @@ try {
 
 }
 
+// ================= EVENT BANS =================
+
+let eventBanCommand = null;
+let handleEventBan = null;
+
+try {
+
+  ({
+    eventBanCommand,
+    handleEventBan
+  } = require("./event-bans/eventBans"));
+
+  console.log("✅ event bans module loaded");
+
+} catch (err) {
+
+  console.error(
+    "❌ Failed to load event bans module:"
+  );
+
+  console.error(err);
+
+}
+
+// ================= BAN CHECKER =================
+
 let startBanExpiryChecker = null;
 
 try {
@@ -76,6 +102,8 @@ try {
   console.error(err);
 
 }
+
+// ================= DM =================
 
 let dm = null;
 
@@ -212,6 +240,8 @@ client.once("clientReady", async () => {
 
   const commandJSON = [];
 
+  // ================= COMMANDS FOLDER =================
+
   for (const command of client.commands.values()) {
 
     try {
@@ -236,7 +266,7 @@ client.once("clientReady", async () => {
 
   }
 
-  // verify command
+  // ================= VERIFY =================
 
   if (verifyCommand?.name) {
 
@@ -261,6 +291,34 @@ client.once("clientReady", async () => {
     }
 
   }
+
+  // ================= EVENT BANS =================
+
+  if (eventBanCommand?.name) {
+
+    try {
+
+      commandJSON.push(
+        eventBanCommand.toJSON()
+      );
+
+      console.log(
+        `📦 Registering command: ${eventBanCommand.name}`
+      );
+
+    } catch (err) {
+
+      console.error(
+        "❌ Failed converting event ban command:"
+      );
+
+      console.error(err);
+
+    }
+
+  }
+
+  // ================= REGISTER =================
 
   try {
 
@@ -350,6 +408,20 @@ client.on(
       ) {
 
         return await handleVerify(
+          interaction
+        );
+
+      }
+
+      // ================= EVENT BANS =================
+
+      if (
+        interaction.commandName ===
+          "eventban" &&
+        handleEventBan
+      ) {
+
+        return await handleEventBan(
           interaction
         );
 
