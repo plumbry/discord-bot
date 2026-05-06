@@ -201,6 +201,21 @@ async function logAudit(
 
 }
 
+// ================= FORMATTERS =================
+
+const formatEventBan = r =>
+`${r[1]} — ${r[2]} Event Ban
+Started ${r[5]}
+${r[4]} Events Remaining
+Reason: ${r[7] || "No reason provided"}`;
+
+const formatProbation = r =>
+`${r[1]} — Probation
+Started ${r[5]}
+Ends ${r[6]}
+${r[4]} Days Remaining
+Reason: ${r[7] || "No reason provided"}`;
+
 // ================= EXPIRED PROBATIONS =================
 
 async function handleExpiredProbations(
@@ -264,13 +279,15 @@ const eventBanCommand =
       PermissionFlagsBits.ManageRoles
     )
 
+    // ================= APPLY =================
+
     .addSubcommand(sub =>
       sub
 
-        .setName("add")
+        .setName("apply")
 
         .setDescription(
-          "Add an event ban"
+          "Apply an event ban"
         )
 
         .addUserOption(option =>
@@ -287,14 +304,58 @@ const eventBanCommand =
             .setRequired(true)
             .addChoices(
               {
-                name: "Ban",
-                value: "Ban"
+                name: "Money",
+                value: "Money"
               },
               {
-                name: "Probation",
-                value: "Probation"
+                name: "No Money",
+                value: "No Money"
+              },
+              {
+                name: "All",
+                value: "All"
               }
             )
+        )
+
+        .addIntegerOption(option =>
+          option
+            .setName("events")
+            .setDescription("Events")
+            .setRequired(true)
+        )
+
+        .addStringOption(option =>
+          option
+            .setName("reason")
+            .setDescription("Reason")
+            .setRequired(true)
+        )
+    )
+
+    // ================= PROBATION =================
+
+    .addSubcommand(sub =>
+      sub
+
+        .setName("probation")
+
+        .setDescription(
+          "Apply probation"
+        )
+
+        .addUserOption(option =>
+          option
+            .setName("user")
+            .setDescription("User")
+            .setRequired(true)
+        )
+
+        .addIntegerOption(option =>
+          option
+            .setName("days")
+            .setDescription("Days")
+            .setRequired(true)
         )
 
         .addStringOption(option =>
@@ -306,21 +367,69 @@ const eventBanCommand =
 
         .addStringOption(option =>
           option
-            .setName("enddate")
+            .setName("start")
             .setDescription(
-              "End date DD/MM/YYYY"
+              "Start date YYYY-MM-DD or DD/MM/YYYY"
             )
             .setRequired(false)
         )
     )
 
+    // ================= EVENT PASSED =================
+
     .addSubcommand(sub =>
       sub
-        .setName("list")
+
+        .setName("eventpassed")
+
         .setDescription(
-          "List active bans"
+          "Reduce remaining bans"
+        )
+
+        .addStringOption(option =>
+          option
+            .setName("type")
+            .setDescription("Event type")
+            .setRequired(true)
+            .addChoices(
+              {
+                name: "Money",
+                value: "Money"
+              },
+              {
+                name: "No Money",
+                value: "No Money"
+              },
+              {
+                name: "All",
+                value: "All"
+              }
+            )
+        )
+
+        .addIntegerOption(option =>
+          option
+            .setName("events")
+            .setDescription(
+              "Events passed"
+            )
+            .setRequired(true)
         )
     )
+
+    // ================= SUMMARY =================
+
+    .addSubcommand(sub =>
+      sub
+
+        .setName("summary")
+
+        .setDescription(
+          "Show active bans and probations"
+        )
+    )
+
+    // ================= REMOVE =================
 
     .addSubcommand(sub =>
       sub
@@ -328,7 +437,7 @@ const eventBanCommand =
         .setName("remove")
 
         .setDescription(
-          "Remove an event ban"
+          "Remove a user's event bans"
         )
 
         .addUserOption(option =>
@@ -351,20 +460,20 @@ async function handleEventBan(
 
   try {
 
-    const subcommand =
+    const sub =
       interaction.options.getSubcommand();
 
+    const rows =
+      await getRows();
+
     const banChannel =
-      interaction.guild.channels.cache.get(
+      await interaction.guild.channels.fetch(
         BAN_CHANNEL_ID
       );
 
-    let rows =
-      await getRows();
+    // ================= APPLY =================
 
-    // ================= ADD =================
-
-    if (subcommand === "add") {
+    if (sub === "apply") {
 
       const user =
         interaction.options.getUser(
@@ -376,70 +485,254 @@ async function handleEventBan(
           "type"
         );
 
+      const events =
+        interaction.options.getInteger(
+          "events"
+        );
+
       const reason =
         interaction.options.getString(
           "reason"
         );
 
-      const endDate =
-        interaction.options.getString(
-          "enddate"
-        ) || "";
-
-      rows.push([
-        today(),
+      const row = [
+        user.id,
         user.tag,
         type,
+        events,
+        events,
+        today(),
+        today(),
         reason,
-        1,
         interaction.user.tag,
-        endDate,
-        "",
-        "",
         ""
-      ]);
+      ];
+
+      const msg =
+        await banChannel.send(
+          formatEventBan(row)
+        );
+
+      row[9] = msg.id;
+
+      rows.push(row);
 
       await writeRows(rows);
 
       await logAudit(
-        `Added ${type}`,
+        `Applied ${events}-event ${type} ban`,
         interaction.user,
         user
       );
 
-      if (banChannel) {
-
-        await banChannel.send(
-          `🚫 ${formatUser(user.tag)}\nType: ${type}\nReason: ${reason}`
-        );
-
-      }
-
       return interaction.editReply({
         content:
-          `✅ ${user.tag} added to event bans`
+          "✅ Event ban applied."
       });
 
     }
 
-    // ================= LIST =================
+    // ================= PROBATION =================
 
-    if (subcommand === "list") {
+    if (sub === "probation") {
 
-      if (!rows.length) {
+      const user =
+        interaction.options.getUser(
+          "user"
+        );
 
-        return interaction.editReply({
-          content:
-            "No active bans."
-        });
+      const days =
+        interaction.options.getInteger(
+          "days"
+        );
+
+      const reason =
+        interaction.options.getString(
+          "reason"
+        );
+
+      const startInput =
+        interaction.options.getString(
+          "start"
+        );
+
+      let startDate;
+
+      if (startInput) {
+
+        startDate =
+          parseDateInput(
+            startInput
+          );
+
+        if (!startDate) {
+
+          return interaction.editReply({
+            content:
+              "❌ Invalid date format."
+          });
+
+        }
+
+      } else {
+
+        startDate = new Date();
 
       }
 
-      const text = rows
-        .map(r =>
-          `• ${r[1]} — ${r[2]} — ${r[3]}`
-        )
-        .join("\n");
+      const endDate =
+        new Date(startDate);
+
+      endDate.setDate(
+        endDate.getDate() + days
+      );
+
+      const format = d =>
+        d.toLocaleDateString(
+          "en-GB"
+        );
+
+      const row = [
+        user.id,
+        user.tag,
+        "Probation",
+        days,
+        days,
+        format(startDate),
+        format(endDate),
+        reason,
+        interaction.user.tag,
+        ""
+      ];
+
+      const msg =
+        await banChannel.send(
+          formatProbation(row)
+        );
+
+      row[9] = msg.id;
+
+      rows.push(row);
+
+      await writeRows(rows);
+
+      await logAudit(
+        `Applied ${days}-day probation`,
+        interaction.user,
+        user
+      );
+
+      return interaction.editReply({
+        content:
+          "✅ Probation applied."
+      });
+
+    }
+
+    // ================= EVENT PASSED =================
+
+    if (sub === "eventpassed") {
+
+      const type =
+        interaction.options
+          .getString("type")
+          .toLowerCase();
+
+      const events =
+        interaction.options.getInteger(
+          "events"
+        );
+
+      for (const r of rows) {
+
+        if (r[2] === "Probation")
+          continue;
+
+        const rowType =
+          r[2].toLowerCase();
+
+        if (
+          (
+            type === "all" ||
+            rowType === type
+          ) &&
+          Number(r[4]) > 0
+        ) {
+
+          r[4] = Math.max(
+            0,
+            Number(r[4]) - events
+          );
+
+          r[6] = today();
+
+          if (r[9]) {
+
+            try {
+
+              const msg =
+                await banChannel.messages.fetch(
+                  r[9]
+                );
+
+              await msg.edit(
+                formatEventBan(r)
+              );
+
+            } catch {}
+
+          }
+
+        }
+
+      }
+
+      await writeRows(rows);
+
+      return interaction.editReply({
+        content:
+          "✅ Event bans updated."
+      });
+
+    }
+
+    // ================= SUMMARY =================
+
+    if (sub === "summary") {
+
+      const activeBans =
+        rows.filter(
+          r =>
+            r[2] !== "Probation" &&
+            Number(r[4]) > 0
+        );
+
+      const probations =
+        rows.filter(
+          r =>
+            r[2] === "Probation" &&
+            Number(r[4]) > 0
+        );
+
+      let text = "";
+
+      text +=
+        "**Active Event Bans**\n";
+
+      text += activeBans.length
+        ? activeBans.map(r =>
+            `${r[1]} — ${r[2]} | ${r[4]} events remaining`
+          ).join("\n")
+        : "None";
+
+      text +=
+        "\n\n**Active Probations**\n";
+
+      text += probations.length
+        ? probations.map(r =>
+            `${r[1]} — ${r[4]} days remaining (ends ${r[6]})`
+          ).join("\n")
+        : "None";
 
       return interaction.editReply({
         content:
@@ -450,23 +743,20 @@ async function handleEventBan(
 
     // ================= REMOVE =================
 
-    if (subcommand === "remove") {
+    if (sub === "remove") {
 
       const user =
         interaction.options.getUser(
           "user"
         );
 
-      const originalLength =
-        rows.length;
-
-      rows = rows.filter(
-        r => r[1] !== user.tag
-      );
+      const filtered =
+        rows.filter(
+          r => r[0] !== user.id
+        );
 
       if (
-        rows.length ===
-        originalLength
+        filtered.length === rows.length
       ) {
 
         return interaction.editReply({
@@ -476,7 +766,7 @@ async function handleEventBan(
 
       }
 
-      await writeRows(rows);
+      await writeRows(filtered);
 
       await logAudit(
         "Removed Event Ban",
@@ -486,7 +776,7 @@ async function handleEventBan(
 
       return interaction.editReply({
         content:
-          `✅ Removed event ban for ${user.tag}`
+          `✅ Removed all bans for ${user.tag}`
       });
 
     }
