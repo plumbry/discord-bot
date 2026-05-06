@@ -1,3 +1,4 @@
+```js
 const {
   SlashCommandBuilder,
   PermissionFlagsBits
@@ -12,6 +13,8 @@ const AUDIT_RANGE = "Audit Log!A:G";
 
 const MESSAGE_SCAN_LIMIT = 100;
 const ROLE_DELAY_MS = 750;
+
+const BLOCKED_ROLE_ID = "1463660686231207956";
 
 // ================= GOOGLE =================
 const credentials = JSON.parse(
@@ -101,6 +104,16 @@ module.exports = {
       const member = guild.members.cache.get(userId);
       if (!member) continue;
 
+      if (member.roles.cache.has(BLOCKED_ROLE_ID)) {
+        try {
+          await channel.send(
+            `${member} cannot sign up for the event.`
+          );
+        } catch {}
+
+        continue;
+      }
+
       if (member.roles.cache.has(role.id)) {
         skipped++;
         continue;
@@ -152,3 +165,4 @@ module.exports = {
     }
   }
 };
+```
