@@ -424,17 +424,46 @@ client.on(
 
       // ================= EVENT BANS =================
 
-      if (
-        interaction.commandName ===
-          "eventban" &&
-        handleEventBan
-      ) {
+  try {
 
-        return await handleEventBan(
-          interaction
-        );
+    console.log(
+      "EVENT BAN RAW:",
+      eventBanCommand
+    );
 
-      }
+    if (!eventBanCommand) {
+
+      console.log(
+        "❌ eventBanCommand missing"
+      );
+
+    } else {
+
+      const json =
+        eventBanCommand.toJSON();
+
+      console.log(
+        "EVENT BAN JSON:",
+        json
+      );
+
+      commandJSON.push(json);
+
+      console.log(
+        `📦 Registering command: ${json.name}`
+      );
+
+    }
+
+  } catch (err) {
+
+    console.error(
+      "❌ EVENT BAN REGISTRATION ERROR:"
+    );
+
+    console.error(err);
+
+  }
 
       // ================= STANDARD COMMANDS =================
 
