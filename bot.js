@@ -300,34 +300,7 @@ client.once("clientReady", async () => {
 
   }
 
-  // ================= EVENT BANS =================
-
-  if (eventBanCommand) {
-
-    try {
-
-      const json =
-        eventBanCommand.toJSON();
-
-      commandJSON.push(json);
-
-      console.log(
-        `📦 Registering command: ${json.name}`
-      );
-
-    } catch (err) {
-
-      console.error(
-        "❌ Failed converting event ban command:"
-      );
-
-      console.error(err);
-
-    }
-
-  }
-
-  // ================= REGISTER =================
+  // ================= REGISTER NORMAL COMMANDS =================
 
   try {
 
@@ -342,16 +315,56 @@ client.once("clientReady", async () => {
     );
 
     console.log(
-      "✅ Slash commands registered"
+      "✅ Standard slash commands registered"
     );
 
   } catch (err) {
 
     console.error(
-      "❌ Command registration failed:"
+      "❌ Standard command registration failed:"
     );
 
     console.error(err);
+
+  }
+
+  // ================= REGISTER EVENTBAN SEPARATELY =================
+
+  if (eventBanCommand) {
+
+    try {
+
+      const eventJSON =
+        eventBanCommand.toJSON();
+
+      console.log(
+        "EVENTBAN JSON:",
+        eventJSON
+      );
+
+      await rest.post(
+        Routes.applicationGuildCommands(
+          client.user.id,
+          "1371615693392576580"
+        ),
+        {
+          body: eventJSON
+        }
+      );
+
+      console.log(
+        "✅ Eventban registered separately"
+      );
+
+    } catch (err) {
+
+      console.error(
+        "❌ Eventban registration failed:"
+      );
+
+      console.error(err);
+
+    }
 
   }
 
@@ -424,46 +437,17 @@ client.on(
 
       // ================= EVENT BANS =================
 
-  try {
+      if (
+        interaction.commandName ===
+          "eventban" &&
+        handleEventBan
+      ) {
 
-    console.log(
-      "EVENT BAN RAW:",
-      eventBanCommand
-    );
+        return await handleEventBan(
+          interaction
+        );
 
-    if (!eventBanCommand) {
-
-      console.log(
-        "❌ eventBanCommand missing"
-      );
-
-    } else {
-
-      const json =
-        eventBanCommand.toJSON();
-
-      console.log(
-        "EVENT BAN JSON:",
-        json
-      );
-
-      commandJSON.push(json);
-
-      console.log(
-        `📦 Registering command: ${json.name}`
-      );
-
-    }
-
-  } catch (err) {
-
-    console.error(
-      "❌ EVENT BAN REGISTRATION ERROR:"
-    );
-
-    console.error(err);
-
-  }
+      }
 
       // ================= STANDARD COMMANDS =================
 
