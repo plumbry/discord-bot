@@ -42,52 +42,57 @@ let verifyCommand = null;
 let handleVerify = null;
 
 try {
-  ({ verifyCommand, handleVerify } = require("./welcome-ping"));
+
+  ({ verifyCommand, handleVerify } =
+    require("./welcome-ping"));
+
   console.log("✅ welcome module loaded");
-} catch (err) {
-  console.error("❌ Failed to load welcome module:");
-  console.error(err);
-}
-
-let eventBanCommand = null;
-let handleEventBan = null;
-
-try {
-  ({ eventBanCommand, handleEventBan } = require("./event-bans/eventBans"));
-
-  if (!eventBanCommand) {
-    console.error("❌ eventBanCommand missing export");
-  }
-
-  if (!handleEventBan) {
-    console.error("❌ handleEventBan missing export");
-  }
-
-  console.log("✅ event bans module loaded");
 
 } catch (err) {
-  console.error("❌ Failed to load event bans module:");
+
+  console.error(
+    "❌ Failed to load welcome module:"
+  );
+
   console.error(err);
+
 }
 
 let startBanExpiryChecker = null;
 
 try {
-  ({ startBanExpiryChecker } = require("./banExpiryChecker"));
+
+  ({ startBanExpiryChecker } =
+    require("./banExpiryChecker"));
+
   console.log("✅ banExpiryChecker loaded");
+
 } catch (err) {
-  console.error("⚠️ banExpiryChecker not loaded:");
+
+  console.error(
+    "⚠️ banExpiryChecker not loaded:"
+  );
+
   console.error(err);
+
 }
 
 let dm = null;
 
 try {
+
   dm = require("./commands/dm");
+
   console.log("✅ DM module loaded");
+
 } catch (err) {
-  console.error("⚠️ DM module not loaded:");
+
+  console.error(
+    "⚠️ DM module not loaded:"
+  );
+
   console.error(err);
+
 }
 
 // ================= CLIENT =================
@@ -108,38 +113,59 @@ console.log("=== CLIENT CREATED ===");
 
 // ================= LOAD COMMANDS =================
 
-const commandsPath = path.join(__dirname, "commands");
+const commandsPath =
+  path.join(__dirname, "commands");
 
 let commandFiles = [];
 
 try {
+
   commandFiles = fs
     .readdirSync(commandsPath)
     .filter(file => file.endsWith(".js"));
 
 } catch (err) {
-  console.error("❌ Failed to read commands folder:");
+
+  console.error(
+    "❌ Failed to read commands folder:"
+  );
+
   console.error(err);
+
 }
 
 for (const file of commandFiles) {
 
   try {
 
-    const command = require(`./commands/${file}`);
+    const command =
+      require(`./commands/${file}`);
 
     if (!command?.data || !command?.execute) {
-      console.log(`⚠️ Skipped invalid command file: ${file}`);
+
+      console.log(
+        `⚠️ Skipped invalid command file: ${file}`
+      );
+
       continue;
+
     }
 
-    client.commands.set(command.data.name, command);
+    client.commands.set(
+      command.data.name,
+      command
+    );
 
-    console.log(`✅ Loaded command: ${command.data.name}`);
+    console.log(
+      `✅ Loaded command: ${command.data.name}`
+    );
 
   } catch (err) {
 
-    console.error(`❌ Error loading command file: ${file}`);
+    console.error(
+      `❌ Error loading command file: ${file}`
+    );
+
     console.error(err);
 
   }
@@ -150,7 +176,9 @@ for (const file of commandFiles) {
 
 client.once("clientReady", async () => {
 
-  console.log(`🚀 Logged in as ${client.user.tag}`);
+  console.log(
+    `🚀 Logged in as ${client.user.tag}`
+  );
 
   // ================= BAN CHECKER =================
 
@@ -159,11 +187,17 @@ client.once("clientReady", async () => {
     try {
 
       startBanExpiryChecker(client);
-      console.log("✅ Ban expiry checker started");
+
+      console.log(
+        "✅ Ban expiry checker started"
+      );
 
     } catch (err) {
 
-      console.error("❌ Ban checker failed:");
+      console.error(
+        "❌ Ban checker failed:"
+      );
+
       console.error(err);
 
     }
@@ -172,62 +206,56 @@ client.once("clientReady", async () => {
 
   // ================= COMMAND REGISTRATION =================
 
-  const rest = new REST({ version: "10" })
-    .setToken(DISCORD_TOKEN);
-
-  const commands = [];
-
-  // custom commands
-
-  if (verifyCommand?.name) {
-    commands.push(verifyCommand);
-  }
-
-  if (eventBanCommand?.name) {
-    commands.push(eventBanCommand);
-  }
-
-  // folder commands
-
-  for (const cmd of client.commands.values()) {
-    commands.push(cmd.data);
-  }
-
-  // remove duplicates
-
-  const uniqueCommands = [];
-  const usedNames = new Set();
-
-  for (const cmd of commands) {
-
-    if (!cmd?.name) {
-      console.error("❌ Invalid command object:", cmd);
-      continue;
-    }
-
-    if (usedNames.has(cmd.name)) {
-      console.log(`⚠️ Duplicate command skipped: ${cmd.name}`);
-      continue;
-    }
-
-    usedNames.add(cmd.name);
-    uniqueCommands.push(cmd);
-
-  }
+  const rest = new REST({
+    version: "10"
+  }).setToken(DISCORD_TOKEN);
 
   const commandJSON = [];
 
-  for (const cmd of uniqueCommands) {
+  for (const command of client.commands.values()) {
 
     try {
 
-      commandJSON.push(cmd.toJSON());
+      commandJSON.push(
+        command.data.toJSON()
+      );
 
-      console.log(`📦 Registering command: ${cmd.name}`);
+      console.log(
+        `📦 Registering command: ${command.data.name}`
+      );
 
     } catch (err) {
 
-      console.error(`❌ Failed to convert command: ${cmd?.name}`);
+      console.error(
+        `❌ Failed converting command: ${command?.data?.name}`
+      );
+
+      console.error(err);
+
+    }
+
+  }
+
+  // verify command
+
+  if (verifyCommand?.name) {
+
+    try {
+
+      commandJSON.push(
+        verifyCommand.toJSON()
+      );
+
+      console.log(
+        `📦 Registering command: ${verifyCommand.name}`
+      );
+
+    } catch (err) {
+
+      console.error(
+        "❌ Failed converting verify command:"
+      );
+
       console.error(err);
 
     }
@@ -241,38 +269,58 @@ client.once("clientReady", async () => {
         client.user.id,
         "1371615693392576580"
       ),
-      { body: commandJSON }
+      {
+        body: commandJSON
+      }
     );
 
-    console.log("✅ Slash commands registered");
+    console.log(
+      "✅ Slash commands registered"
+    );
 
   } catch (err) {
 
-    console.error("❌ Command registration failed:");
+    console.error(
+      "❌ Command registration failed:"
+    );
+
     console.error(err);
 
   }
 
   // ================= DM SCHEDULER =================
 
-  if (dm?.startDMScheduler && MAIN_SHEET_ID) {
+  if (
+    dm?.startDMScheduler &&
+    MAIN_SHEET_ID
+  ) {
 
     try {
 
-      dm.startDMScheduler(client, MAIN_SHEET_ID);
+      dm.startDMScheduler(
+        client,
+        MAIN_SHEET_ID
+      );
 
-      console.log("✅ DM scheduler started");
+      console.log(
+        "✅ DM scheduler started"
+      );
 
     } catch (err) {
 
-      console.error("❌ DM scheduler error:");
+      console.error(
+        "❌ DM scheduler error:"
+      );
+
       console.error(err);
 
     }
 
   } else {
 
-    console.log("⚠️ DM scheduler disabled");
+    console.log(
+      "⚠️ DM scheduler disabled"
+    );
 
   }
 
@@ -280,113 +328,156 @@ client.once("clientReady", async () => {
 
 // ================= INTERACTIONS =================
 
-client.on("interactionCreate", async interaction => {
+client.on(
+  "interactionCreate",
+  async interaction => {
 
-  if (!interaction.isChatInputCommand()) return;
-
-  console.log(`🔥 Interaction received: ${interaction.commandName}`);
-
-  try {
-
-    // ================= VERIFY =================
-
-    if (
-      interaction.commandName === "verify" &&
-      handleVerify
-    ) {
-      return await handleVerify(interaction);
-    }
-
-    // ================= EVENT BAN =================
-
-    if (
-      interaction.commandName === "eventban" &&
-      handleEventBan
-    ) {
-      return await handleEventBan(interaction);
-    }
-
-    // ================= STANDARD COMMANDS =================
-
-    const command = client.commands.get(interaction.commandName);
-
-    if (!command) {
-
-      console.log(
-        `❌ Command not found: ${interaction.commandName}`
-      );
-
-      if (!interaction.replied && !interaction.deferred) {
-
-        await interaction.reply({
-          content: "❌ Command not loaded.",
-          ephemeral: true
-        });
-
-      }
-
+    if (!interaction.isChatInputCommand())
       return;
-    }
 
-    console.log(`⚡ Executing: ${interaction.commandName}`);
-
-    await command.execute(interaction, {
-      SUBMIT_SHEET_ID,
-      MAIN_SHEET_ID
-    });
-
-  } catch (err) {
-
-    console.error("❌ Interaction error:");
-    console.error(err);
+    console.log(
+      `🔥 Interaction received: ${interaction.commandName}`
+    );
 
     try {
 
-      if (interaction.replied || interaction.deferred) {
+      // ================= VERIFY =================
 
-        await interaction.followUp({
-          content: "❌ An error occurred while executing this command.",
-          ephemeral: true
-        });
+      if (
+        interaction.commandName ===
+          "verify" &&
+        handleVerify
+      ) {
 
-      } else {
-
-        await interaction.reply({
-          content: "❌ An error occurred while executing this command.",
-          ephemeral: true
-        });
+        return await handleVerify(
+          interaction
+        );
 
       }
 
-    } catch (replyErr) {
+      // ================= STANDARD COMMANDS =================
 
-      console.error("❌ Failed sending error reply:");
-      console.error(replyErr);
+      const command =
+        client.commands.get(
+          interaction.commandName
+        );
+
+      if (!command) {
+
+        console.log(
+          `❌ Command not found: ${interaction.commandName}`
+        );
+
+        if (
+          !interaction.replied &&
+          !interaction.deferred
+        ) {
+
+          await interaction.reply({
+            content:
+              "❌ Command not loaded.",
+            ephemeral: true
+          });
+
+        }
+
+        return;
+
+      }
+
+      console.log(
+        `⚡ Executing: ${interaction.commandName}`
+      );
+
+      await command.execute(interaction, {
+        SUBMIT_SHEET_ID,
+        MAIN_SHEET_ID
+      });
+
+    } catch (err) {
+
+      console.error(
+        "❌ Interaction error:"
+      );
+
+      console.error(err);
+
+      try {
+
+        if (
+          interaction.replied ||
+          interaction.deferred
+        ) {
+
+          await interaction.followUp({
+            content:
+              "❌ An error occurred while executing this command.",
+            ephemeral: true
+          });
+
+        } else {
+
+          await interaction.reply({
+            content:
+              "❌ An error occurred while executing this command.",
+            ephemeral: true
+          });
+
+        }
+
+      } catch (replyErr) {
+
+        console.error(
+          "❌ Failed sending error reply:"
+        );
+
+        console.error(replyErr);
+
+      }
 
     }
 
   }
-
-});
+);
 
 // ================= HEALTH SERVER =================
 
-const PORT = process.env.PORT || 8080;
+const PORT =
+  process.env.PORT || 8080;
 
-http.createServer((req, res) => {
-  res.writeHead(200);
-  res.end("OK");
-}).listen(PORT, () => {
-  console.log(`🌐 Health server running on ${PORT}`);
-});
+http
+  .createServer((req, res) => {
+
+    res.writeHead(200);
+
+    res.end("OK");
+
+  })
+  .listen(PORT, () => {
+
+    console.log(
+      `🌐 Health server running on ${PORT}`
+    );
+
+  });
 
 // ================= LOGIN =================
 
-client.login(DISCORD_TOKEN)
+client
+  .login(DISCORD_TOKEN)
+
   .then(() => {
-    console.log("✅ Bot login successful");
+
+    console.log(
+      "✅ Bot login successful"
+    );
+
   })
+
   .catch(err => {
+
     console.error("❌ Login error:");
+
     console.error(err);
+
   });
