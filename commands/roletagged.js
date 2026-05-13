@@ -191,6 +191,30 @@ module.exports = {
 
       try {
 
+        await team.message.fetch();
+
+        // Skip if already numbered/accepted
+        const existingReactionIds = team.message.reactions.cache.map(
+          r => r.emoji.id
+        );
+
+        const alreadyProcessed =
+          existingReactionIds.includes(ACCEPTED_EMOJI_ID) ||
+          Object.values(NUMBER_EMOJIS).some(id =>
+            existingReactionIds.includes(id)
+          );
+
+        if (alreadyProcessed) {
+
+          console.log(
+            "[ROLETAGGED] Skipping already processed message:",
+            team.message.id
+          );
+
+          teamNumber++;
+          continue;
+        }
+
         // Accepted tick
         await team.message.react(ACCEPTED_EMOJI_ID);
 
