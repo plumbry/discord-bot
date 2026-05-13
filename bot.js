@@ -1,3 +1,4 @@
+```js
 console.log("=== BOT STARTING ===");
 
 // ================= CORE =================
@@ -40,11 +41,15 @@ console.log("ENV CHECK:", {
 
 let verifyCommand = null;
 let handleVerify = null;
+let handleWelcome = null;
 
 try {
 
-  ({ verifyCommand, handleVerify } =
-    require("./welcome-ping"));
+  ({
+    verifyCommand,
+    handleVerify,
+    handleWelcome
+  } = require("./index"));
 
   console.log("✅ welcome module loaded");
 
@@ -238,169 +243,43 @@ client.once("clientReady", async () => {
 
   }
 
-  // ================= COMMAND REGISTRATION =================
-
-  const rest = new REST({
-    version: "10"
-  }).setToken(DISCORD_TOKEN);
-
-  const commandJSON = [];
-
-  // ================= COMMANDS FOLDER =================
-
-  for (const command of client.commands.values()) {
-
-    try {
-
-      const json =
-        command.data.toJSON();
-
-      commandJSON.push(json);
-
-      console.log(
-        `📦 Registering command: ${json.name}`
-      );
-
-    } catch (err) {
-
-      console.error(
-        `❌ Failed converting command: ${command?.data?.name}`
-      );
-
-      console.error(err);
-
-    }
-
-  }
-
-  // ================= VERIFY =================
-
-  if (verifyCommand) {
-
-    try {
-
-      const json =
-        verifyCommand.toJSON();
-
-      commandJSON.push(json);
-
-      console.log(
-        `📦 Registering command: ${json.name}`
-      );
-
-    } catch (err) {
-
-      console.error(
-        "❌ Failed converting verify command:"
-      );
-
-      console.error(err);
-
-    }
-
-  }
-
-  // ================= REGISTER NORMAL COMMANDS =================
+  // ================= REGISTER SLASH COMMANDS =================
 
   try {
 
+    const commands = [];
+
+    if (verifyCommand) {
+      commands.push(verifyCommand.toJSON());
+    }
+
+    if (eventBanCommand) {
+      commands.push(eventBanCommand.toJSON());
+    }
+
+    if (dm?.data) {
+      commands.push(dm.data.toJSON());
+    }
+
+    const rest = new REST({ version: "10" })
+      .setToken(DISCORD_TOKEN);
+
     await rest.put(
-      Routes.applicationGuildCommands(
-        client.user.id,
-        "1371615693392576580"
-      ),
-      {
-        body: commandJSON
-      }
+      Routes.applicationCommands(client.user.id),
+      { body: commands }
     );
 
     console.log(
-      "✅ Standard slash commands registered"
+      `✅ Registered ${commands.length} slash commands`
     );
 
   } catch (err) {
 
     console.error(
-      "❌ Standard command registration failed:"
+      "❌ Failed to register slash commands:"
     );
 
     console.error(err);
-
-  }
-
-  // ================= REGISTER EVENTBAN SEPARATELY =================
-
-  if (eventBanCommand) {
-
-    try {
-
-      const eventJSON =
-        eventBanCommand.toJSON();
-
-      console.log(
-        "EVENTBAN JSON:",
-        eventJSON
-      );
-
-      await rest.post(
-        Routes.applicationGuildCommands(
-          client.user.id,
-          "1371615693392576580"
-        ),
-        {
-          body: eventJSON
-        }
-      );
-
-      console.log(
-        "✅ Eventban registered separately"
-      );
-
-    } catch (err) {
-
-      console.error(
-        "❌ Eventban registration failed:"
-      );
-
-      console.error(err);
-
-    }
-
-  }
-
-  // ================= DM SCHEDULER =================
-
-  if (
-    dm?.startDMScheduler &&
-    MAIN_SHEET_ID
-  ) {
-
-    try {
-
-      dm.startDMScheduler(
-        client,
-        MAIN_SHEET_ID
-      );
-
-      console.log(
-        "✅ DM scheduler started"
-      );
-
-    } catch (err) {
-
-      console.error(
-        "❌ DM scheduler error:"
-      );
-
-      console.error(err);
-
-    }
-
-  } else {
-
-    console.log(
-      "⚠️ DM scheduler disabled"
-    );
 
   }
 
@@ -408,143 +287,152 @@ client.once("clientReady", async () => {
 
 // ================= INTERACTIONS =================
 
-client.on(
-  "interactionCreate",
-  async interaction => {
+client.on("interactionCreate", async interaction => {
 
-    if (!interaction.isChatInputCommand())
-      return;
+  if (!interaction.isChatInputCommand()) {
+    return;
+  }
 
-    console.log(
-      `🔥 Interaction received: ${interaction.commandName}`
+  try {
+
+    // ================= VERIFY =================
+
+    if (interaction.commandName === "verify") {
+
+      if (!handleVerify) {
+        return interaction.reply({
+          content: "Verify system unavailable.",
+          ephemeral: true
+        });
+      }
+
+      return handleVerify(interaction);
+
+    }
+
+    // ================= EVENT BAN =================
+
+    if (interaction.commandName === "eventban") {
+
+      if (!handleEventBan) {
+        return interaction.reply({
+          content: "Event ban system unavailable.",
+          ephemeral: true
+        });
+      }
+
+      return handleEventBan(interaction);
+
+    }
+
+    // ================= DM =================
+
+    if (
+      interaction.commandName === dm?.data?.name
+    ) {
+
+      return dm.execute(interaction);
+
+    }
+
+    // ================= COMMANDS FOLDER =================
+
+    const command = client.commands.get(
+      interaction.commandName
     );
+
+    if (!command) {
+      return;
+    }
+
+    await command.execute(interaction);
+
+  } catch (err) {
+
+    console.error(
+      "❌ interactionCreate error:"
+    );
+
+    console.error(err);
 
     try {
 
-      // ================= VERIFY =================
+      if (interaction.deferred || interaction.replied) {
 
-      if (
-        interaction.commandName ===
-          "verify" &&
-        handleVerify
-      ) {
+        await interaction.followUp({
+          content: "An error occurred.",
+          ephemeral: true
+        });
 
-        return await handleVerify(
-          interaction
-        );
+      } else {
 
-      }
-
-      // ================= EVENT BANS =================
-
-      if (
-        interaction.commandName ===
-          "eventban" &&
-        handleEventBan
-      ) {
-
-        return await handleEventBan(
-          interaction
-        );
+        await interaction.reply({
+          content: "An error occurred.",
+          ephemeral: true
+        });
 
       }
 
-      // ================= STANDARD COMMANDS =================
+    } catch (replyErr) {
 
-      const command =
-        client.commands.get(
-          interaction.commandName
-        );
-
-      if (!command) {
-
-        console.log(
-          `❌ Command not found: ${interaction.commandName}`
-        );
-
-        if (
-          !interaction.replied &&
-          !interaction.deferred
-        ) {
-
-          await interaction.reply({
-            content:
-              "❌ Command not loaded.",
-            ephemeral: true
-          });
-
-        }
-
-        return;
-
-      }
-
-      console.log(
-        `⚡ Executing: ${interaction.commandName}`
-      );
-
-      await command.execute(interaction, {
-        SUBMIT_SHEET_ID,
-        MAIN_SHEET_ID
-      });
-
-    } catch (err) {
-
-      console.error(
-        "❌ Interaction error:"
-      );
-
-      console.error(err);
-
-      try {
-
-        if (
-          interaction.replied ||
-          interaction.deferred
-        ) {
-
-          await interaction.followUp({
-            content:
-              "❌ An error occurred while executing this command.",
-            ephemeral: true
-          });
-
-        } else {
-
-          await interaction.reply({
-            content:
-              "❌ An error occurred while executing this command.",
-            ephemeral: true
-          });
-
-        }
-
-      } catch (replyErr) {
-
-        console.error(
-          "❌ Failed sending error reply:"
-        );
-
-        console.error(replyErr);
-
-      }
+      console.error(replyErr);
 
     }
 
   }
-);
+
+});
+
+// ================= MEMBER JOIN =================
+
+client.on("guildMemberAdd", async member => {
+
+  console.log(
+    `👋 New member joined: ${member.user.tag}`
+  );
+
+  try {
+
+    if (handleWelcome) {
+
+      await handleWelcome(member);
+
+      console.log(
+        `✅ Welcome handled for ${member.user.tag}`
+      );
+
+    } else {
+
+      console.log(
+        "⚠️ handleWelcome missing"
+      );
+
+    }
+
+  } catch (err) {
+
+    console.error(
+      "❌ guildMemberAdd error:"
+    );
+
+    console.error(err);
+
+  }
+
+});
 
 // ================= HEALTH SERVER =================
 
-const PORT =
-  process.env.PORT || 8080;
+const PORT = process.env.PORT || 3000;
 
 http
   .createServer((req, res) => {
 
-    res.writeHead(200);
+    res.writeHead(200, {
+      "Content-Type": "text/plain"
+    });
 
-    res.end("OK");
+    res.end("Bot is alive.");
 
   })
   .listen(PORT, () => {
@@ -557,21 +445,24 @@ http
 
 // ================= LOGIN =================
 
-client
-  .login(DISCORD_TOKEN)
-
+client.login(DISCORD_TOKEN)
   .then(() => {
 
-    console.log(
-      "✅ Bot login successful"
-    );
+    console.log("✅ Login successful");
 
   })
-
   .catch(err => {
 
-    console.error("❌ Login error:");
-
+    console.error("❌ Login failed:");
     console.error(err);
 
   });
+```
+
+# IMPORTANT
+
+Also enable:
+
+Developer Portal → Bot → Privileged Gateway Intents → SERVER MEMBERS INTENT
+
+And make sure the bot role is ABOVE the new member role in Discord role hierarchy.
