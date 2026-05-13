@@ -15,6 +15,22 @@ const ROLE_DELAY_MS = 750;
 
 const BLOCKED_ROLE_ID = "1463660686231207956";
 
+// ================= EMOJIS =================
+const ACCEPTED_EMOJI = "<:ZBDACCEPTED:1405510864496361482>";
+
+const NUMBER_EMOJIS = {
+  "0": "<:ZBD0:1405509686194864188>",
+  "1": "<:ZBD1:1405509032705392685>",
+  "2": "<:ZBD2:1405509125500309636>",
+  "3": "<:ZBD3:1405509179291992165>",
+  "4": "<:ZBD4:1405509225144389734>",
+  "5": "<:ZBD5:1405509441054572577>",
+  "6": "<:ZBD6:1405509486533148763>",
+  "7": "<:ZBD7:1405509549246386218>",
+  "8": "<:ZBD8:1405509615529230347>",
+  "9": "<:ZBD9:1405509655702274210>"
+};
+
 // ================= GOOGLE =================
 const credentials = JSON.parse(
   Buffer.from(
@@ -33,6 +49,14 @@ const sheets = google.sheets({ version: "v4", auth });
 // ================= HELPERS =================
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 const isoNow = () => new Date().toISOString();
+
+function numberToEmojiString(number) {
+  return number
+    .toString()
+    .split("")
+    .map(digit => NUMBER_EMOJIS[digit] || digit)
+    .join("");
+}
 
 async function logAudit(data) {
   await sheets.spreadsheets.values.append({
@@ -86,7 +110,10 @@ module.exports = {
 
     const taggedUserIds = new Set();
 
-    for (const msg of messages.values()) {
+    // Valid teams in order
+    const validTeams = [];
+
+    for (const msg of [...messages.values()].reverse()) {
 
       const mentionedUsers = [...msg.mentions.users.values()]
         .filter(user => !user.bot);
@@ -104,8 +131,7 @@ module.exports = {
         }
       }
 
-      // If ANY player in the message is blocked,
-      // skip ALL players from that message
+      // Skip entire signup if anyone is event banned
       if (blockedMember) {
         try {
           await channel.send(
@@ -116,7 +142,13 @@ module.exports = {
         continue;
       }
 
-      // Otherwise add everyone from the message
+      // Save valid team in signup order
+      validTeams.push({
+        message: msg,
+        users: mentionedUsers
+      });
+
+      // Add users for role assignment
       for (const user of mentionedUsers) {
         taggedUserIds.add(user.id);
       }
@@ -129,6 +161,7 @@ module.exports = {
     let added = 0;
     let skipped = 0;
 
+    // ================= ROLE ASSIGN =================
     for (const userId of taggedUserIds) {
       const member = guild.members.cache.get(userId);
       if (!member) continue;
@@ -146,11 +179,40 @@ module.exports = {
       await delay(ROLE_DELAY_MS);
     }
 
+    // ================= REACT WITH TEAM NUMBERS =================
+    let teamNumber = 1;
+
+    for (const team of validTeams) {
+
+      try {
+        await team.message.react("1405510864496361482");
+
+        const numberEmojiString = numberToEmojiString(teamNumber);
+
+        const emojiMatches = numberEmojiString.match(/<a?:.+?:\d+>/g) || [];
+
+        for (const emoji of emojiMatches) {
+          const emojiId = emoji.match(/\d+/)?.[0];
+
+          if (emojiId) {
+            await team.message.react(emojiId);
+            await delay(500);
+          }
+        }
+
+      } catch (err) {
+        console.error("[ROLETAGGED REACT ERROR]", err);
+      }
+
+      teamNumber++;
+    }
+
     const resultMessage =
       "Role assignment complete\n" +
       "Role: " + role.name + "\n" +
       "Added to: " + added + " members\n" +
-      "Already had role: " + skipped;
+      "Already had role: " + skipped + "\n" +
+      "Valid teams processed: " + validTeams.length;
 
     await interaction.editReply(resultMessage);
 
@@ -163,7 +225,8 @@ module.exports = {
         "Moderator: " + interaction.user.tag + "\n" +
         "Channel: " + channel.id + "\n" +
         "Role: " + role.name + "\n" +
-        "Added to: " + added
+        "Added to: " + added + "\n" +
+        "Teams: " + validTeams.length
       );
 
     } catch {}
@@ -176,7 +239,8 @@ module.exports = {
         context:
           "role=" + role.id +
           " channel=" + channel.id +
-          " added=" + added
+          " added=" + added +
+          " teams=" + validTeams.length
       });
 
     } catch (err) {
