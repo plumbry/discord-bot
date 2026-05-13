@@ -48,7 +48,7 @@ try {
     verifyCommand,
     handleVerify,
     handleWelcome
-  } = require("./index"));
+  } = require("./welcome-ping"));
 
   console.log("✅ welcome module loaded");
 
@@ -242,43 +242,169 @@ client.once("clientReady", async () => {
 
   }
 
-  // ================= REGISTER SLASH COMMANDS =================
+  // ================= COMMAND REGISTRATION =================
+
+  const rest = new REST({
+    version: "10"
+  }).setToken(DISCORD_TOKEN);
+
+  const commandJSON = [];
+
+  // ================= COMMANDS FOLDER =================
+
+  for (const command of client.commands.values()) {
+
+    try {
+
+      const json =
+        command.data.toJSON();
+
+      commandJSON.push(json);
+
+      console.log(
+        `📦 Registering command: ${json.name}`
+      );
+
+    } catch (err) {
+
+      console.error(
+        `❌ Failed converting command: ${command?.data?.name}`
+      );
+
+      console.error(err);
+
+    }
+
+  }
+
+  // ================= VERIFY =================
+
+  if (verifyCommand) {
+
+    try {
+
+      const json =
+        verifyCommand.toJSON();
+
+      commandJSON.push(json);
+
+      console.log(
+        `📦 Registering command: ${json.name}`
+      );
+
+    } catch (err) {
+
+      console.error(
+        "❌ Failed converting verify command:"
+      );
+
+      console.error(err);
+
+    }
+
+  }
+
+  // ================= REGISTER NORMAL COMMANDS =================
 
   try {
 
-    const commands = [];
-
-    if (verifyCommand) {
-      commands.push(verifyCommand.toJSON());
-    }
-
-    if (eventBanCommand) {
-      commands.push(eventBanCommand.toJSON());
-    }
-
-    if (dm?.data) {
-      commands.push(dm.data.toJSON());
-    }
-
-    const rest = new REST({ version: "10" })
-      .setToken(DISCORD_TOKEN);
-
     await rest.put(
-      Routes.applicationCommands(client.user.id),
-      { body: commands }
+      Routes.applicationGuildCommands(
+        client.user.id,
+        "1371615693392576580"
+      ),
+      {
+        body: commandJSON
+      }
     );
 
     console.log(
-      `✅ Registered ${commands.length} slash commands`
+      "✅ Standard slash commands registered"
     );
 
   } catch (err) {
 
     console.error(
-      "❌ Failed to register slash commands:"
+      "❌ Standard command registration failed:"
     );
 
     console.error(err);
+
+  }
+
+  // ================= REGISTER EVENTBAN SEPARATELY =================
+
+  if (eventBanCommand) {
+
+    try {
+
+      const eventJSON =
+        eventBanCommand.toJSON();
+
+      console.log(
+        "EVENTBAN JSON:",
+        eventJSON
+      );
+
+      await rest.post(
+        Routes.applicationGuildCommands(
+          client.user.id,
+          "1371615693392576580"
+        ),
+        {
+          body: eventJSON
+        }
+      );
+
+      console.log(
+        "✅ Eventban registered separately"
+      );
+
+    } catch (err) {
+
+      console.error(
+        "❌ Eventban registration failed:"
+      );
+
+      console.error(err);
+
+    }
+
+  }
+
+  // ================= DM SCHEDULER =================
+
+  if (
+    dm?.startDMScheduler &&
+    MAIN_SHEET_ID
+  ) {
+
+    try {
+
+      dm.startDMScheduler(
+        client,
+        MAIN_SHEET_ID
+      );
+
+      console.log(
+        "✅ DM scheduler started"
+      );
+
+    } catch (err) {
+
+      console.error(
+        "❌ DM scheduler error:"
+      );
+
+      console.error(err);
+
+    }
+
+  } else {
+
+    console.log(
+      "⚠️ DM scheduler disabled"
+    );
 
   }
 
@@ -286,101 +412,131 @@ client.once("clientReady", async () => {
 
 // ================= INTERACTIONS =================
 
-client.on("interactionCreate", async interaction => {
+client.on(
+  "interactionCreate",
+  async interaction => {
 
-  if (!interaction.isChatInputCommand()) {
-    return;
-  }
-
-  try {
-
-    // ================= VERIFY =================
-
-    if (interaction.commandName === "verify") {
-
-      if (!handleVerify) {
-        return interaction.reply({
-          content: "Verify system unavailable.",
-          ephemeral: true
-        });
-      }
-
-      return handleVerify(interaction);
-
-    }
-
-    // ================= EVENT BAN =================
-
-    if (interaction.commandName === "eventban") {
-
-      if (!handleEventBan) {
-        return interaction.reply({
-          content: "Event ban system unavailable.",
-          ephemeral: true
-        });
-      }
-
-      return handleEventBan(interaction);
-
-    }
-
-    // ================= DM =================
-
-    if (
-      interaction.commandName === dm?.data?.name
-    ) {
-
-      return dm.execute(interaction);
-
-    }
-
-    // ================= COMMANDS FOLDER =================
-
-    const command = client.commands.get(
-      interaction.commandName
-    );
-
-    if (!command) {
+    if (!interaction.isChatInputCommand())
       return;
-    }
 
-    await command.execute(interaction);
-
-  } catch (err) {
-
-    console.error(
-      "❌ interactionCreate error:"
+    console.log(
+      `🔥 Interaction received: ${interaction.commandName}`
     );
-
-    console.error(err);
 
     try {
 
-      if (interaction.deferred || interaction.replied) {
+      // ================= VERIFY =================
 
-        await interaction.followUp({
-          content: "An error occurred.",
-          ephemeral: true
-        });
+      if (
+        interaction.commandName ===
+          "verify" &&
+        handleVerify
+      ) {
 
-      } else {
-
-        await interaction.reply({
-          content: "An error occurred.",
-          ephemeral: true
-        });
+        return await handleVerify(
+          interaction
+        );
 
       }
 
-    } catch (replyErr) {
+      // ================= EVENT BANS =================
 
-      console.error(replyErr);
+      if (
+        interaction.commandName ===
+          "eventban" &&
+        handleEventBan
+      ) {
+
+        return await handleEventBan(
+          interaction
+        );
+
+      }
+
+      // ================= STANDARD COMMANDS =================
+
+      const command =
+        client.commands.get(
+          interaction.commandName
+        );
+
+      if (!command) {
+
+        console.log(
+          `❌ Command not found: ${interaction.commandName}`
+        );
+
+        if (
+          !interaction.replied &&
+          !interaction.deferred
+        ) {
+
+          await interaction.reply({
+            content:
+              "❌ Command not loaded.",
+            ephemeral: true
+          });
+
+        }
+
+        return;
+
+      }
+
+      console.log(
+        `⚡ Executing: ${interaction.commandName}`
+      );
+
+      await command.execute(interaction, {
+        SUBMIT_SHEET_ID,
+        MAIN_SHEET_ID
+      });
+
+    } catch (err) {
+
+      console.error(
+        "❌ Interaction error:"
+      );
+
+      console.error(err);
+
+      try {
+
+        if (
+          interaction.replied ||
+          interaction.deferred
+        ) {
+
+          await interaction.followUp({
+            content:
+              "❌ An error occurred while executing this command.",
+            ephemeral: true
+          });
+
+        } else {
+
+          await interaction.reply({
+            content:
+              "❌ An error occurred while executing this command.",
+            ephemeral: true
+          });
+
+        }
+
+      } catch (replyErr) {
+
+        console.error(
+          "❌ Failed sending error reply:"
+        );
+
+        console.error(replyErr);
+
+      }
 
     }
 
   }
-
-});
+);
 
 // ================= MEMBER JOIN =================
 
@@ -422,16 +578,15 @@ client.on("guildMemberAdd", async member => {
 
 // ================= HEALTH SERVER =================
 
-const PORT = process.env.PORT || 3000;
+const PORT =
+  process.env.PORT || 8080;
 
 http
   .createServer((req, res) => {
 
-    res.writeHead(200, {
-      "Content-Type": "text/plain"
-    });
+    res.writeHead(200);
 
-    res.end("Bot is alive.");
+    res.end("OK");
 
   })
   .listen(PORT, () => {
@@ -444,15 +599,21 @@ http
 
 // ================= LOGIN =================
 
-client.login(DISCORD_TOKEN)
+client
+  .login(DISCORD_TOKEN)
+
   .then(() => {
 
-    console.log("✅ Login successful");
+    console.log(
+      "✅ Bot login successful"
+    );
 
   })
+
   .catch(err => {
 
-    console.error("❌ Login failed:");
+    console.error("❌ Login error:");
+
     console.error(err);
 
   });
