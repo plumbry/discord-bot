@@ -16,19 +16,19 @@ const ROLE_DELAY_MS = 750;
 const BLOCKED_ROLE_ID = "1463660686231207956";
 
 // ================= EMOJIS =================
-const ACCEPTED_EMOJI = "<:ZBDACCEPTED:1405510864496361482>";
+const ACCEPTED_EMOJI_ID = "1405510864496361482";
 
 const NUMBER_EMOJIS = {
-  "0": "<:ZBD0:1405509686194864188>",
-  "1": "<:ZBD1:1405509032705392685>",
-  "2": "<:ZBD2:1405509125500309636>",
-  "3": "<:ZBD3:1405509179291992165>",
-  "4": "<:ZBD4:1405509225144389734>",
-  "5": "<:ZBD5:1405509441054572577>",
-  "6": "<:ZBD6:1405509486533148763>",
-  "7": "<:ZBD7:1405509549246386218>",
-  "8": "<:ZBD8:1405509615529230347>",
-  "9": "<:ZBD9:1405509655702274210>"
+  "0": "1405509686194864188",
+  "1": "1405509032705392685",
+  "2": "1405509125500309636",
+  "3": "1405509179291992165",
+  "4": "1405509225144389734",
+  "5": "1405509441054572577",
+  "6": "1405509486533148763",
+  "7": "1405509549246386218",
+  "8": "1405509615529230347",
+  "9": "1405509655702274210"
 };
 
 // ================= GOOGLE =================
@@ -49,14 +49,6 @@ const sheets = google.sheets({ version: "v4", auth });
 // ================= HELPERS =================
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 const isoNow = () => new Date().toISOString();
-
-function numberToEmojiString(number) {
-  return number
-    .toString()
-    .split("")
-    .map(digit => NUMBER_EMOJIS[digit] || digit)
-    .join("");
-}
 
 async function logAudit(data) {
   await sheets.spreadsheets.values.append({
@@ -104,16 +96,21 @@ module.exports = {
 
     await interaction.reply("Scanning tagged users...");
 
-    const messages = await channel.messages.fetch({ limit: MESSAGE_SCAN_LIMIT });
+    const messages = await channel.messages.fetch({
+      limit: MESSAGE_SCAN_LIMIT
+    });
 
     await guild.members.fetch();
 
     const taggedUserIds = new Set();
 
-    // Valid teams in order
+    // Valid teams in signup order
     const validTeams = [];
 
-    for (const msg of [...messages.values()].reverse()) {
+    // Reverse so oldest signup becomes Team 1
+    const orderedMessages = [...messages.values()].reverse();
+
+    for (const msg of orderedMessages) {
 
       const mentionedUsers = [...msg.mentions.users.values()]
         .filter(user => !user.bot);
@@ -123,6 +120,7 @@ module.exports = {
       let blockedMember = null;
 
       for (const user of mentionedUsers) {
+
         const member = guild.members.cache.get(user.id);
 
         if (member?.roles.cache.has(BLOCKED_ROLE_ID)) {
@@ -131,8 +129,9 @@ module.exports = {
         }
       }
 
-      // Skip entire signup if anyone is event banned
+      // Skip ENTIRE team if any member is blocked
       if (blockedMember) {
+
         try {
           await channel.send(
             `${blockedMember} cannot sign up for the event. Their entire signup message was skipped.`
@@ -142,28 +141,32 @@ module.exports = {
         continue;
       }
 
-      // Save valid team in signup order
+      // Store valid team
       validTeams.push({
         message: msg,
         users: mentionedUsers
       });
 
-      // Add users for role assignment
+      // Queue users for role assignment
       for (const user of mentionedUsers) {
         taggedUserIds.add(user.id);
       }
     }
 
     if (taggedUserIds.size === 0) {
-      return interaction.editReply("No eligible tagged users found in recent messages.");
+      return interaction.editReply(
+        "No eligible tagged users found in recent messages."
+      );
     }
 
+    // ================= ROLE ASSIGNMENT =================
     let added = 0;
     let skipped = 0;
 
-    // ================= ROLE ASSIGN =================
     for (const userId of taggedUserIds) {
+
       const member = guild.members.cache.get(userId);
+
       if (!member) continue;
 
       if (member.roles.cache.has(role.id)) {
@@ -174,30 +177,37 @@ module.exports = {
       try {
         await member.roles.add(role);
         added++;
-      } catch {}
+      } catch (err) {
+        console.error("[ROLE ADD ERROR]", err);
+      }
 
       await delay(ROLE_DELAY_MS);
     }
 
-    // ================= REACT WITH TEAM NUMBERS =================
+    // ================= TEAM REACTIONS =================
     let teamNumber = 1;
 
     for (const team of validTeams) {
 
       try {
-        await team.message.react("1405510864496361482");
 
-        const numberEmojiString = numberToEmojiString(teamNumber);
+        // Accepted tick
+        await team.message.react(ACCEPTED_EMOJI_ID);
 
-        const emojiMatches = numberEmojiString.match(/<a?:.+?:\d+>/g) || [];
+        await delay(500);
 
-        for (const emoji of emojiMatches) {
-          const emojiId = emoji.match(/\d+/)?.[0];
+        // Team number digits
+        const digits = teamNumber.toString().split("");
 
-          if (emojiId) {
-            await team.message.react(emojiId);
-            await delay(500);
-          }
+        for (const digit of digits) {
+
+          const emojiId = NUMBER_EMOJIS[digit];
+
+          if (!emojiId) continue;
+
+          await team.message.react(emojiId);
+
+          await delay(500);
         }
 
       } catch (err) {
@@ -207,6 +217,7 @@ module.exports = {
       teamNumber++;
     }
 
+    // ================= RESULT =================
     const resultMessage =
       "Role assignment complete\n" +
       "Role: " + role.name + "\n" +
@@ -218,6 +229,7 @@ module.exports = {
 
     // ================= LOG CHANNEL =================
     try {
+
       const logChannel = await guild.channels.fetch(LOG_CHANNEL_ID);
 
       await logChannel.send(
@@ -233,6 +245,7 @@ module.exports = {
 
     // ================= SHEET AUDIT =================
     try {
+
       await logAudit({
         action: "ROLE_TAGGED_ASSIGN",
         moderator: interaction.user,
