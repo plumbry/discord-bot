@@ -6,7 +6,11 @@ const {
   Client,
   GatewayIntentBits,
   REST,
-  Routes
+  Routes,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ActionRowBuilder
 } = require("discord.js");
 
 const fs = require("fs");
@@ -439,11 +443,36 @@ client.on(
           )
         ) {
 
-          return await interaction.reply({
-            content:
-              "Override system not built yet.",
-            ephemeral: true
-          });
+          const modal =
+            new ModalBuilder()
+              .setCustomId(
+                "override_game_code"
+              )
+              .setTitle(
+                "Override Game Code"
+              );
+
+          const codeInput =
+            new TextInputBuilder()
+              .setCustomId("new_code")
+              .setLabel("New Game Code")
+              .setStyle(
+                TextInputStyle.Short
+              )
+              .setRequired(true)
+              .setMaxLength(32);
+
+          const row =
+            new ActionRowBuilder()
+              .addComponents(
+                codeInput
+              );
+
+          modal.addComponents(row);
+
+          return await interaction.showModal(
+            modal
+          );
 
         }
 
@@ -459,7 +488,7 @@ client.on(
 
             return await interaction.reply({
               content:
-                "❌ No active game call found.",
+                "❌ No active game call found",
               ephemeral: true
             });
 
@@ -474,7 +503,7 @@ client.on(
 
           return await interaction.reply({
             content:
-              "✅ Follow up messages stopped.",
+              "✅ Follow up messages stopped",
             ephemeral: true
           });
 
@@ -492,7 +521,7 @@ client.on(
 
             return await interaction.reply({
               content:
-                "❌ No active game call found.",
+                "❌ No active game call found",
               ephemeral: true
             });
 
@@ -506,12 +535,12 @@ client.on(
           );
 
           await interaction.channel.send(
-            "❌ GAME CALL CANCELLED"
+            "❌ GAME CANCELLED"
           );
 
           return await interaction.reply({
             content:
-              "✅ Game call cancelled.",
+              "✅ Game call cancelled",
             ephemeral: true
           });
 
@@ -535,6 +564,93 @@ client.on(
             await interaction.reply({
               content:
                 "❌ Button interaction failed.",
+              ephemeral: true
+            });
+
+          }
+
+        } catch {}
+
+      }
+
+      return;
+
+    }
+
+    // ================= MODALS =================
+
+    if (interaction.isModalSubmit()) {
+
+      try {
+
+        if (
+          interaction.customId ===
+          "override_game_code"
+        ) {
+
+          const {
+            activeCalls
+          } = require("./commands/gamecall");
+
+          const call =
+            activeCalls.get(
+              interaction.channel.id
+            );
+
+          if (!call) {
+
+            return await interaction.reply({
+              content:
+                "❌ No active game call found.",
+              ephemeral: true
+            });
+
+          }
+
+          const newCode =
+            interaction.fields.getTextInputValue(
+              "new_code"
+            );
+
+          call.code = newCode;
+
+          const msg =
+            await interaction.channel.messages.fetch(
+              call.messageId
+            );
+
+          await msg.edit(
+`GAME ${call.gameNumber} ${call.region} CODE ${newCode}
+GAME ${call.gameNumber} STARTING SOON
+WHO IS NOT IN <@&${call.roleId}>`
+          );
+
+          return await interaction.reply({
+            content:
+              `✅ Game code overridden to: ${newCode}`,
+            ephemeral: true
+          });
+
+        }
+
+      } catch (err) {
+
+        console.error(
+          "❌ Modal interaction error:"
+        );
+
+        console.error(err);
+
+        try {
+
+          if (
+            !interaction.replied &&
+            !interaction.deferred
+          ) {
+
+            await interaction.reply({
+              content:
+                "❌ Failed to override game code.",
               ephemeral: true
             });
 
