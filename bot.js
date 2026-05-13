@@ -416,6 +416,140 @@ client.on(
   "interactionCreate",
   async interaction => {
 
+    // ================= BUTTONS =================
+
+    if (interaction.isButton()) {
+
+      try {
+
+        const {
+          activeCalls
+        } = require("./commands/gamecall");
+
+        const call =
+          activeCalls.get(
+            interaction.channel.id
+          );
+
+        // ================= OVERRIDE =================
+
+        if (
+          interaction.customId.startsWith(
+            "gamecall_override_"
+          )
+        ) {
+
+          return await interaction.reply({
+            content:
+              "Override system not built yet.",
+            ephemeral: true
+          });
+
+        }
+
+        // ================= STOP FOLLOW UPS =================
+
+        if (
+          interaction.customId.startsWith(
+            "staff_stop_followups_"
+          )
+        ) {
+
+          if (!call) {
+
+            return await interaction.reply({
+              content:
+                "❌ No active game call found.",
+              ephemeral: true
+            });
+
+          }
+
+          clearTimeout(call.t1);
+          clearTimeout(call.t2);
+
+          activeCalls.delete(
+            interaction.channel.id
+          );
+
+          return await interaction.reply({
+            content:
+              "✅ Follow up messages stopped.",
+            ephemeral: true
+          });
+
+        }
+
+        // ================= CANCEL GAME =================
+
+        if (
+          interaction.customId.startsWith(
+            "staff_cancel_game_"
+          )
+        ) {
+
+          if (!call) {
+
+            return await interaction.reply({
+              content:
+                "❌ No active game call found.",
+              ephemeral: true
+            });
+
+          }
+
+          clearTimeout(call.t1);
+          clearTimeout(call.t2);
+
+          activeCalls.delete(
+            interaction.channel.id
+          );
+
+          await interaction.channel.send(
+            "❌ GAME CALL CANCELLED"
+          );
+
+          return await interaction.reply({
+            content:
+              "✅ Game call cancelled.",
+            ephemeral: true
+          });
+
+        }
+
+      } catch (err) {
+
+        console.error(
+          "❌ Button interaction error:"
+        );
+
+        console.error(err);
+
+        try {
+
+          if (
+            !interaction.replied &&
+            !interaction.deferred
+          ) {
+
+            await interaction.reply({
+              content:
+                "❌ Button interaction failed.",
+              ephemeral: true
+            });
+
+          }
+
+        } catch {}
+
+      }
+
+      return;
+
+    }
+
+    // ================= CHAT COMMANDS =================
+
     if (!interaction.isChatInputCommand())
       return;
 
