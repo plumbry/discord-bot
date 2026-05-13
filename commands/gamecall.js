@@ -140,6 +140,8 @@ WHO IS NOT IN ${role}`
       messageId:msg.id,
       roleId:role.id,
       gameNumber:game,
+      region,
+      code,
       t1,
       t2
     });
