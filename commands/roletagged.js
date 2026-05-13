@@ -74,11 +74,19 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName("roletagged")
     .setDescription("Give a role to all users mentioned in recent messages")
+
     .addRoleOption(o =>
       o.setName("role")
         .setDescription("Role to give to tagged users")
         .setRequired(true)
     )
+
+    .addBooleanOption(o =>
+      o.setName("skip")
+        .setDescription("Ignore event banned checks and process all teams")
+        .setRequired(false)
+    )
+
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
   async execute(interaction) {
@@ -91,6 +99,8 @@ module.exports = {
     }
 
     const role = interaction.options.getRole("role");
+    const ignoreBlocked = interaction.options.getBoolean("skip") || false;
+
     const channel = interaction.channel;
     const guild = interaction.guild;
 
@@ -119,13 +129,16 @@ module.exports = {
 
       let blockedMember = null;
 
-      for (const user of mentionedUsers) {
+      if (!ignoreBlocked) {
 
-        const member = guild.members.cache.get(user.id);
+        for (const user of mentionedUsers) {
 
-        if (member?.roles.cache.has(BLOCKED_ROLE_ID)) {
-          blockedMember = member;
-          break;
+          const member = guild.members.cache.get(user.id);
+
+          if (member?.roles.cache.has(BLOCKED_ROLE_ID)) {
+            blockedMember = member;
+            break;
+          }
         }
       }
 
@@ -193,34 +206,19 @@ module.exports = {
 
         await team.message.fetch();
 
-        // Skip if already numbered/accepted
         const existingReactionIds = team.message.reactions.cache.map(
           r => r.emoji.id
         );
 
-        const alreadyProcessed =
-          existingReactionIds.includes(ACCEPTED_EMOJI_ID) ||
-          Object.values(NUMBER_EMOJIS).some(id =>
-            existingReactionIds.includes(id)
-          );
+        // ================= ACCEPTED REACTION =================
+        if (!existingReactionIds.includes(ACCEPTED_EMOJI_ID)) {
 
-        if (alreadyProcessed) {
+          await team.message.react(ACCEPTED_EMOJI_ID);
 
-          console.log(
-            "[ROLETAGGED] Skipping already processed message:",
-            team.message.id
-          );
-
-          teamNumber++;
-          continue;
+          await delay(500);
         }
 
-        // Accepted tick
-        await team.message.react(ACCEPTED_EMOJI_ID);
-
-        await delay(500);
-
-        // Team number digits
+        // ================= TEAM NUMBER =================
         const digits = teamNumber.toString().split("");
 
         for (const digit of digits) {
@@ -229,9 +227,13 @@ module.exports = {
 
           if (!emojiId) continue;
 
-          await team.message.react(emojiId);
+          // Only add missing digit reactions
+          if (!existingReactionIds.includes(emojiId)) {
 
-          await delay(500);
+            await team.message.react(emojiId);
+
+            await delay(500);
+          }
         }
 
       } catch (err) {
@@ -247,7 +249,8 @@ module.exports = {
       "Role: " + role.name + "\n" +
       "Added to: " + added + " members\n" +
       "Already had role: " + skipped + "\n" +
-      "Valid teams processed: " + validTeams.length;
+      "Valid teams processed: " + validTeams.length + "\n" +
+      "Skip blocked checks: " + ignoreBlocked;
 
     await interaction.editReply(resultMessage);
 
@@ -262,7 +265,8 @@ module.exports = {
         "Channel: " + channel.id + "\n" +
         "Role: " + role.name + "\n" +
         "Added to: " + added + "\n" +
-        "Teams: " + validTeams.length
+        "Teams: " + validTeams.length + "\n" +
+        "Skip blocked: " + ignoreBlocked
       );
 
     } catch {}
@@ -277,7 +281,8 @@ module.exports = {
           "role=" + role.id +
           " channel=" + channel.id +
           " added=" + added +
-          " teams=" + validTeams.length
+          " teams=" + validTeams.length +
+          " skipBlocked=" + ignoreBlocked
       });
 
     } catch (err) {
