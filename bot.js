@@ -1,4 +1,3 @@
-```js
 console.log("=== BOT STARTING ===");
 
 // ================= CORE =================
@@ -457,12 +456,3 @@ client.login(DISCORD_TOKEN)
     console.error(err);
 
   });
-```
-
-# IMPORTANT
-
-Also enable:
-
-Developer Portal → Bot → Privileged Gateway Intents → SERVER MEMBERS INTENT
-
-And make sure the bot role is ABOVE the new member role in Discord role hierarchy.
