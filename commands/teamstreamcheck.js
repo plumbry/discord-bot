@@ -40,7 +40,10 @@ async function fetchAllMessages(channel) {
 
     while (true) {
       const options = { limit: 100 };
-      if (lastId) options.before = lastId;
+
+      if (lastId) {
+        options.before = lastId;
+      }
 
       let batch;
 
@@ -59,7 +62,7 @@ async function fetchAllMessages(channel) {
     return messages.reverse();
 
   } catch (err) {
-    console.error("Fetch error:", err);
+    console.error("❌ Fetch error:", err);
     return [];
   }
 }
@@ -73,17 +76,21 @@ async function getTeams(signupChannel) {
 
     let accepted = false;
 
-    for (const reaction of msg.reactions.cache.values()) {
-      if (reaction.emoji.id !== ACCEPTED_EMOJI_ID) continue;
+    try {
+      await msg.reactions.fetch();
 
-      try {
-        const users = await reaction.users.fetch();
+      const acceptedReaction =
+        msg.reactions.cache.find(
+          reaction =>
+            reaction.emoji.id === ACCEPTED_EMOJI_ID
+        );
 
-        if (users.size > 0) {
-          accepted = true;
-          break;
-        }
-      } catch {}
+      if (acceptedReaction?.count > 0) {
+        accepted = true;
+      }
+
+    } catch (err) {
+      console.log(`⚠️ Failed reaction fetch: ${msg.id}`);
     }
 
     if (!accepted) continue;
@@ -100,12 +107,11 @@ async function getTeams(signupChannel) {
     });
   }
 
+  console.log(`✅ Teams detected: ${teams.length}`);
+
   return teams;
 }
 
-/**
- * Maps Discord user IDs -> unique Twitch channels submitted
- */
 async function getSubmittedStreams(streamChannel) {
   const messages = await fetchAllMessages(streamChannel);
 
@@ -128,7 +134,6 @@ async function getSubmittedStreams(streamChannel) {
     const batchMode =
       isStaff && matches.length > 5;
 
-    // Ignore staff bulk reposts
     if (batchMode) continue;
 
     if (!submissions.has(msg.author.id)) {
@@ -138,9 +143,7 @@ async function getSubmittedStreams(streamChannel) {
     const userStreams = submissions.get(msg.author.id);
 
     for (const match of matches) {
-      userStreams.add(
-        match[1].toLowerCase()
-      );
+      userStreams.add(match[1].toLowerCase());
     }
   }
 
@@ -149,146 +152,4 @@ async function getSubmittedStreams(streamChannel) {
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName("teamstreamcheck")
-    .setDescription(
-      "Check which accepted teams have not submitted enough streams"
-    )
-    .addStringOption(option =>
-      option
-        .setName("gamemode")
-        .setDescription("Select event gamemode")
-        .setRequired(true)
-        .addChoices(
-          {
-            name: "Duos/Trios",
-            value: "smallteam"
-          },
-          {
-            name: "Squads",
-            value: "squads"
-          }
-        )
-    )
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.ModerateMembers
-    ),
-
-  async execute(interaction) {
-    try {
-      const gamemode = interaction.options.getString("gamemode");
-
-      const requiredStreams =
-        gamemode === "squads"
-          ? 2
-          : 1;
-
-      const baseChannel =
-        interaction.channel.isThread?.()
-          ? interaction.channel.parent
-          : interaction.channel;
-
-      const category = baseChannel?.parent;
-
-      if (!category) {
-        return interaction.reply({
-          content:
-            "This command must be used inside an event category.",
-          ephemeral: true
-        });
-      }
-
-      const fetched = await interaction.guild.channels.fetch();
-
-      const signupChannel = fetched.find(c => {
-        if (c.parentId !== category.id) return false;
-        if (!c.isTextBased()) return false;
-        if (!c.viewable) return false;
-
-        const name = c.name.toLowerCase();
-
-        return (
-          name.includes("sign") &&
-          !name.includes("solo") &&
-          !name.includes("lfg") &&
-          !name.includes("free-agent")
-        );
-      });
-
-      if (!signupChannel) {
-        return interaction.reply({
-          content: "No valid signup channel found.",
-          ephemeral: true
-        });
-      }
-
-      const streamChannel =
-        interaction.channel.isThread?.()
-          ? interaction.channel.parent
-          : interaction.channel;
-
-      await interaction.reply(
-        `Scanning accepted teams (${requiredStreams} stream(s) required)...`
-      );
-
-      const teams = await getTeams(signupChannel);
-      const submissions = await getSubmittedStreams(streamChannel);
-
-      const missingTeams = [];
-
-      for (const team of teams) {
-        const teamStreams = new Set();
-
-        for (const memberId of team.members) {
-          const memberStreams = submissions.get(memberId);
-
-          if (!memberStreams) continue;
-
-          for (const stream of memberStreams) {
-            teamStreams.add(stream);
-          }
-        }
-
-        const count = teamStreams.size;
-
-        if (count < requiredStreams) {
-          missingTeams.push({
-            number: team.number,
-            count
-          });
-        }
-      }
-
-      let message = `📺 **Team Stream Check**\n\n`;
-
-      message += `Gamemode: ${
-        gamemode === "squads"
-          ? "Squads"
-          : "Duos/Trios"
-      }\n`;
-
-      message += `Required Streams Per Team: ${requiredStreams}\n\n`;
-
-      if (missingTeams.length) {
-        message += `Teams Missing Streams (${missingTeams.length})\n\n`;
-
-        for (const team of missingTeams) {
-          message += `Team ${team.number} (${team.count}/${requiredStreams})\n`;
-        }
-      } else {
-        message += `All accepted teams submitted enough streams.`;
-      }
-
-      await interaction.followUp(message);
-
-    } catch (error) {
-      console.error("❌ teamstreamcheck error:", error);
-
-      if (!interaction.replied) {
-        await interaction.reply({
-          content: "Something went wrong while running this command.",
-          ephemeral: true
-        });
-      }
-    }
-  }
-};
+    .setName("teams
