@@ -10,23 +10,9 @@ async function fetchAllMessages(channel) {
   try {
     if (!channel?.viewable) return [];
 
-    if (channel.isThread?.()) {
-      if (channel.archived) {
-        try {
-          await channel.setArchived(false);
-        } catch {
-          return [];
-        }
-      }
-
-      try {
-        await channel.join();
-      } catch {
-        return [];
-      }
-    }
-
-    const perms = channel.permissionsFor(channel.client.user);
+    const perms = channel.permissionsFor(
+      channel.client.user
+    );
 
     if (
       !perms?.has(PermissionFlagsBits.ViewChannel) ||
@@ -39,13 +25,11 @@ async function fetchAllMessages(channel) {
     let lastId;
 
     while (true) {
-      const options = { limit: 100 };
-
-      if (lastId) {
-        options.before = lastId;
-      }
-
-      const batch = await channel.messages.fetch(options);
+      const batch =
+        await channel.messages.fetch({
+          limit: 100,
+          before: lastId
+        });
 
       if (!batch.size) break;
 
@@ -56,198 +40,284 @@ async function fetchAllMessages(channel) {
     return messages.reverse();
 
   } catch (err) {
-    console.error("❌ fetchAllMessages:", err);
+    console.error(
+      "fetchAllMessages:",
+      err
+    );
+
     return [];
   }
 }
 
 async function getTeams(signupChannel) {
-  const messages = await fetchAllMessages(signupChannel);
+
+  const messages =
+    await fetchAllMessages(
+      signupChannel
+    );
+
   const teams = [];
 
   for (const msg of messages) {
+
     if (msg.author.bot) continue;
 
     try {
+
       await msg.reactions.fetch();
 
-      const acceptedReaction = msg.reactions.cache.find(
-        reaction => reaction.emoji.id === ACCEPTED_EMOJI_ID
-      );
+      const accepted =
+        msg.reactions.cache.some(
+          r =>
+            r.emoji.id ===
+            ACCEPTED_EMOJI_ID
+        );
 
-      if (!acceptedReaction?.count) continue;
+      if (!accepted) continue;
 
+      // signup creator + USER mentions only
       const members = [
         msg.author.id,
-        ...msg.mentions.users.keys()
+        ...msg.mentions.users.map(
+          u => u.id
+        )
       ];
 
+      const uniqueMembers =
+        [...new Set(members)];
+
       teams.push({
-        number: teams.length + 1,
-        members: [...new Set(members)]
+        number:
+          teams.length + 1,
+        members:
+          uniqueMembers
       });
 
-    } catch (err) {
-      console.log(`⚠️ Team parse failed ${msg.id}`);
+    } catch(err) {
+      console.log(
+        "Team parse failed",
+        msg.id
+      );
     }
   }
 
   return teams;
 }
 
-async function getStreamMessages(streamChannel) {
-  const messages = await fetchAllMessages(streamChannel);
+async function getStreamPosts(
+  streamChannel
+) {
 
-  return messages.filter(msg => {
-    if (msg.author.bot) return false;
-
-    const links = [
-      ...msg.content.matchAll(TWITCH_REGEX)
-    ];
-
-    if (!links.length) return false;
-
-    const isStaff = msg.member?.permissions?.has(
-      PermissionFlagsBits.ManageRoles
+  const messages =
+    await fetchAllMessages(
+      streamChannel
     );
 
-    return !(isStaff && links.length > 5);
-  });
+  return messages
+    .filter(msg => {
+
+      if (msg.author.bot)
+        return false;
+
+      const links =
+        [
+          ...msg.content.matchAll(
+            TWITCH_REGEX
+          )
+        ];
+
+      if (!links.length)
+        return false;
+
+      const isStaff =
+        msg.member?.permissions?.has(
+          PermissionFlagsBits.ManageRoles
+        );
+
+      return !(
+        isStaff &&
+        links.length > 5
+      );
+
+    })
+    .map(msg => ({
+      authorId:
+        msg.author.id,
+
+      linkCount:
+        [...msg.content.matchAll(
+          TWITCH_REGEX
+        )].length
+    }));
 }
 
 module.exports = {
-  data: new SlashCommandBuilder()
-    .setName("teamstreamcheck")
-    .setDescription("Check accepted teams for missing streams")
-    .addStringOption(option =>
-      option
-        .setName("gamemode")
-        .setDescription("Select event gamemode")
-        .setRequired(true)
-        .addChoices(
-          {
-            name: "Duos/Trios",
-            value: "smallteam"
-          },
-          {
-            name: "Squads",
-            value: "squads"
-          }
-        )
-    )
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.ModerateMembers
-    ),
 
-  async execute(interaction) {
+  data:
+    new SlashCommandBuilder()
+      .setName(
+        "teamstreamcheck"
+      )
+      .setDescription(
+        "Check team streams"
+      )
+      .addStringOption(
+        option =>
+          option
+            .setName(
+              "gamemode"
+            )
+            .setDescription(
+              "Event mode"
+            )
+            .setRequired(
+              true
+            )
+            .addChoices(
+              {
+                name:
+                  "Duos/Trios",
+                value:
+                  "smallteam"
+              },
+              {
+                name:
+                  "Squads",
+                value:
+                  "squads"
+              }
+            )
+      )
+      .setDefaultMemberPermissions(
+        PermissionFlagsBits
+          .ModerateMembers
+      ),
+
+  async execute(
+    interaction
+  ) {
+
     try {
-      const gamemode = interaction.options.getString("gamemode");
 
-      const requiredStreams =
-        gamemode === "squads" ? 2 : 1;
+      const required =
+        interaction.options.getString(
+          "gamemode"
+        ) === "squads"
+          ? 2
+          : 1;
 
-      const baseChannel = interaction.channel.isThread?.()
-        ? interaction.channel.parent
-        : interaction.channel;
+      const category =
+        interaction.channel.parent;
 
-      const category = baseChannel?.parent;
+      const channels =
+        await interaction.guild.channels.fetch();
 
-      if (!category) {
-        return interaction.reply({
-          content: "Must be used in an event category.",
-          ephemeral: true
-        });
-      }
-
-      const channels = await interaction.guild.channels.fetch();
-
-      const signupChannel = channels.find(c => {
-        if (c.parentId !== category.id) return false;
-        if (!c.isTextBased()) return false;
-
-        const name = c.name.toLowerCase();
-
-        return (
-          name.includes("sign") &&
-          !name.includes("solo") &&
-          !name.includes("lfg") &&
-          !name.includes("free-agent")
+      const signupChannel =
+        channels.find(c =>
+          c.parentId ===
+            category.id &&
+          c.name
+            .toLowerCase()
+            .includes(
+              "sign"
+            )
         );
-      });
 
       if (!signupChannel) {
+
         return interaction.reply({
-          content: "No signup channel found.",
-          ephemeral: true
+          content:
+            "Signup channel not found.",
+          ephemeral:true
         });
+
       }
 
       await interaction.reply(
-        `Scanning accepted teams (${requiredStreams} required)...`
+        "Scanning..."
       );
 
-      const teams = await getTeams(signupChannel);
-      const streamMessages = await getStreamMessages(baseChannel);
+      const teams =
+        await getTeams(
+          signupChannel
+        );
 
-      const missingTeams = [];
+      const streamPosts =
+        await getStreamPosts(
+          interaction.channel
+        );
+
+      const missing=[];
 
       for (const team of teams) {
-        let submissionCount = 0;
 
-        for (const msg of streamMessages) {
-          if (!team.members.includes(msg.author.id)) {
-            continue;
-          }
+        let total=0;
 
-          const links = [
-            ...msg.content.matchAll(TWITCH_REGEX)
-          ];
+        for (const post of streamPosts) {
 
-          if (requiredStreams === 1) {
-            submissionCount = 1;
-            break;
-          }
+          if (
+            !team.members.includes(
+              post.authorId
+            )
+          ) continue;
 
-          submissionCount += Math.min(links.length, 2);
+          total += Math.min(
+            post.linkCount,
+            2
+          );
 
-          if (submissionCount >= requiredStreams) {
-            break;
-          }
+          if (
+            total >= required
+          ) break;
         }
 
-        if (submissionCount < requiredStreams) {
-          missingTeams.push({
-            number: team.number,
-            count: submissionCount
+        if (
+          total < required
+        ) {
+
+          missing.push({
+            number:
+              team.number,
+            count:
+              total
           });
+
         }
       }
 
-      let output = `📺 **Team Stream Check**\n\n`;
-      output += `Gamemode: ${gamemode === "squads" ? "Squads" : "Duos/Trios"}\n`;
-      output += `Required: ${requiredStreams}\n\n`;
+      let output =
+`📺 **Team Stream Check**
 
-      if (missingTeams.length) {
-        output += `Teams Missing Streams (${missingTeams.length})\n\n`;
+Required: ${required}
 
-        for (const team of missingTeams) {
-          output += `Team ${team.number} (${team.count}/${requiredStreams})\n`;
+`;
+
+      if (missing.length) {
+
+        for (const t of missing) {
+
+          output +=
+`Team ${t.number} (${t.count}/${required})
+`;
+
         }
+
       } else {
-        output += "All accepted teams submitted enough streams.";
+
+        output +=
+"All accepted teams submitted enough streams.";
+
       }
 
-      await interaction.followUp(output);
+      await interaction.followUp(
+        output
+      );
 
-    } catch (err) {
-      console.error("❌ teamstreamcheck:", err);
+    } catch(err){
 
-      if (!interaction.replied) {
-        await interaction.reply({
-          content: "Something went wrong.",
-          ephemeral: true
-        });
-      }
+      console.error(err);
+
     }
+
   }
 };
