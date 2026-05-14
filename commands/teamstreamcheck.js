@@ -35,23 +35,15 @@ async function fetchAllMessages(channel) {
       return [];
     }
 
-    let messages = [];
+    const messages = [];
     let lastId;
 
     while (true) {
       const options = { limit: 100 };
 
-      if (lastId) {
-        options.before = lastId;
-      }
+      if (lastId) options.before = lastId;
 
-      let batch;
-
-      try {
-        batch = await channel.messages.fetch(options);
-      } catch {
-        break;
-      }
+      const batch = await channel.messages.fetch(options);
 
       if (!batch.size) break;
 
@@ -79,23 +71,18 @@ async function getTeams(signupChannel) {
 
       const acceptedReaction =
         msg.reactions.cache.find(
-          reaction =>
-            reaction.emoji.id === ACCEPTED_EMOJI_ID
+          reaction => reaction.emoji.id === ACCEPTED_EMOJI_ID
         );
 
       if (!acceptedReaction?.count) continue;
 
-      // Include signup author + tagged teammates
+      // signup author + tagged members
       const members = [
         msg.author.id,
         ...msg.mentions.users.keys()
       ];
 
-      const uniqueMembers = [
-        ...new Set(members)
-      ];
-
-      if (!uniqueMembers.length) continue;
+      const uniqueMembers = [...new Set(members)];
 
       teams.push({
         number: teams.length + 1,
@@ -103,30 +90,24 @@ async function getTeams(signupChannel) {
       });
 
     } catch (err) {
-      console.log(
-        `⚠️ Team parse failed: ${msg.id}`
-      );
+      console.log(`⚠️ Failed team parse ${msg.id}`);
     }
   }
-
-  console.log(`✅ Teams found: ${teams.length}`);
 
   return teams;
 }
 
-async function getTeamSubmissions(streamChannel) {
+async function getStreamMessages(streamChannel) {
   const messages = await fetchAllMessages(streamChannel);
 
-  const submissions = new Map();
-
-  for (const msg of messages) {
-    if (msg.author.bot) continue;
+  return messages.filter(msg => {
+    if (msg.author.bot) return false;
 
     const links = [
       ...msg.content.matchAll(TWITCH_REGEX)
     ];
 
-    if (!links.length) continue;
+    if (!links.length) return false;
 
     const isStaff =
       msg.member?.permissions?.has(
@@ -136,30 +117,16 @@ async function getTeamSubmissions(streamChannel) {
     const batchMode =
       isStaff && links.length > 5;
 
-    // Ignore mass reposts by staff
-    if (batchMode) continue;
-
-    if (!submissions.has(msg.author.id)) {
-      submissions.set(msg.author.id, new Set());
-    }
-
-    const userLinks =
-      submissions.get(msg.author.id);
-
-    for (const link of links) {
-      userLinks.add(
-        link[1].toLowerCase()
-      );
-    }
-  }
-
-  return submissions;
+    return !batchMode;
+  });
 }
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("teamstreamcheck")
-    .setDescription("Check which accepted teams are missing streams")
+    .setDescription(
+      "Check accepted teams for missing streams"
+    )
     .addStringOption(option =>
       option
         .setName("gamemode")
@@ -199,7 +166,7 @@ module.exports = {
 
       if (!category) {
         return interaction.reply({
-          content: "Must be run in an event category.",
+          content: "Must be used in an event category.",
           ephemeral: true
         });
       }
@@ -235,29 +202,30 @@ module.exports = {
       const teams =
         await getTeams(signupChannel);
 
-      const submissions =
-        await getTeamSubmissions(baseChannel);
+      const streamMessages =
+        await getStreamMessages(baseChannel);
 
       const missingTeams = [];
 
       for (const team of teams) {
-        const teamLinks = new Set();
+        let totalLinks = 0;
 
-        for (const memberId of team.members) {
-          const memberLinks =
-            submissions.get(memberId);
-
-          if (!memberLinks) continue;
-
-          for (const link of memberLinks) {
-            teamLinks.add(link);
+        for (const msg of streamMessages) {
+          if (!team.members.includes(msg.author.id)) {
+            continue;
           }
+
+          const links = [
+            ...msg.content.matchAll(TWITCH_REGEX)
+          ];
+
+          totalLinks += links.length;
         }
 
-        if (teamLinks.size < requiredStreams) {
+        if (totalLinks < requiredStreams) {
           missingTeams.push({
             number: team.number,
-            count: teamLinks.size
+            count: totalLinks
           });
         }
       }
@@ -274,12 +242,10 @@ Required Streams: ${requiredStreams}
         output += `Teams Missing Streams (${missingTeams.length})\n\n`;
 
         for (const team of missingTeams) {
-          output +=
-            `Team ${team.number} (${team.count}/${requiredStreams})\n`;
+          output += `Team ${team.number} (${team.count}/${requiredStreams})\n`;
         }
       } else {
-        output +=
-          "All accepted teams submitted enough streams.";
+        output += "All accepted teams submitted enough streams.";
       }
 
       await interaction.followUp(output);
