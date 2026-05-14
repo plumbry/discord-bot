@@ -44,10 +44,13 @@ const auth = new google.auth.GoogleAuth({
   scopes: ["https://www.googleapis.com/auth/spreadsheets"]
 });
 
-const sheets = google.sheets({ version: "v4", auth });
+const sheets = google.sheets({
+  version: "v4",
+  auth
+});
 
 // ================= HELPERS =================
-const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+const delay = (ms) => new Promise(r => setTimeout(r, ms));
 const isoNow = () => new Date().toISOString();
 
 async function logAudit(data) {
@@ -71,246 +74,422 @@ async function logAudit(data) {
 
 // ================= COMMAND =================
 module.exports = {
+
   data: new SlashCommandBuilder()
     .setName("roletagged")
-    .setDescription("Give a role to all users mentioned in recent messages")
+    .setDescription("Give roles to tagged users from signups")
 
     .addRoleOption(o =>
       o.setName("role")
-        .setDescription("Role to give to tagged users")
+        .setDescription("Role to give")
         .setRequired(true)
+    )
+
+    .addStringOption(o =>
+      o.setName("mode")
+        .setDescription("Team size")
+        .setRequired(true)
+        .addChoices(
+          { name: "Duos", value: "2" },
+          { name: "Trios", value: "3" },
+          { name: "Squads", value: "4" }
+        )
     )
 
     .addBooleanOption(o =>
       o.setName("skip")
-        .setDescription("Ignore event banned checks and process all teams")
+        .setDescription("Ignore event banned checks")
         .setRequired(false)
     )
 
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ManageRoles
+    ),
 
   async execute(interaction) {
 
     if (!process.env.MAIN_SHEET_ID) {
       return interaction.reply({
-        content: "MAIN_SHEET_ID is not configured.",
+        content: "MAIN_SHEET_ID not configured.",
         ephemeral: true
       });
     }
 
-    const role = interaction.options.getRole("role");
-    const ignoreBlocked = interaction.options.getBoolean("skip") || false;
+    const role =
+      interaction.options.getRole("role");
+
+    const ignoreBlocked =
+      interaction.options.getBoolean("skip") || false;
+
+    const requiredTeamSize =
+      parseInt(
+        interaction.options.getString("mode")
+      );
 
     const channel = interaction.channel;
     const guild = interaction.guild;
 
-    await interaction.reply("Scanning tagged users...");
+    await interaction.reply(
+      "Scanning signups..."
+    );
 
-    const messages = await channel.messages.fetch({
-      limit: MESSAGE_SCAN_LIMIT
-    });
+    const messages =
+      await channel.messages.fetch({
+        limit: MESSAGE_SCAN_LIMIT
+      });
 
     await guild.members.fetch();
 
     const taggedUserIds = new Set();
 
-    // Valid teams in signup order
     const validTeams = [];
 
-    // Reverse so oldest signup becomes Team 1
-    const orderedMessages = [...messages.values()].reverse();
+    const candidateTeams = [];
+
+    const playerSignupMap =
+      new Map();
+
+    const orderedMessages =
+      [...messages.values()].reverse();
+
+    // ================= SCAN =================
 
     for (const msg of orderedMessages) {
 
-      const mentionedUsers = [...msg.mentions.users.values()]
-        .filter(user => !user.bot);
+      const users =
+        [...msg.mentions.users.values()]
+        .filter(u => !u.bot);
 
-      if (mentionedUsers.length === 0) continue;
+      if (users.length === 0)
+        continue;
 
-      let blockedMember = null;
-
-      if (!ignoreBlocked) {
-
-        for (const user of mentionedUsers) {
-
-          const member = guild.members.cache.get(user.id);
-
-          if (member?.roles.cache.has(BLOCKED_ROLE_ID)) {
-            blockedMember = member;
-            break;
-          }
-        }
+      // Wrong team size
+      if (
+        users.length !== requiredTeamSize
+      ) {
+        continue;
       }
 
-      // Skip ENTIRE team if any member is blocked
-      if (blockedMember) {
+      candidateTeams.push({
+        message: msg,
+        users
+      });
+
+      for (const user of users) {
+
+        if (
+          !playerSignupMap.has(
+            user.id
+          )
+        ) {
+          playerSignupMap.set(
+            user.id,
+            []
+          );
+        }
+
+        playerSignupMap
+          .get(user.id)
+          .push(msg.id);
+      }
+    }
+
+    // ================= DUPLICATES =================
+
+    const duplicatePlayers =
+      new Set();
+
+    for (const [id, signups]
+      of playerSignupMap) {
+
+      if (
+        signups.length > 1
+      ) {
+        duplicatePlayers.add(
+          id
+        );
+      }
+    }
+
+    // ================= VALIDATE =================
+
+    for (const team of candidateTeams) {
+
+      const hasDuplicate =
+        team.users.some(
+          u =>
+          duplicatePlayers.has(
+            u.id
+          )
+        );
+
+      if (hasDuplicate) {
 
         try {
+
           await channel.send(
-            `${blockedMember} cannot sign up for the event. Their entire signup message was skipped.`
+            `Rejected signup (duplicate player): ${team.users.map(
+              u => `<@${u.id}>`
+            ).join(" ")}`
           );
+
         } catch {}
 
         continue;
       }
 
-      // Store valid team
-      validTeams.push({
-        message: msg,
-        users: mentionedUsers
-      });
+      let blockedMember =
+        null;
 
-      // Queue users for role assignment
-      for (const user of mentionedUsers) {
-        taggedUserIds.add(user.id);
+      if (
+        !ignoreBlocked
+      ) {
+
+        for (const user of team.users) {
+
+          const member =
+            guild.members.cache.get(
+              user.id
+            );
+
+          if (
+            member?.roles.cache.has(
+              BLOCKED_ROLE_ID
+            )
+          ) {
+            blockedMember =
+              member;
+            break;
+          }
+        }
+      }
+
+      if (
+        blockedMember
+      ) {
+
+        try {
+
+          await channel.send(
+            `${blockedMember} cannot sign up. Entire signup skipped.`
+          );
+
+        } catch {}
+
+        continue;
+      }
+
+      validTeams.push(
+        team
+      );
+
+      for (
+        const user
+        of team.users
+      ) {
+
+        taggedUserIds.add(
+          user.id
+        );
       }
     }
 
-    if (taggedUserIds.size === 0) {
+    if (
+      taggedUserIds.size === 0
+    ) {
+
       return interaction.editReply(
-        "No eligible tagged users found in recent messages."
+        "No eligible signups found."
       );
     }
 
     // ================= ROLE ASSIGNMENT =================
+
     let added = 0;
     let skipped = 0;
 
-    for (const userId of taggedUserIds) {
+    for (
+      const userId
+      of taggedUserIds
+    ) {
 
-      const member = guild.members.cache.get(userId);
+      const member =
+        guild.members.cache.get(
+          userId
+        );
 
-      if (!member) continue;
+      if (
+        !member
+      ) continue;
 
-      if (member.roles.cache.has(role.id)) {
+      if (
+        member.roles.cache.has(
+          role.id
+        )
+      ) {
+
         skipped++;
         continue;
       }
 
       try {
-        await member.roles.add(role);
+
+        await member.roles.add(
+          role
+        );
+
         added++;
+
       } catch (err) {
-        console.error("[ROLE ADD ERROR]", err);
+
+        console.error(
+          err
+        );
       }
 
-      await delay(ROLE_DELAY_MS);
+      await delay(
+        ROLE_DELAY_MS
+      );
     }
 
-    // ================= TEAM REACTIONS =================
+    // ================= REACTIONS =================
+
     let teamNumber = 1;
 
-    for (const team of validTeams) {
+    for (
+      const team
+      of validTeams
+    ) {
 
       try {
 
         await team.message.fetch();
 
-        const existingReactionIds = team.message.reactions.cache.map(
-          r => r.emoji.id
-        );
-
-        const hasAccepted =
-          existingReactionIds.includes(ACCEPTED_EMOJI_ID);
-
-        const hasNumberReaction =
-          Object.values(NUMBER_EMOJIS).some(id =>
-            existingReactionIds.includes(id)
+        const existing =
+          team.message.reactions.cache.map(
+            r => r.emoji.id
           );
 
-        // ================= EXISTING NUMBERED TEAM =================
-        // Already processed before.
-        // Count it and move to next team number.
-        if (hasAccepted && hasNumberReaction) {
+        if (
+          !existing.includes(
+            ACCEPTED_EMOJI_ID
+          )
+        ) {
 
-          console.log(
-            "[ROLETAGGED] Existing numbered signup detected:",
-            team.message.id,
-            "-> Team",
-            teamNumber
+          await team.message.react(
+            ACCEPTED_EMOJI_ID
           );
 
-          teamNumber++;
-          continue;
+          await delay(
+            500
+          );
         }
 
-        // ================= RESTORE ACCEPTED =================
-        if (!hasAccepted) {
+        const digits =
+          teamNumber
+          .toString()
+          .split("");
 
-          await team.message.react(ACCEPTED_EMOJI_ID);
+        for (
+          const digit
+          of digits
+        ) {
 
-          await delay(500);
-        }
+          const emojiId =
+            NUMBER_EMOJIS[
+              digit
+            ];
 
-        // ================= APPLY TEAM NUMBER =================
-        const digits = teamNumber.toString().split("");
+          if (
+            !emojiId
+          ) continue;
 
-        for (const digit of digits) {
+          if (
+            !existing.includes(
+              emojiId
+            )
+          ) {
 
-          const emojiId = NUMBER_EMOJIS[digit];
+            await team.message.react(
+              emojiId
+            );
 
-          if (!emojiId) continue;
-
-          // Add only missing digit reactions
-          if (!existingReactionIds.includes(emojiId)) {
-
-            await team.message.react(emojiId);
-
-            await delay(500);
+            await delay(
+              500
+            );
           }
         }
 
       } catch (err) {
-        console.error("[ROLETAGGED REACT ERROR]", err);
+
+        console.error(
+          "[REACT ERROR]",
+          err
+        );
       }
 
       teamNumber++;
     }
 
-    // ================= RESULT =================
-    const resultMessage =
+    // ================= RESULTS =================
+
+    const result =
+
       "Role assignment complete\n" +
+      "Mode: " + requiredTeamSize + "\n" +
       "Role: " + role.name + "\n" +
-      "Added to: " + added + " members\n" +
-      "Already had role: " + skipped + "\n" +
-      "Valid teams processed: " + validTeams.length + "\n" +
-      "Skip blocked checks: " + ignoreBlocked;
+      "Added: " + added + "\n" +
+      "Skipped: " + skipped + "\n" +
+      "Valid Teams: " + validTeams.length;
 
-    await interaction.editReply(resultMessage);
+    await interaction.editReply(
+      result
+    );
 
-    // ================= LOG CHANNEL =================
+    // ================= LOG =================
+
     try {
 
-      const logChannel = await guild.channels.fetch(LOG_CHANNEL_ID);
+      const logChannel =
+        await guild.channels.fetch(
+          LOG_CHANNEL_ID
+        );
 
       await logChannel.send(
+
         "Role Assigned via /roletagged\n" +
-        "Moderator: " + interaction.user.tag + "\n" +
-        "Channel: " + channel.id + "\n" +
-        "Role: " + role.name + "\n" +
-        "Added to: " + added + "\n" +
-        "Teams: " + validTeams.length + "\n" +
-        "Skip blocked: " + ignoreBlocked
+        "Moderator: " +
+        interaction.user.tag +
+        "\nRole: " +
+        role.name +
+        "\nMode: " +
+        requiredTeamSize +
+        "\nTeams: " +
+        validTeams.length
       );
 
     } catch {}
 
-    // ================= SHEET AUDIT =================
     try {
 
       await logAudit({
-        action: "ROLE_TAGGED_ASSIGN",
-        moderator: interaction.user,
+
+        action:
+        "ROLE_TAGGED_ASSIGN",
+
+        moderator:
+        interaction.user,
+
         context:
-          "role=" + role.id +
-          " channel=" + channel.id +
-          " added=" + added +
-          " teams=" + validTeams.length +
-          " skipBlocked=" + ignoreBlocked
+        `role=${role.id} mode=${requiredTeamSize} teams=${validTeams.length}`
       });
 
     } catch (err) {
-      console.error("[ROLETAGGED AUDIT ERROR]", err);
+
+      console.error(
+        err
+      );
     }
+
   }
 };
