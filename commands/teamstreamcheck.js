@@ -178,29 +178,18 @@ module.exports = {
 
         const name = c.name.toLowerCase();
 
-        const validSignupNames = [
-          "sign-up",
-          "signup",
-          "signups",
-          "team",
-          "teams"
-        ];
-
-        const invalidNames = [
+        const excluded = [
+          "stream",
+          "result",
+          "leaderboard",
           "solo",
           "lfg",
           "free-agent"
         ];
 
-        const isValid = validSignupNames.some(term =>
-          name.includes(term)
+        return !excluded.some(word =>
+          name.includes(word)
         );
-
-        const isInvalid = invalidNames.some(term =>
-          name.includes(term)
-        );
-
-        return isValid && !isInvalid;
       });
 
       console.log(
