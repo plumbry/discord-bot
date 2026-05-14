@@ -60,52 +60,57 @@ async function fetchAllMessages(channel) {
 
 async function getTeams(signupChannel) {
   const messages = await fetchAllMessages(signupChannel);
+
   const teams = [];
 
   for (const msg of messages) {
     if (msg.author.bot) continue;
 
-    try {
-      await msg.reactions.fetch();
+    let accepted = false;
 
-      const acceptedReaction =
-        msg.reactions.cache.find(
-          reaction =>
-            reaction.emoji.id === ACCEPTED_EMOJI_ID
-        );
+    for (const reaction of msg.reactions.cache.values()) {
+      if (
+        reaction.emoji.id ===
+        ACCEPTED_EMOJI_ID
+      ) {
+        try {
+          const users =
+            await reaction.users.fetch();
 
-      if (!acceptedReaction) {
-        console.log(`❌ No accepted reaction on ${msg.id}`);
-        continue;
+          if (users.size > 0) {
+            accepted = true;
+            break;
+          }
+
+        } catch {
+          console.log(
+            `⚠️ Failed reaction fetch for ${msg.id}`
+          );
+        }
       }
-
-      const users = await acceptedReaction.users.fetch();
-
-      if (!users.size) {
-        console.log(`❌ Reaction exists but no users on ${msg.id}`);
-        continue;
-      }
-
-      const members = [
-        msg.author.id,
-        ...msg.mentions.users.map(u => u.id)
-      ];
-
-      const uniqueMembers = [...new Set(members)];
-
-      teams.push({
-        number: teams.length + 1,
-        members: uniqueMembers
-      });
-
-      console.log(`✅ Team ${teams.length}: ${uniqueMembers.length} members`);
-
-    } catch (err) {
-      console.log(`❌ Team parse failed ${msg.id}`, err);
     }
+
+    if (!accepted) continue;
+
+    // Include signup author + teammates
+    const members = [
+      msg.author.id,
+      ...msg.mentions.users.keys()
+    ];
+
+    const uniqueMembers = [
+      ...new Set(members)
+    ];
+
+    teams.push({
+      number: teams.length + 1,
+      members: uniqueMembers
+    });
   }
 
-  console.log(`✅ Accepted teams found: ${teams.length}`);
+  console.log(
+    `✅ Teams detected: ${teams.length}`
+  );
 
   return teams;
 }
