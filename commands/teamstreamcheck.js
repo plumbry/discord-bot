@@ -10,6 +10,22 @@ async function fetchAllMessages(channel) {
   try {
     if (!channel?.viewable) return [];
 
+    if (channel.isThread?.()) {
+      if (channel.archived) {
+        try {
+          await channel.setArchived(false);
+        } catch {
+          return [];
+        }
+      }
+
+      try {
+        await channel.join();
+      } catch {
+        return [];
+      }
+    }
+
     const perms = channel.permissionsFor(channel.client.user);
 
     if (
@@ -19,14 +35,14 @@ async function fetchAllMessages(channel) {
       return [];
     }
 
-    let messages = [];
+    const messages = [];
     let lastId;
 
     while (true) {
-      const batch = await channel.messages.fetch({
-        limit: 100,
-        before: lastId
-      });
+      const options = { limit: 100 };
+      if (lastId) options.before = lastId;
+
+      const batch = await channel.messages.fetch(options);
 
       if (!batch.size) break;
 
@@ -53,28 +69,31 @@ async function getTeams(signupChannel) {
       await msg.reactions.fetch();
 
       const acceptedReaction =
-        msg.reactions.cache.get(
-          ACCEPTED_EMOJI_ID
+        msg.reactions.cache.find(
+          reaction =>
+            reaction.emoji.id === ACCEPTED_EMOJI_ID
         );
 
       if (!acceptedReaction) continue;
 
       const members = [
         msg.author.id,
-        ...msg.mentions.users.map(u => u.id)
+        ...msg.mentions.users.map(user => user.id)
       ];
+
+      const uniqueMembers = [...new Set(members)];
 
       teams.push({
         number: teams.length + 1,
-        members: [...new Set(members)]
+        members: uniqueMembers
       });
 
     } catch (err) {
-      console.log(`Failed team parse: ${msg.id}`);
+      console.log(`⚠️ Failed team parse: ${msg.id}`);
     }
   }
 
-  console.log(`Accepted teams found: ${teams.length}`);
+  console.log(`✅ Accepted teams found: ${teams.length}`);
 
   return teams;
 }
@@ -92,9 +111,10 @@ async function getStreamPosts(streamChannel) {
 
       if (!links.length) return false;
 
-      const isStaff = msg.member?.permissions?.has(
-        PermissionFlagsBits.ManageRoles
-      );
+      const isStaff =
+        msg.member?.permissions?.has(
+          PermissionFlagsBits.ManageRoles
+        );
 
       return !(isStaff && links.length > 5);
     })
@@ -111,7 +131,7 @@ module.exports = {
     .addStringOption(option =>
       option
         .setName("gamemode")
-        .setDescription("Event mode")
+        .setDescription("Select event mode")
         .setRequired(true)
         .addChoices(
           {
@@ -177,7 +197,7 @@ module.exports = {
 
       if (!teams.length) {
         return interaction.followUp(
-          "❌ No accepted teams detected."
+          "❌ No accepted teams detected"
         );
       }
 
@@ -195,7 +215,9 @@ module.exports = {
 
           total += Math.min(post.linkCount, 2);
 
-          if (total >= required) break;
+          if (total >= required) {
+            break;
+          }
         }
 
         console.log(`Team ${team.number}: ${total}/${required}`);
