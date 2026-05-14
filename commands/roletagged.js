@@ -210,15 +210,39 @@ module.exports = {
           r => r.emoji.id
         );
 
-        // ================= ACCEPTED REACTION =================
-        if (!existingReactionIds.includes(ACCEPTED_EMOJI_ID)) {
+        const hasAccepted =
+          existingReactionIds.includes(ACCEPTED_EMOJI_ID);
+
+        const hasNumberReaction =
+          Object.values(NUMBER_EMOJIS).some(id =>
+            existingReactionIds.includes(id)
+          );
+
+        // ================= EXISTING NUMBERED TEAM =================
+        // Already processed before.
+        // Count it and move to next team number.
+        if (hasAccepted && hasNumberReaction) {
+
+          console.log(
+            "[ROLETAGGED] Existing numbered signup detected:",
+            team.message.id,
+            "-> Team",
+            teamNumber
+          );
+
+          teamNumber++;
+          continue;
+        }
+
+        // ================= RESTORE ACCEPTED =================
+        if (!hasAccepted) {
 
           await team.message.react(ACCEPTED_EMOJI_ID);
 
           await delay(500);
         }
 
-        // ================= TEAM NUMBER =================
+        // ================= APPLY TEAM NUMBER =================
         const digits = teamNumber.toString().split("");
 
         for (const digit of digits) {
@@ -227,7 +251,7 @@ module.exports = {
 
           if (!emojiId) continue;
 
-          // Only add missing digit reactions
+          // Add only missing digit reactions
           if (!existingReactionIds.includes(emojiId)) {
 
             await team.message.react(emojiId);
