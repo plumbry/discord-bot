@@ -10,39 +10,19 @@ async function fetchAllMessages(channel) {
   try {
     if (!channel?.viewable) return [];
 
-    if (channel.isThread?.()) {
-      if (channel.archived) {
-        try {
-          await channel.setArchived(false);
-        } catch {
-          return [];
-        }
-      }
-
-      try {
-        await channel.join();
-      } catch {
-        return [];
-      }
-    }
-
     const perms = channel.permissionsFor(
       channel.client.user
     );
 
     if (
-      !perms?.has(
-        PermissionFlagsBits.ViewChannel
-      ) ||
-      !perms?.has(
-        PermissionFlagsBits.ReadMessageHistory
-      )
+      !perms?.has(PermissionFlagsBits.ViewChannel) ||
+      !perms?.has(PermissionFlagsBits.ReadMessageHistory)
     ) {
       return [];
     }
 
-    const messages = [];
-    let lastId = null;
+    let messages = [];
+    let lastId;
 
     while (true) {
       const options = { limit: 100 };
@@ -52,87 +32,65 @@ async function fetchAllMessages(channel) {
       }
 
       const batch =
-        await channel.messages.fetch(
-          options
-        );
+        await channel.messages.fetch(options);
 
       if (!batch.size) break;
 
-      messages.push(
-        ...batch.values()
-      );
+      messages.push(...batch.values());
 
-      lastId =
-        batch.last()?.id;
+      lastId = batch.last().id;
     }
 
     return messages.reverse();
 
   } catch (err) {
-    console.error(
-      "❌ fetchAllMessages:",
-      err
-    );
-
+    console.error(err);
     return [];
   }
 }
 
 async function getTeams(signupChannel) {
   const messages =
-    await fetchAllMessages(
-      signupChannel
-    );
+    await fetchAllMessages(signupChannel);
 
   const teams = [];
 
   for (const msg of messages) {
     if (msg.author.bot) continue;
 
-    let accepted = false;
-
     try {
       await msg.reactions.fetch();
 
       const acceptedReaction =
         msg.reactions.cache.find(
-          reaction =>
-            reaction.emoji.id ===
+          r =>
+            r.emoji.id ===
             ACCEPTED_EMOJI_ID
         );
 
-      accepted =
-        acceptedReaction?.count > 0;
+      if (!acceptedReaction) continue;
 
-    } catch {
-      continue;
-    }
+      const members = [
+        ...msg.mentions.users.keys()
+      ];
 
-    if (!accepted) continue;
+      if (!members.length) continue;
 
-    const members = [
-      ...msg.mentions.users.keys()
-    ];
+      teams.push({
+        number:
+          teams.length + 1,
+        members
+      });
 
-    if (!members.length) continue;
-
-    teams.push({
-      number:
-        teams.length + 1,
-      members
-    });
+    } catch {}
   }
 
   return teams;
 }
 
-async function getSubmittedStreams(
-  streamChannel
-) {
+async function getTeamSubmissions(streamChannel) {
   const messages =
-    await fetchAllMessages(
-      streamChannel
-    );
+    await fetchAllMessages(streamChannel);
 
   const submissions =
     new Map();
@@ -140,25 +98,25 @@ async function getSubmittedStreams(
   for (const msg of messages) {
     if (msg.author.bot) continue;
 
-    const matches = [
+    const links = [
       ...msg.content.matchAll(
         TWITCH_REGEX
       )
     ];
 
-    if (!matches.length)
-      continue;
+    if (!links.length) continue;
 
     const isStaff =
       msg.member?.permissions?.has(
         PermissionFlagsBits.ManageRoles
       );
 
-    const batchMode =
+    if (
       isStaff &&
-      matches.length > 5;
-
-    if (batchMode) continue;
+      links.length > 5
+    ) {
+      continue;
+    }
 
     if (
       !submissions.has(
@@ -171,14 +129,14 @@ async function getSubmittedStreams(
       );
     }
 
-    const userStreams =
+    const userLinks =
       submissions.get(
         msg.author.id
       );
 
-    for (const match of matches) {
-      userStreams.add(
-        match[1].toLowerCase()
+    for (const link of links) {
+      userLinks.add(
+        link[1].toLowerCase()
       );
     }
   }
@@ -193,7 +151,7 @@ module.exports = {
         "teamstreamcheck"
       )
       .setDescription(
-        "Check missing team streams"
+        "Check stream submissions"
       )
       .addStringOption(
         option =>
@@ -202,7 +160,7 @@ module.exports = {
               "gamemode"
             )
             .setDescription(
-              "Select gamemode"
+              "Event mode"
             )
             .setRequired(
               true
@@ -226,40 +184,22 @@ module.exports = {
         PermissionFlagsBits.ModerateMembers
       ),
 
-  async execute(
-    interaction
-  ) {
+  async execute(interaction) {
+
     try {
+
       const gamemode =
         interaction.options.getString(
           "gamemode"
         );
 
       const requiredStreams =
-        gamemode ===
-        "squads"
+        gamemode === "squads"
           ? 2
           : 1;
 
-      const baseChannel =
-        interaction.channel
-          .isThread?.()
-          ? interaction.channel
-              .parent
-          : interaction.channel;
-
       const category =
-        baseChannel?.parent;
-
-      if (!category) {
-        return interaction.reply(
-          {
-            content:
-              "Must be run inside event category.",
-            ephemeral: true
-          }
-        );
-      }
+        interaction.channel.parent;
 
       const channels =
         await interaction.guild.channels.fetch();
@@ -267,28 +207,22 @@ module.exports = {
       const signupChannel =
         channels.find(
           c =>
-            c.parentId ===
-              category.id &&
-            c.isTextBased?.() &&
+            c.parentId === category.id &&
             c.name
               .toLowerCase()
-              .includes(
-                "sign"
-              )
+              .includes("sign")
         );
 
       if (!signupChannel) {
-        return interaction.reply(
-          {
-            content:
-              "No signup channel found.",
-            ephemeral: true
-          }
-        );
+        return interaction.reply({
+          content:
+            "Signup channel not found.",
+          ephemeral:true
+        });
       }
 
       await interaction.reply(
-        "Scanning teams..."
+        "Scanning..."
       );
 
       const teams =
@@ -297,70 +231,83 @@ module.exports = {
         );
 
       const submissions =
-        await getSubmittedStreams(
-          baseChannel
+        await getTeamSubmissions(
+          interaction.channel
         );
 
-      const missingTeams =
-        [];
+      const missingTeams=[];
 
       for (const team of teams) {
-        const teamStreams =
+
+        const links =
           new Set();
 
-        for (const memberId of team.members) {
-          const streams =
+        for (const member of team.members) {
+
+          const submitted =
             submissions.get(
-              memberId
+              member
             );
 
-          if (!streams)
+          if (!submitted)
             continue;
 
-          for (const stream of streams) {
-            teamStreams.add(
-              stream
-            );
-          }
+          submitted.forEach(
+            link =>
+            links.add(link)
+          );
         }
 
         if (
-          teamStreams.size <
+          links.size <
           requiredStreams
         ) {
+
           missingTeams.push({
             number:
               team.number,
             count:
-              teamStreams.size
+              links.size
           });
+
         }
+
       }
 
       let output =
-        `📺 **Team Stream Check**\n\n`;
+`📺 **Team Stream Check**
+
+Required: ${requiredStreams}
+
+`;
 
       if (
         missingTeams.length
       ) {
-        for (const team of missingTeams) {
-          output +=
-            `Team ${team.number} (${team.count}/${requiredStreams})\n`;
-        }
+
+        missingTeams.forEach(
+          team=>{
+            output+=
+`Team ${team.number} (${team.count}/${requiredStreams})
+`;
+          }
+        );
+
       } else {
+
         output +=
-          "All accepted teams submitted enough streams.";
+"All accepted teams submitted enough streams.";
+
       }
 
       await interaction.followUp(
         output
       );
 
-    } catch (err) {
-      console.error(
-        "❌ teamstreamcheck:",
-        err
-      );
+    } catch(err){
+
+      console.error(err);
+
     }
   }
 };
