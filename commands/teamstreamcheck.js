@@ -68,26 +68,28 @@ async function getTeams(signupChannel) {
 
     let accepted = false;
 
-    for (const reaction of msg.reactions.cache.values()) {
-      if (
-        reaction.emoji.id ===
-        ACCEPTED_EMOJI_ID
-      ) {
-        try {
-          const users =
-            await reaction.users.fetch();
+    try {
+      // Force historical reactions to load
+      await msg.reactions.fetch();
 
-          if (users.size > 0) {
-            accepted = true;
-            break;
-          }
+      for (const reaction of msg.reactions.cache.values()) {
+        if (
+          reaction.emoji.id !==
+          ACCEPTED_EMOJI_ID
+        ) continue;
 
-        } catch {
-          console.log(
-            `⚠️ Failed reaction fetch for ${msg.id}`
-          );
+        const users = await reaction.users.fetch();
+
+        if (users.size > 0) {
+          accepted = true;
+          break;
         }
       }
+
+    } catch (err) {
+      console.log(
+        `⚠️ Failed reaction fetch for ${msg.id}`
+      );
     }
 
     if (!accepted) continue;
@@ -108,9 +110,7 @@ async function getTeams(signupChannel) {
     });
   }
 
-  console.log(
-    `✅ Teams detected: ${teams.length}`
-  );
+  console.log(`✅ Teams detected: ${teams.length}`);
 
   return teams;
 }
