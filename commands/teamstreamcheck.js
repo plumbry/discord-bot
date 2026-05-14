@@ -74,11 +74,21 @@ async function getTeams(signupChannel) {
             reaction.emoji.id === ACCEPTED_EMOJI_ID
         );
 
-      if (!acceptedReaction) continue;
+      if (!acceptedReaction) {
+        console.log(`❌ No accepted reaction on ${msg.id}`);
+        continue;
+      }
+
+      const users = await acceptedReaction.users.fetch();
+
+      if (!users.size) {
+        console.log(`❌ Reaction exists but no users on ${msg.id}`);
+        continue;
+      }
 
       const members = [
         msg.author.id,
-        ...msg.mentions.users.map(user => user.id)
+        ...msg.mentions.users.map(u => u.id)
       ];
 
       const uniqueMembers = [...new Set(members)];
@@ -88,8 +98,10 @@ async function getTeams(signupChannel) {
         members: uniqueMembers
       });
 
+      console.log(`✅ Team ${teams.length}: ${uniqueMembers.length} members`);
+
     } catch (err) {
-      console.log(`⚠️ Failed team parse: ${msg.id}`);
+      console.log(`❌ Team parse failed ${msg.id}`, err);
     }
   }
 
@@ -105,16 +117,12 @@ async function getStreamPosts(streamChannel) {
     .filter(msg => {
       if (msg.author.bot) return false;
 
-      const links = [
-        ...msg.content.matchAll(TWITCH_REGEX)
-      ];
-
+      const links = [...msg.content.matchAll(TWITCH_REGEX)];
       if (!links.length) return false;
 
-      const isStaff =
-        msg.member?.permissions?.has(
-          PermissionFlagsBits.ManageRoles
-        );
+      const isStaff = msg.member?.permissions?.has(
+        PermissionFlagsBits.ManageRoles
+      );
 
       return !(isStaff && links.length > 5);
     })
@@ -134,14 +142,8 @@ module.exports = {
         .setDescription("Select event mode")
         .setRequired(true)
         .addChoices(
-          {
-            name: "Duos/Trios",
-            value: "smallteam"
-          },
-          {
-            name: "Squads",
-            value: "squads"
-          }
+          { name: "Duos/Trios", value: "smallteam" },
+          { name: "Squads", value: "squads" }
         )
     )
     .setDefaultMemberPermissions(
@@ -196,9 +198,7 @@ module.exports = {
       const teams = await getTeams(signupChannel);
 
       if (!teams.length) {
-        return interaction.followUp(
-          "❌ No accepted teams detected"
-        );
+        return interaction.followUp("❌ No accepted teams detected");
       }
 
       const streamPosts = await getStreamPosts(baseChannel);
@@ -209,15 +209,11 @@ module.exports = {
         let total = 0;
 
         for (const post of streamPosts) {
-          if (!team.members.includes(post.authorId)) {
-            continue;
-          }
+          if (!team.members.includes(post.authorId)) continue;
 
           total += Math.min(post.linkCount, 2);
 
-          if (total >= required) {
-            break;
-          }
+          if (total >= required) break;
         }
 
         console.log(`Team ${team.number}: ${total}/${required}`);
