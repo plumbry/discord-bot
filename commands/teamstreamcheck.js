@@ -68,33 +68,34 @@ async function getTeams(signupChannel) {
 
     let accepted = false;
 
-    try {
-      // Force historical reactions to load
-      await msg.reactions.fetch();
+    // Do not force reaction fetch on historical messages
+    for (const reaction of msg.reactions.cache.values()) {
 
-      for (const reaction of msg.reactions.cache.values()) {
-        if (
-          reaction.emoji.id !==
-          ACCEPTED_EMOJI_ID
-        ) continue;
+      if (
+        reaction.emoji.id !== ACCEPTED_EMOJI_ID
+      ) {
+        continue;
+      }
 
+      try {
         const users = await reaction.users.fetch();
 
         if (users.size > 0) {
           accepted = true;
           break;
         }
-      }
 
-    } catch (err) {
-      console.log(
-        `⚠️ Failed reaction fetch for ${msg.id}`
-      );
+      } catch (err) {
+        console.log(
+          `Reaction user fetch failed ${msg.id}:`,
+          err.code
+        );
+      }
     }
 
     if (!accepted) continue;
 
-    // Include signup author + teammates
+    // Captain + tagged teammates
     const members = [
       msg.author.id,
       ...msg.mentions.users.keys()
