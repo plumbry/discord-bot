@@ -174,17 +174,38 @@ module.exports = {
 
       const signupChannel = channels.find(c => {
         if (c.parentId !== category.id) return false;
-        if (!c.isTextBased()) return false;
+        if (!c.isTextBased?.()) return false;
 
         const name = c.name.toLowerCase();
 
-        return (
-          name.includes("sign") &&
-          !name.includes("solo") &&
-          !name.includes("lfg") &&
-          !name.includes("free-agent")
+        const validSignupNames = [
+          "sign-up",
+          "signup",
+          "signups",
+          "team",
+          "teams"
+        ];
+
+        const invalidNames = [
+          "solo",
+          "lfg",
+          "free-agent"
+        ];
+
+        const isValid = validSignupNames.some(term =>
+          name.includes(term)
         );
+
+        const isInvalid = invalidNames.some(term =>
+          name.includes(term)
+        );
+
+        return isValid && !isInvalid;
       });
+
+      console.log(
+        `Using signup channel: ${signupChannel?.name || "NONE"}`
+      );
 
       if (!signupChannel) {
         return interaction.reply({
