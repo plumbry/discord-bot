@@ -179,22 +179,20 @@ module.exports = {
 
       const signupChannel = channels.find(c => {
         if (c.parentId !== category.id) return false;
-        if (!c.isTextBased?.()) return false;
+        if (!c.isTextBased()) return false;
+        if (!c.viewable) return false;
 
         const name = c.name.toLowerCase();
 
-        const excluded = [
-          "stream",
-          "result",
-          "leaderboard",
-          "solo",
-          "lfg",
-          "free-agent"
-        ];
+        const isSignup =
+          name.includes("sign");
 
-        return !excluded.some(word =>
-          name.includes(word)
-        );
+        const isSolo =
+          name.includes("solo") ||
+          name.includes("lfg") ||
+          name.includes("free-agent");
+
+        return isSignup && !isSolo;
       });
 
       console.log(
