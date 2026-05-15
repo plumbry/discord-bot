@@ -31,6 +31,18 @@ const NUMBER_EMOJIS = {
   "9": "1405509655702274210"
 };
 
+const DUPLICATE_NUMBER_EMOJIS = {
+  "1": "1436347038630416499",
+  "2": "1436348495102480424",
+  "3": "1436348527448952923",
+  "4": "1436348563591266424",
+  "5": "1436348591986708601",
+  "6": "1436348649616707695",
+  "7": "1436348677341053069",
+  "8": "1436348705652478004",
+  "9": "1436348734731587645"
+};
+
 // ================= GOOGLE =================
 const credentials = JSON.parse(
   Buffer.from(
@@ -390,15 +402,41 @@ module.exports = {
           .toString()
           .split("");
 
+        const digitUsage = {};
+
         for (
           const digit
           of digits
         ) {
 
-          const emojiId =
-            NUMBER_EMOJIS[
-              digit
-            ];
+          if (
+            !digitUsage[digit]
+          ) {
+            digitUsage[digit] = 0;
+          }
+
+          digitUsage[digit]++;
+
+          let emojiId;
+
+          // First occurrence uses normal emoji
+          if (
+            digitUsage[digit] === 1
+          ) {
+
+            emojiId =
+              NUMBER_EMOJIS[
+                digit
+              ];
+
+          } else {
+
+            // Repeated occurrence uses duplicate emoji
+            emojiId =
+              DUPLICATE_NUMBER_EMOJIS[
+                digit
+              ];
+          }
 
           if (
             !emojiId
