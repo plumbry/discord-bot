@@ -5,14 +5,19 @@ const {
 
 const fetch = require('node-fetch');
 
-const API_URL = 'https://healthy-husky-184.convex.site/api/discord/sync-member';
-const API_KEY = 'sk_hercules_DwjowtgAYninKRto818PrAb5YJTzhuXGWkmPVmigxMZg4BEU6a';
+const API_URL =
+  'https://healthy-husky-184.convex.site/api/discord/sync-member';
+
+const API_KEY =
+  process.env.DISCORD_SYNC_API_KEY;
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('syncmembers')
     .setDescription('Sync all Discord members to Hercules')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ManageRoles
+    ),
 
   async execute(interaction) {
     await interaction.reply({
@@ -58,13 +63,16 @@ module.exports = {
             body: JSON.stringify(payload)
           });
 
+          const text = await res.text();
+
           if (res.ok) {
             successCount++;
-            console.log(`✓ Synced ${member.user.username}`);
+
+            console.log(
+              `✓ Synced ${member.user.username}`
+            );
           } else {
             errorCount++;
-
-            const text = await res.text();
 
             console.error(
               `✗ Failed ${member.user.username}:`,
@@ -72,6 +80,7 @@ module.exports = {
               text
             );
           }
+
         } catch (err) {
           errorCount++;
 
@@ -81,7 +90,9 @@ module.exports = {
           );
         }
 
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise(resolve =>
+          setTimeout(resolve, 100)
+        );
       }
 
       await interaction.editReply({
