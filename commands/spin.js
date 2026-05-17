@@ -349,6 +349,15 @@ function dedupeSoloPlayers(soloPlayers) {
   });
 }
 
+function splitFillEntries(teams, soloPlayers) {
+  return {
+    acceptedTeams: teams.filter(team => !team.isFill),
+    fillTeams: teams.filter(team => team.isFill),
+    acceptedSoloPlayers: soloPlayers.filter(player => !player.isFill),
+    fillSoloPlayers: soloPlayers.filter(player => player.isFill)
+  };
+}
+
 function validateEntries(eventType, teams, soloPlayers) {
   if (eventType === "duos_into_squads" && teams.length < 2) {
     return "I found fewer than 2 duos in the configured signup channel.";
@@ -367,7 +376,15 @@ function validateEntries(eventType, teams, soloPlayers) {
   return null;
 }
 
-function buildResultMessage(event, teams, soloPlayers, importStats, adminUrl) {
+function buildResultMessage(
+  event,
+  teams,
+  soloPlayers,
+  fillTeams,
+  fillSoloPlayers,
+  importStats,
+  adminUrl
+) {
   const warnings = [];
 
   if (
@@ -380,8 +397,7 @@ function buildResultMessage(event, teams, soloPlayers, importStats, adminUrl) {
   }
 
   const warningText = warnings.length ? `\n\n${warnings.join("\n")}` : "";
-  const fillCount = teams.filter(team => team.isFill).length +
-    soloPlayers.filter(player => player.isFill).length;
+  const fillCount = fillTeams.length + fillSoloPlayers.length;
   const statsText =
     `\nAccepted entries: **${importStats.accepted}**` +
     `\nFill entries: **${fillCount}**` +
@@ -392,7 +408,9 @@ function buildResultMessage(event, teams, soloPlayers, importStats, adminUrl) {
     `Linked spin event: **${event.eventName || event.name || event.eventCode}**\n` +
     `Type: **${getEventTypeLabel(event.eventType)}**\n` +
     `Duos imported: **${teams.length}**\n` +
-    `Solos imported: **${soloPlayers.length}**` +
+    `Solos imported: **${soloPlayers.length}**\n` +
+    `Fill duos: **${fillTeams.length}**\n` +
+    `Fill solos: **${fillSoloPlayers.length}**` +
     statsText +
     (adminUrl ? `\n\nWheel page: ${adminUrl}` : "") +
     warningText
@@ -495,9 +513,15 @@ module.exports = {
         importStats.unparsable += stats.unparsable;
       }
 
-      const teams = dedupeTeams(allTeams);
-      const soloPlayers = dedupeSoloPlayers(allSoloPlayers);
-      const validationError = validateEntries(event.eventType, teams, soloPlayers);
+      const dedupedTeams = dedupeTeams(allTeams);
+      const dedupedSoloPlayers = dedupeSoloPlayers(allSoloPlayers);
+      const {
+        acceptedTeams,
+        fillTeams,
+        acceptedSoloPlayers,
+        fillSoloPlayers
+      } = splitFillEntries(dedupedTeams, dedupedSoloPlayers);
+      const validationError = validateEntries(event.eventType, acceptedTeams, acceptedSoloPlayers);
 
       if (validationError) {
         return await interaction.editReply({
@@ -513,8 +537,10 @@ module.exports = {
           discordGuildId: interaction.guildId,
           importedByDiscordId: interaction.user.id,
           sourceChannelIds,
-          teams,
-          soloPlayers,
+          teams: acceptedTeams,
+          soloPlayers: acceptedSoloPlayers,
+          fillTeams,
+          fillSoloPlayers,
           importStats
         },
         {
@@ -526,8 +552,10 @@ module.exports = {
       await interaction.editReply({
         content: buildResultMessage(
           event,
-          teams,
-          soloPlayers,
+          acceptedTeams,
+          acceptedSoloPlayers,
+          fillTeams,
+          fillSoloPlayers,
           importStats,
           saveResponse.data?.adminUrl || event.adminUrl
         )
