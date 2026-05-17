@@ -43,8 +43,19 @@ const DUPLICATE_NUMBER_EMOJIS = {
   "9": "1436348734731587645"
 };
 
-// ================= RELOAD =================
-const MAX_RELOAD_TEAMS = 20;
+// ================= TEAM LIMITS =================
+const TEAM_LIMITS = {
+  normal: {
+    2: 50,
+    3: 33,
+    4: 25
+  },
+  reload: {
+    2: 20,
+    3: 13,
+    4: 10
+  }
+};
 
 const RELOAD_STOP_EMOJI = "✋";
 
@@ -92,6 +103,23 @@ async function logAudit(data) {
   });
 }
 
+async function clearOtherReactions(message, botUserId) {
+  await message.fetch();
+
+  for (const reaction of message.reactions.cache.values()) {
+    const users = await reaction.users.fetch();
+
+    for (const user of users.values()) {
+      if (user.id === botUserId) {
+        continue;
+      }
+
+      await reaction.users.remove(user.id);
+      await delay(250);
+    }
+  }
+}
+
 // ================= COMMAND =================
 module.exports = {
 
@@ -124,7 +152,7 @@ module.exports = {
 
     .addBooleanOption(o =>
       o.setName("reload")
-        .setDescription("Reload mode (max 20 teams get roles)")
+        .setDescription("Reload mode (reduced team limits)")
         .setRequired(false)
     )
 
@@ -337,15 +365,14 @@ module.exports = {
     let added = 0;
     let skipped = 0;
 
+    const teamLimit =
+      TEAM_LIMITS[isReload ? "reload" : "normal"][requiredTeamSize];
+
     const roledTeams =
-      isReload
-        ? validTeams.slice(0, MAX_RELOAD_TEAMS)
-        : validTeams;
+      validTeams.slice(0, teamLimit);
 
     const overflowTeams =
-      isReload
-        ? validTeams.slice(MAX_RELOAD_TEAMS)
-        : [];
+      validTeams.slice(teamLimit);
 
     const roledUserIds =
       new Set();
@@ -421,15 +448,20 @@ module.exports = {
 
       try {
 
-        await team.message.fetch();
+        await clearOtherReactions(
+          team.message,
+          interaction.client.user.id
+        );
 
         const existing =
-          team.message.reactions.cache.map(
-            r => r.emoji.id
+          new Set(
+            team.message.reactions.cache.map(
+              r => r.emoji.id
+            )
           );
 
         if (
-          !existing.includes(
+          !existing.has(
             ACCEPTED_EMOJI_ID
           )
         ) {
@@ -440,6 +472,10 @@ module.exports = {
 
           await delay(
             500
+          );
+
+          existing.add(
+            ACCEPTED_EMOJI_ID
           );
         }
 
@@ -487,7 +523,7 @@ module.exports = {
           ) continue;
 
           if (
-            !existing.includes(
+            !existing.has(
               emojiId
             )
           ) {
@@ -498,6 +534,10 @@ module.exports = {
 
             await delay(
               500
+            );
+
+            existing.add(
+              emojiId
             );
           }
         }
@@ -513,10 +553,9 @@ module.exports = {
       teamNumber++;
     }
 
-    // ================= RELOAD OVERFLOW =================
+    // ================= OVERFLOW =================
 
     if (
-      isReload &&
       overflowTeams.length > 0
     ) {
 
@@ -528,6 +567,11 @@ module.exports = {
       ) {
 
         try {
+
+          await clearOtherReactions(
+            team.message,
+            interaction.client.user.id
+          );
 
           await team.message.react(
             RELOAD_STOP_EMOJI
