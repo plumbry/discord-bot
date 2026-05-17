@@ -3,6 +3,9 @@ const axios = require("axios");
 
 const DEFAULT_SCRIM_EVENTS_API_BASE_URL =
   "https://healthy-husky-184.convex.site";
+const ACCEPTED_REACTION_ID = "1405510864496361482";
+const ACCEPTED_REACTION_NAME = "ZBDACCEPTED";
+const FILL_REACTION_NAME = "\u270b";
 
 function getApiBaseUrl() {
   return (
@@ -97,6 +100,36 @@ function readMessageText(message) {
   }
 
   return parts.join("\n").trim();
+}
+
+function getSignupStatus(message) {
+  let hasAcceptedReaction = false;
+  let hasFillReaction = false;
+
+  for (const reaction of message.reactions.cache.values()) {
+    if (!reaction.count) continue;
+
+    const emojiId = reaction.emoji?.id;
+    const emojiName = reaction.emoji?.name;
+
+    if (emojiId === ACCEPTED_REACTION_ID || emojiName === ACCEPTED_REACTION_NAME) {
+      hasAcceptedReaction = true;
+    }
+
+    if (emojiName === FILL_REACTION_NAME) {
+      hasFillReaction = true;
+    }
+  }
+
+  if (hasAcceptedReaction) {
+    return "accepted";
+  }
+
+  if (hasFillReaction) {
+    return "fill";
+  }
+
+  return "invalid";
 }
 
 function isReadableSignupChannel(channel) {
@@ -216,6 +249,7 @@ async function fetchSignupMessages(interaction, discordChannelId) {
       channelId: discordChannelId,
       messageId: message.id,
       authorId: message.author?.id,
+      status: getSignupStatus(message),
       text: readMessageText(message)
     }))
     .filter(message => message.text);
@@ -224,8 +258,19 @@ async function fetchSignupMessages(interaction, discordChannelId) {
 function collectEntries(messages, entryType) {
   const teams = [];
   const soloPlayers = [];
+  const stats = {
+    accepted: 0,
+    fills: 0,
+    invalid: 0,
+    unparsable: 0
+  };
 
   for (const message of messages) {
+    if (message.status === "invalid") {
+      stats.invalid++;
+      continue;
+    }
+
     const lines = message.text
       .split(/\n/)
       .map(line => line.trim())
@@ -236,11 +281,18 @@ function collectEntries(messages, entryType) {
         const team = parseDuoEntry(line, `Duo ${teams.length + 1}`);
 
         if (team) {
+          if (message.status === "fill") stats.fills++;
+          if (message.status === "accepted") stats.accepted++;
+
           teams.push({
             ...team,
+            signupStatus: message.status,
+            isFill: message.status === "fill",
             sourceChannelId: message.channelId,
             sourceMessageId: message.messageId
           });
+        } else {
+          stats.unparsable++;
         }
       }
     }
@@ -250,17 +302,24 @@ function collectEntries(messages, entryType) {
         const solo = parseSoloEntry(line);
 
         if (solo) {
+          if (message.status === "fill") stats.fills++;
+          if (message.status === "accepted") stats.accepted++;
+
           soloPlayers.push({
             ...solo,
+            signupStatus: message.status,
+            isFill: message.status === "fill",
             sourceChannelId: message.channelId,
             sourceMessageId: message.messageId
           });
+        } else {
+          stats.unparsable++;
         }
       }
     }
   }
 
-  return { teams, soloPlayers };
+  return { teams, soloPlayers, stats };
 }
 
 function dedupeTeams(teams) {
@@ -308,7 +367,7 @@ function validateEntries(eventType, teams, soloPlayers) {
   return null;
 }
 
-function buildResultMessage(event, teams, soloPlayers, adminUrl) {
+function buildResultMessage(event, teams, soloPlayers, importStats, adminUrl) {
   const warnings = [];
 
   if (
@@ -321,12 +380,20 @@ function buildResultMessage(event, teams, soloPlayers, adminUrl) {
   }
 
   const warningText = warnings.length ? `\n\n${warnings.join("\n")}` : "";
+  const fillCount = teams.filter(team => team.isFill).length +
+    soloPlayers.filter(player => player.isFill).length;
+  const statsText =
+    `\nAccepted entries: **${importStats.accepted}**` +
+    `\nFill entries: **${fillCount}**` +
+    `\nInvalid skipped: **${importStats.invalid}**` +
+    (importStats.unparsable ? `\nUnparsable skipped: **${importStats.unparsable}**` : "");
 
   return (
     `Linked spin event: **${event.eventName || event.name || event.eventCode}**\n` +
     `Type: **${getEventTypeLabel(event.eventType)}**\n` +
     `Duos imported: **${teams.length}**\n` +
     `Solos imported: **${soloPlayers.length}**` +
+    statsText +
     (adminUrl ? `\n\nWheel page: ${adminUrl}` : "") +
     warningText
   );
@@ -399,6 +466,12 @@ module.exports = {
 
       const allTeams = [];
       const allSoloPlayers = [];
+      const importStats = {
+        accepted: 0,
+        fills: 0,
+        invalid: 0,
+        unparsable: 0
+      };
       const sourceChannelIds = [];
 
       for (const signupChannel of signupChannels) {
@@ -411,11 +484,15 @@ module.exports = {
         }
 
         const messages = await fetchSignupMessages(interaction, discordChannelId);
-        const { teams, soloPlayers } = collectEntries(messages, entryType);
+        const { teams, soloPlayers, stats } = collectEntries(messages, entryType);
 
         sourceChannelIds.push(discordChannelId);
         allTeams.push(...teams);
         allSoloPlayers.push(...soloPlayers);
+        importStats.accepted += stats.accepted;
+        importStats.fills += stats.fills;
+        importStats.invalid += stats.invalid;
+        importStats.unparsable += stats.unparsable;
       }
 
       const teams = dedupeTeams(allTeams);
@@ -437,7 +514,8 @@ module.exports = {
           importedByDiscordId: interaction.user.id,
           sourceChannelIds,
           teams,
-          soloPlayers
+          soloPlayers,
+          importStats
         },
         {
           headers: getApiHeaders(),
@@ -450,6 +528,7 @@ module.exports = {
           event,
           teams,
           soloPlayers,
+          importStats,
           saveResponse.data?.adminUrl || event.adminUrl
         )
       });
