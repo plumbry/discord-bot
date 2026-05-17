@@ -1,4 +1,3 @@
-```js
 const {
   SlashCommandBuilder,
   PermissionFlagsBits
@@ -671,4 +670,3 @@ module.exports = {
 
   }
 };
-```
