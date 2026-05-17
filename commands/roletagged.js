@@ -1,3 +1,4 @@
+```js
 const {
   SlashCommandBuilder,
   PermissionFlagsBits
@@ -42,6 +43,14 @@ const DUPLICATE_NUMBER_EMOJIS = {
   "8": "1436348705652478004",
   "9": "1436348734731587645"
 };
+
+// ================= RELOAD =================
+const MAX_RELOAD_TEAMS = 20;
+
+const RELOAD_STOP_EMOJI = "✋";
+
+const RELOAD_K_EMOJI =
+  "1435978450958553130";
 
 // ================= GOOGLE =================
 const credentials = JSON.parse(
@@ -114,6 +123,12 @@ module.exports = {
         .setRequired(false)
     )
 
+    .addBooleanOption(o =>
+      o.setName("reload")
+        .setDescription("Reload mode (max 20 teams get roles)")
+        .setRequired(false)
+    )
+
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ManageRoles
     ),
@@ -132,6 +147,9 @@ module.exports = {
 
     const ignoreBlocked =
       interaction.options.getBoolean("skip") || false;
+
+    const isReload =
+      interaction.options.getBoolean("reload") || false;
 
     const requiredTeamSize =
       parseInt(
@@ -307,7 +325,7 @@ module.exports = {
     }
 
     if (
-      taggedUserIds.size === 0
+      validTeams.length === 0
     ) {
 
       return interaction.editReply(
@@ -320,9 +338,38 @@ module.exports = {
     let added = 0;
     let skipped = 0;
 
+    const roledTeams =
+      isReload
+        ? validTeams.slice(0, MAX_RELOAD_TEAMS)
+        : validTeams;
+
+    const overflowTeams =
+      isReload
+        ? validTeams.slice(MAX_RELOAD_TEAMS)
+        : [];
+
+    const roledUserIds =
+      new Set();
+
+    for (
+      const team
+      of roledTeams
+    ) {
+
+      for (
+        const user
+        of team.users
+      ) {
+
+        roledUserIds.add(
+          user.id
+        );
+      }
+    }
+
     for (
       const userId
-      of taggedUserIds
+      of roledUserIds
     ) {
 
       const member =
@@ -370,7 +417,7 @@ module.exports = {
 
     for (
       const team
-      of validTeams
+      of roledTeams
     ) {
 
       try {
@@ -419,7 +466,6 @@ module.exports = {
 
           let emojiId;
 
-          // First occurrence uses normal emoji
           if (
             digitUsage[digit] === 1
           ) {
@@ -431,7 +477,6 @@ module.exports = {
 
           } else {
 
-            // Repeated occurrence uses duplicate emoji
             emojiId =
               DUPLICATE_NUMBER_EMOJIS[
                 digit
@@ -469,16 +514,109 @@ module.exports = {
       teamNumber++;
     }
 
+    // ================= RELOAD OVERFLOW =================
+
+    if (
+      isReload &&
+      overflowTeams.length > 0
+    ) {
+
+      let overflowNumber = 1;
+
+      for (
+        const team
+        of overflowTeams
+      ) {
+
+        try {
+
+          await team.message.react(
+            RELOAD_STOP_EMOJI
+          );
+
+          await delay(500);
+
+          await team.message.react(
+            RELOAD_K_EMOJI
+          );
+
+          await delay(500);
+
+          const digits =
+            overflowNumber
+            .toString()
+            .split("");
+
+          const digitUsage = {};
+
+          for (
+            const digit
+            of digits
+          ) {
+
+            if (
+              !digitUsage[digit]
+            ) {
+              digitUsage[digit] = 0;
+            }
+
+            digitUsage[digit]++;
+
+            let emojiId;
+
+            if (
+              digitUsage[digit] === 1
+            ) {
+
+              emojiId =
+                NUMBER_EMOJIS[
+                  digit
+                ];
+
+            } else {
+
+              emojiId =
+                DUPLICATE_NUMBER_EMOJIS[
+                  digit
+                ];
+            }
+
+            if (
+              !emojiId
+            ) continue;
+
+            await team.message.react(
+              emojiId
+            );
+
+            await delay(500);
+          }
+
+        } catch (err) {
+
+          console.error(
+            "[OVERFLOW REACT ERROR]",
+            err
+          );
+        }
+
+        overflowNumber++;
+      }
+    }
+
     // ================= RESULTS =================
 
     const result =
 
       "Role assignment complete\n" +
       "Mode: " + requiredTeamSize + "\n" +
+      "Reload: " + (isReload ? "Yes" : "No") + "\n" +
       "Role: " + role.name + "\n" +
       "Added: " + added + "\n" +
       "Skipped: " + skipped + "\n" +
-      "Valid Teams: " + validTeams.length;
+      "Valid Teams: " + validTeams.length + "\n" +
+      "Roled Teams: " + roledTeams.length + "\n" +
+      "Overflow Teams: " + overflowTeams.length;
 
     await interaction.editReply(
       result
@@ -502,6 +640,8 @@ module.exports = {
         role.name +
         "\nMode: " +
         requiredTeamSize +
+        "\nReload: " +
+        (isReload ? "Yes" : "No") +
         "\nTeams: " +
         validTeams.length
       );
@@ -519,7 +659,7 @@ module.exports = {
         interaction.user,
 
         context:
-        `role=${role.id} mode=${requiredTeamSize} teams=${validTeams.length}`
+        `role=${role.id} mode=${requiredTeamSize} reload=${isReload} teams=${validTeams.length}`
       });
 
     } catch (err) {
@@ -531,3 +671,4 @@ module.exports = {
 
   }
 };
+```
