@@ -336,7 +336,7 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName("spin")
     .setDescription("Import scrim signups into a website spin event")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
     .addStringOption(option =>
       option
         .setName("code")
