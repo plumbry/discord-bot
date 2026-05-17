@@ -1,57 +1,24 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require("discord.js");
 const axios = require("axios");
 
-const DEFAULT_SCRIM_EVENTS_API_URL =
-  "https://healthy-husky-184.convex.site/api/scrim-events";
+const DEFAULT_SCRIM_EVENTS_API_BASE_URL =
+  "https://healthy-husky-184.convex.site";
 
-function parseTeams(rawTeams) {
-  if (!rawTeams) return [];
-
-  const lines = rawTeams
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean);
-
-  return lines.map((line, index) => {
-    const match = line.match(/^(.+?)\s*(?:-|:|=|,)\s*(.+)$/);
-
-    if (!match) {
-      throw new Error(
-        `Line ${index + 1} is invalid. Use "Team Name - Player 1, Player 2".`
-      );
-    }
-
-    const teamName = match[1].trim();
-    const players = match[2]
-      .split(/[,/|+&]/)
-      .map(player => player.trim())
-      .filter(Boolean);
-
-    if (!teamName) {
-      throw new Error(`Line ${index + 1} is missing a team name.`);
-    }
-
-    if (players.length !== 2) {
-      throw new Error(
-        `Line ${index + 1} must have exactly 2 players. Example: ${teamName} - Player 1, Player 2`
-      );
-    }
-
-    return {
-      teamName,
-      players
-    };
-  });
+function getApiBaseUrl() {
+  return (
+    process.env.SCRIM_EVENTS_API_BASE_URL ||
+    process.env.CONVEX_API_BASE_URL ||
+    DEFAULT_SCRIM_EVENTS_API_BASE_URL
+  ).replace(/\/$/, "");
 }
 
-function parseSoloPlayers(rawPlayers) {
-  if (!rawPlayers) return [];
+function getApiHeaders() {
+  const apiKey = process.env.SCRIM_EVENTS_API_KEY || process.env.DISCORD_SYNC_API_KEY;
 
-  return rawPlayers
-    .split(/\r?\n|,/)
-    .map(player => player.trim())
-    .filter(Boolean)
-    .map(playerName => ({ playerName }));
+  return {
+    "Content-Type": "application/json",
+    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+  };
 }
 
 function getEventTypeLabel(eventType) {
@@ -63,192 +30,435 @@ function getEventTypeLabel(eventType) {
     case "solos_into_duos":
       return "Solos into duos";
     default:
-      return eventType;
+      return eventType || "Unknown";
   }
 }
 
-function buildDiscordPreview(eventName, eventType, teams, soloPlayers, adminUrl) {
-  const teamLines = teams
-    .slice(0, 12)
-    .map(team => `- ${team.teamName}: ${team.players.join(" / ")}`)
-    .join("\n");
+function normalizePlayerName(value) {
+  return value
+    .replace(/<@!?(\d+)>/g, "<@$1>")
+    .replace(/^[-*•\d.)\s]+/, "")
+    .trim();
+}
 
-  const extraCount = teams.length > 12 ? `\n...and ${teams.length - 12} more team(s).` : "";
-  const soloLines = soloPlayers
-    .slice(0, 20)
-    .map(player => `- ${player.playerName}`)
-    .join("\n");
-  const extraSoloCount =
-    soloPlayers.length > 20 ? `\n...and ${soloPlayers.length - 20} more solo player(s).` : "";
-  const linkLine = adminUrl ? `\n\nWheel page: ${adminUrl}` : "";
+function parseDuoEntry(rawValue, fallbackName) {
+  const value = rawValue
+    .replace(/\*\*/g, "")
+    .replace(/\r/g, "")
+    .trim();
 
-  const sections = [
-    `Created scrim event: **${eventName}**`,
-    `Type: **${getEventTypeLabel(eventType)}**`,
-    `Duos logged: **${teams.length}**`,
-    `Solos logged: **${soloPlayers.length}**`
-  ];
+  if (!value) return null;
 
-  if (teamLines) {
-    sections.push(`\nDuos:\n${teamLines}${extraCount}`);
+  const match = value.match(/^(.+?)\s*(?:-|:|=)\s*(.+)$/);
+  const teamName = match ? match[1].trim() : fallbackName;
+  const playerText = match ? match[2].trim() : value;
+
+  const players = playerText
+    .split(/[,/|+&\n]/)
+    .map(normalizePlayerName)
+    .filter(Boolean);
+
+  if (players.length !== 2) return null;
+
+  return {
+    teamName: teamName || players.join(" / "),
+    players
+  };
+}
+
+function parseSoloEntry(rawValue) {
+  const playerName = normalizePlayerName(
+    rawValue
+      .replace(/\*\*/g, "")
+      .replace(/\r/g, "")
+      .trim()
+  );
+
+  if (!playerName) return null;
+
+  return { playerName };
+}
+
+function readMessageText(message) {
+  const parts = [];
+
+  if (message.content) {
+    parts.push(message.content);
   }
 
-  if (soloLines) {
-    sections.push(`\nSolos:\n${soloLines}${extraSoloCount}`);
+  for (const embed of message.embeds.values()) {
+    if (embed.title) parts.push(embed.title);
+    if (embed.description) parts.push(embed.description);
+
+    for (const field of embed.fields || []) {
+      if (field.name) parts.push(field.name);
+      if (field.value) parts.push(field.value);
+    }
   }
 
-  return `${sections.join("\n")}${linkLine}`;
+  return parts.join("\n").trim();
+}
+
+function isReadableSignupChannel(channel) {
+  return (
+    channel?.type === ChannelType.GuildText ||
+    channel?.type === ChannelType.PublicThread ||
+    channel?.type === ChannelType.PrivateThread ||
+    channel?.type === ChannelType.AnnouncementThread ||
+    channel?.type === ChannelType.GuildAnnouncement
+  );
+}
+
+function normalizeChannelName(name) {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function inferEntryTypeFromChannelName(channelName) {
+  const name = normalizeChannelName(channelName);
+
+  if (/\b(solo|solos|single|singles)\b/.test(name)) {
+    return "solo";
+  }
+
+  if (/\b(duo|duos|team|teams)\b/.test(name)) {
+    return "duo";
+  }
+
+  return null;
+}
+
+function shouldIgnoreChannel(channelName) {
+  const name = normalizeChannelName(channelName);
+
+  return /\b(admin|staff|host|hosts|result|results|chat|rules|info|announce|announcements|wheel|spin)\b/.test(name);
+}
+
+function discoverCategorySignupChannels(interaction, eventType) {
+  const categoryId = interaction.channel?.parentId;
+
+  if (!categoryId) {
+    throw new Error("Run this command inside the event category so I can find the signup channels.");
+  }
+
+  const categoryChannels = interaction.guild.channels.cache
+    .filter(channel => channel.parentId === categoryId && isReadableSignupChannel(channel))
+    .sort((a, b) => (a.rawPosition || 0) - (b.rawPosition || 0));
+
+  const discovered = [];
+
+  for (const channel of categoryChannels.values()) {
+    if (shouldIgnoreChannel(channel.name)) continue;
+
+    const entryType = inferEntryTypeFromChannelName(channel.name);
+
+    if (!entryType) continue;
+
+    discovered.push({
+      discordChannelId: channel.id,
+      entryType,
+      source: "category"
+    });
+  }
+
+  if (eventType === "duos_into_squads") {
+    return discovered.filter(channel => channel.entryType === "duo");
+  }
+
+  if (eventType === "duos_plus_solos_into_trios") {
+    return discovered.filter(channel => channel.entryType === "duo" || channel.entryType === "solo");
+  }
+
+  if (eventType === "solos_into_duos") {
+    return discovered.filter(channel => channel.entryType === "solo");
+  }
+
+  return discovered;
+}
+
+function validateSignupChannels(eventType, signupChannels) {
+  const duoCount = signupChannels.filter(channel => channel.entryType === "duo").length;
+  const soloCount = signupChannels.filter(channel => channel.entryType === "solo").length;
+
+  if (eventType === "duos_into_squads" && duoCount < 1) {
+    return "I could not find a duo signup channel in this category. Name it something like `duo-signups` or `teams`.";
+  }
+
+  if (eventType === "duos_plus_solos_into_trios" && (duoCount < 1 || soloCount < 1)) {
+    return "I need one duo signup channel and one solo signup channel in this category. Name them something like `duo-signups` and `solo-signups`.";
+  }
+
+  if (eventType === "solos_into_duos" && soloCount < 1) {
+    return "I could not find a solo signup channel in this category. Name it something like `solo-signups`.";
+  }
+
+  return null;
+}
+
+async function fetchSignupMessages(interaction, discordChannelId) {
+  const channel = await interaction.guild.channels.fetch(discordChannelId);
+
+  if (!channel) {
+    throw new Error(`Could not find signup channel ${discordChannelId}.`);
+  }
+
+  if (!isReadableSignupChannel(channel)) {
+    throw new Error(`<#${discordChannelId}> is not a readable message channel.`);
+  }
+
+  const messages = await channel.messages.fetch({ limit: 100 });
+
+  return [...messages.values()]
+    .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+    .map(message => ({
+      channelId: discordChannelId,
+      messageId: message.id,
+      authorId: message.author?.id,
+      text: readMessageText(message)
+    }))
+    .filter(message => message.text);
+}
+
+function collectEntries(messages, entryType) {
+  const teams = [];
+  const soloPlayers = [];
+
+  for (const message of messages) {
+    const lines = message.text
+      .split(/\n/)
+      .map(line => line.trim())
+      .filter(Boolean);
+
+    if (entryType === "duo") {
+      for (const line of lines) {
+        const team = parseDuoEntry(line, `Duo ${teams.length + 1}`);
+
+        if (team) {
+          teams.push({
+            ...team,
+            sourceChannelId: message.channelId,
+            sourceMessageId: message.messageId
+          });
+        }
+      }
+    }
+
+    if (entryType === "solo") {
+      for (const line of lines) {
+        const solo = parseSoloEntry(line);
+
+        if (solo) {
+          soloPlayers.push({
+            ...solo,
+            sourceChannelId: message.channelId,
+            sourceMessageId: message.messageId
+          });
+        }
+      }
+    }
+  }
+
+  return { teams, soloPlayers };
+}
+
+function dedupeTeams(teams) {
+  const seen = new Set();
+
+  return teams.filter(team => {
+    const key = team.players
+      .map(player => player.toLowerCase())
+      .sort()
+      .join("|");
+
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function dedupeSoloPlayers(soloPlayers) {
+  const seen = new Set();
+
+  return soloPlayers.filter(player => {
+    const key = player.playerName.toLowerCase();
+
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function validateEntries(eventType, teams, soloPlayers) {
+  if (eventType === "duos_into_squads" && teams.length < 2) {
+    return "I found fewer than 2 duos in the configured signup channel.";
+  }
+
+  if (eventType === "duos_plus_solos_into_trios") {
+    if (teams.length < 1 || soloPlayers.length < 1) {
+      return "I need at least 1 duo and 1 solo for duos + solos into trios.";
+    }
+  }
+
+  if (eventType === "solos_into_duos" && soloPlayers.length < 2) {
+    return "I found fewer than 2 solos in the configured signup channel(s).";
+  }
+
+  return null;
+}
+
+function buildResultMessage(event, teams, soloPlayers, adminUrl) {
+  const warnings = [];
+
+  if (
+    event.eventType === "duos_plus_solos_into_trios" &&
+    soloPlayers.length < teams.length
+  ) {
+    warnings.push(
+      `Warning: found ${teams.length} duo(s) but only ${soloPlayers.length} solo(s). Some duos may not get a solo.`
+    );
+  }
+
+  const warningText = warnings.length ? `\n\n${warnings.join("\n")}` : "";
+
+  return (
+    `Linked spin event: **${event.eventName || event.name || event.eventCode}**\n` +
+    `Type: **${getEventTypeLabel(event.eventType)}**\n` +
+    `Duos imported: **${teams.length}**\n` +
+    `Solos imported: **${soloPlayers.length}**` +
+    (adminUrl ? `\n\nWheel page: ${adminUrl}` : "") +
+    warningText
+  );
 }
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("spin")
-    .setDescription("Create a random scrim pairing event")
+    .setDescription("Import scrim signups into a website spin event")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-    .addSubcommand(subcommand =>
-      subcommand
-        .setName("create")
-        .setDescription("Create a duo-into-squads pairing event")
-        .addStringOption(option =>
-          option
-            .setName("event_name")
-            .setDescription("Name of the scrim event")
-            .setRequired(true)
-            .setMaxLength(100))
-        .addStringOption(option =>
-          option
-            .setName("event_type")
-            .setDescription("Type of random pairing event")
-            .setRequired(true)
-            .addChoices(
-              { name: "Duos into squads", value: "duos_into_squads" },
-              { name: "Duos + solos into trios", value: "duos_plus_solos_into_trios" },
-              { name: "Solos into duos", value: "solos_into_duos" }
-            ))
-        .addIntegerOption(option =>
-          option
-            .setName("games")
-            .setDescription("Number of games to generate pairings for")
-            .setRequired(true)
-            .setMinValue(1)
-            .setMaxValue(10))
-        .addStringOption(option =>
-          option
-            .setName("duos")
-            .setDescription("One duo per line: Team Name - Player 1, Player 2")
-            .setRequired(false)
-            .setMaxLength(4000))
-        .addStringOption(option =>
-          option
-            .setName("solos")
-            .setDescription("Solo names, one per line or comma-separated")
-            .setRequired(false)
-            .setMaxLength(4000))),
+    .addStringOption(option =>
+      option
+        .setName("code")
+        .setDescription("Event code from the website")
+        .setRequired(true)
+        .setMaxLength(40)),
 
   async execute(interaction) {
     await interaction.deferReply({ ephemeral: true });
 
-    const subcommand = interaction.options.getSubcommand();
-
-    if (subcommand !== "create") {
-      return await interaction.editReply({
-        content: "Unknown scrim event action."
-      });
-    }
-
-    const eventName = interaction.options.getString("event_name");
-    const eventType = interaction.options.getString("event_type");
-    const games = interaction.options.getInteger("games");
-    const rawDuos = interaction.options.getString("duos");
-    const rawSolos = interaction.options.getString("solos");
-
-    let teams;
-    let soloPlayers;
+    const eventCode = interaction.options.getString("code").trim();
+    const apiBaseUrl = getApiBaseUrl();
 
     try {
-      teams = parseTeams(rawDuos);
-      soloPlayers = parseSoloPlayers(rawSolos);
-    } catch (error) {
-      return await interaction.editReply({
-        content: `Could not parse entries.\n${error.message}`
-      });
-    }
+      const eventResponse = await axios.get(
+        `${apiBaseUrl}/api/scrim-events/by-code/${encodeURIComponent(eventCode)}`,
+        {
+          headers: getApiHeaders(),
+          timeout: 15000
+        }
+      );
 
-    if (eventType === "duos_into_squads" && teams.length < 2) {
-      return await interaction.editReply({
-        content: "Add at least 2 duos before creating a scrim event."
-      });
-    }
+      const event = eventResponse.data;
+      const configuredSignupChannels = event.signupChannels || event.channels || [];
+      let signupChannels = [];
 
-    if (eventType === "duos_plus_solos_into_trios") {
-      if (teams.length < 1 || soloPlayers.length < 1) {
+      if (!event.eventId && !event.id) {
         return await interaction.editReply({
-          content: "Add at least 1 duo and 1 solo for a duos + solos into trios event."
+          content: "The website returned an event, but it did not include an event ID."
         });
       }
 
-      if (soloPlayers.length < teams.length) {
+      try {
+        signupChannels = discoverCategorySignupChannels(interaction, event.eventType);
+      } catch (error) {
+        if (!configuredSignupChannels.length) {
+          throw error;
+        }
+      }
+
+      if (!signupChannels.length) {
+        signupChannels = configuredSignupChannels;
+      }
+
+      if (!signupChannels.length) {
         return await interaction.editReply({
           content:
-            "There are fewer solos than duos. Add more solos or remove duos so each trio can get one solo."
+            "That event code exists, but I could not find signup channels in this category. " +
+            "Use channel names with `duo`, `team`, or `solo` in them."
         });
       }
-    }
 
-    if (eventType === "solos_into_duos" && soloPlayers.length < 2) {
-      return await interaction.editReply({
-        content: "Add at least 2 solo players before creating a solos into duos event."
-      });
-    }
+      const signupChannelError = validateSignupChannels(event.eventType, signupChannels);
 
-    const payload = {
-      discordGuildId: interaction.guildId,
-      discordChannelId: interaction.channelId,
-      createdByDiscordId: interaction.user.id,
-      eventName,
-      eventType,
-      games,
-      teams,
-      soloPlayers
-    };
+      if (signupChannelError) {
+        return await interaction.editReply({
+          content: signupChannelError
+        });
+      }
 
-    const apiUrl = process.env.SCRIM_EVENTS_API_URL || DEFAULT_SCRIM_EVENTS_API_URL;
-    const apiKey = process.env.SCRIM_EVENTS_API_KEY || process.env.DISCORD_SYNC_API_KEY;
+      const allTeams = [];
+      const allSoloPlayers = [];
+      const sourceChannelIds = [];
 
-    if (!apiUrl) {
-      console.log("SCRIM EVENT PAYLOAD:", JSON.stringify(payload, null, 2));
+      for (const signupChannel of signupChannels) {
+        const discordChannelId =
+          signupChannel.discordChannelId || signupChannel.channelId;
+        const entryType = signupChannel.entryType || signupChannel.type;
 
-      return await interaction.editReply({
-        content:
-          `${buildDiscordPreview(eventName, eventType, teams, soloPlayers)}\n\n` +
-          "Website API is not configured yet. Set `SCRIM_EVENTS_API_URL` to send this event to the website."
-      });
-    }
+        if (!discordChannelId || !entryType) {
+          throw new Error("A signup channel is missing discordChannelId or entryType.");
+        }
 
-    try {
-      const response = await axios.post(apiUrl, payload, {
-        headers: {
-          "Content-Type": "application/json",
-          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+        const messages = await fetchSignupMessages(interaction, discordChannelId);
+        const { teams, soloPlayers } = collectEntries(messages, entryType);
+
+        sourceChannelIds.push(discordChannelId);
+        allTeams.push(...teams);
+        allSoloPlayers.push(...soloPlayers);
+      }
+
+      const teams = dedupeTeams(allTeams);
+      const soloPlayers = dedupeSoloPlayers(allSoloPlayers);
+      const validationError = validateEntries(event.eventType, teams, soloPlayers);
+
+      if (validationError) {
+        return await interaction.editReply({
+          content: validationError
+        });
+      }
+
+      const eventId = event.eventId || event.id;
+      const saveResponse = await axios.post(
+        `${apiBaseUrl}/api/scrim-events/${encodeURIComponent(eventId)}/entries`,
+        {
+          eventCode,
+          discordGuildId: interaction.guildId,
+          importedByDiscordId: interaction.user.id,
+          sourceChannelIds,
+          teams,
+          soloPlayers
         },
-        timeout: 15000
-      });
-
-      const adminUrl = response.data?.adminUrl;
-      const eventId = response.data?.eventId;
+        {
+          headers: getApiHeaders(),
+          timeout: 15000
+        }
+      );
 
       await interaction.editReply({
-        content:
-          `${buildDiscordPreview(eventName, eventType, teams, soloPlayers, adminUrl)}\n` +
-          (eventId ? `Event ID: \`${eventId}\`` : "")
+        content: buildResultMessage(
+          event,
+          teams,
+          soloPlayers,
+          saveResponse.data?.adminUrl || event.adminUrl
+        )
       });
     } catch (error) {
-      console.error("Failed creating scrim event:", error.response?.data || error.message);
+      console.error("Failed importing spin event:", error.response?.data || error.message);
 
       await interaction.editReply({
         content:
-          "Teams parsed successfully, but the website API did not accept the event. " +
-          "Check `SCRIM_EVENTS_API_URL`, `DISCORD_SYNC_API_KEY`, and the website endpoint logs."
+          "I could not import signups for that event code. Check the event code, configured signup channels, bot channel access, and Hercules API logs."
       });
     }
   }
