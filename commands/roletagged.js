@@ -112,11 +112,41 @@ async function logAudit(data) {
   });
 }
 
-async function clearManagedReactions(message, botUserId) {
+function getNumberReactionEmojis(number) {
+  const digits =
+    number
+    .toString()
+    .split("");
+
+  const digitUsage = {};
+  const emojis = [];
+
+  for (const digit of digits) {
+    if (!digitUsage[digit]) {
+      digitUsage[digit] = 0;
+    }
+
+    digitUsage[digit]++;
+
+    const emoji =
+      digitUsage[digit] === 1
+        ? NUMBER_EMOJIS[digit]
+        : DUPLICATE_NUMBER_EMOJIS[digit];
+
+    if (emoji) {
+      emojis.push(
+        emoji
+      );
+    }
+  }
+
+  return emojis;
+}
+
+async function reconcileManagedReactions(message, botUserId, expectedEmojis) {
   await message.fetch();
 
-  const existingBotReactions =
-    new Set();
+  const existingBotManaged = [];
 
   for (const reaction of message.reactions.cache.values()) {
     const users = await reaction.users.fetch();
@@ -136,18 +166,39 @@ async function clearManagedReactions(message, botUserId) {
           emoji
         )
       ) {
-        await reaction.users.remove(user.id);
-        await delay(250);
-        continue;
+        existingBotManaged.push({
+          reaction,
+          emoji
+        });
       }
-
-      existingBotReactions.add(
-        emoji
-      );
     }
   }
 
-  return existingBotReactions;
+  const existingEmojis =
+    existingBotManaged.map(
+      item => item.emoji
+    );
+
+  const alreadyCorrect =
+    existingEmojis.length === expectedEmojis.length &&
+    existingEmojis.every(
+      (emoji, index) => emoji === expectedEmojis[index]
+    );
+
+  if (alreadyCorrect) {
+    return new Set(
+      existingEmojis
+    );
+  }
+
+  for (const item of existingBotManaged) {
+    await item.reaction.users.remove(
+      botUserId
+    );
+    await delay(250);
+  }
+
+  return new Set();
 }
 
 async function reactIfMissing(message, emoji, existing) {
@@ -500,61 +551,21 @@ module.exports = {
 
       try {
 
+        const expectedEmojis = [
+          ACCEPTED_EMOJI_ID,
+          ...getNumberReactionEmojis(
+            teamNumber
+          )
+        ];
+
         const existing =
-          await clearManagedReactions(
+          await reconcileManagedReactions(
             team.message,
-            interaction.client.user.id
+            interaction.client.user.id,
+            expectedEmojis
           );
 
-        await reactIfMissing(
-          team.message,
-          ACCEPTED_EMOJI_ID,
-          existing
-        );
-
-        const digits =
-          teamNumber
-          .toString()
-          .split("");
-
-        const digitUsage = {};
-
-        for (
-          const digit
-          of digits
-        ) {
-
-          if (
-            !digitUsage[digit]
-          ) {
-            digitUsage[digit] = 0;
-          }
-
-          digitUsage[digit]++;
-
-          let emojiId;
-
-          if (
-            digitUsage[digit] === 1
-          ) {
-
-            emojiId =
-              NUMBER_EMOJIS[
-                digit
-              ];
-
-          } else {
-
-            emojiId =
-              DUPLICATE_NUMBER_EMOJIS[
-                digit
-              ];
-          }
-
-          if (
-            !emojiId
-          ) continue;
-
+        for (const emojiId of expectedEmojis) {
           await reactIfMissing(
             team.message,
             emojiId,
@@ -588,67 +599,22 @@ module.exports = {
 
         try {
 
+          const expectedEmojis = [
+            RELOAD_STOP_EMOJI,
+            RELOAD_K_EMOJI,
+            ...getNumberReactionEmojis(
+              overflowNumber
+            )
+          ];
+
           const existing =
-            await clearManagedReactions(
+            await reconcileManagedReactions(
               team.message,
-              interaction.client.user.id
+              interaction.client.user.id,
+              expectedEmojis
             );
 
-          await reactIfMissing(
-            team.message,
-            RELOAD_STOP_EMOJI,
-            existing
-          );
-
-          await reactIfMissing(
-            team.message,
-            RELOAD_K_EMOJI,
-            existing
-          );
-
-          const digits =
-            overflowNumber
-            .toString()
-            .split("");
-
-          const digitUsage = {};
-
-          for (
-            const digit
-            of digits
-          ) {
-
-            if (
-              !digitUsage[digit]
-            ) {
-              digitUsage[digit] = 0;
-            }
-
-            digitUsage[digit]++;
-
-            let emojiId;
-
-            if (
-              digitUsage[digit] === 1
-            ) {
-
-              emojiId =
-                NUMBER_EMOJIS[
-                  digit
-                ];
-
-            } else {
-
-              emojiId =
-                DUPLICATE_NUMBER_EMOJIS[
-                  digit
-                ];
-            }
-
-            if (
-              !emojiId
-            ) continue;
-
+          for (const emojiId of expectedEmojis) {
             await reactIfMissing(
               team.message,
               emojiId,
