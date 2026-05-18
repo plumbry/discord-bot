@@ -106,11 +106,21 @@ async function logAudit(data) {
 async function clearOtherReactions(message, botUserId) {
   await message.fetch();
 
+  const botReactionEmojis =
+    new Set();
+
   for (const reaction of message.reactions.cache.values()) {
     const users = await reaction.users.fetch();
+    const emoji =
+      reaction.emoji.id ||
+      reaction.emoji.name;
 
     for (const user of users.values()) {
       if (user.id === botUserId) {
+        botReactionEmojis.add(
+          emoji
+        );
+
         continue;
       }
 
@@ -118,6 +128,30 @@ async function clearOtherReactions(message, botUserId) {
       await delay(250);
     }
   }
+
+  return botReactionEmojis;
+}
+
+async function reactIfMissing(message, emoji, existing) {
+  if (
+    existing.has(
+      emoji
+    )
+  ) {
+    return;
+  }
+
+  await message.react(
+    emoji
+  );
+
+  await delay(
+    500
+  );
+
+  existing.add(
+    emoji
+  );
 }
 
 // ================= COMMAND =================
@@ -448,36 +482,17 @@ module.exports = {
 
       try {
 
-        await clearOtherReactions(
-          team.message,
-          interaction.client.user.id
-        );
-
         const existing =
-          new Set(
-            team.message.reactions.cache.map(
-              r => r.emoji.id
-            )
+          await clearOtherReactions(
+            team.message,
+            interaction.client.user.id
           );
 
-        if (
-          !existing.has(
-            ACCEPTED_EMOJI_ID
-          )
-        ) {
-
-          await team.message.react(
-            ACCEPTED_EMOJI_ID
-          );
-
-          await delay(
-            500
-          );
-
-          existing.add(
-            ACCEPTED_EMOJI_ID
-          );
-        }
+        await reactIfMissing(
+          team.message,
+          ACCEPTED_EMOJI_ID,
+          existing
+        );
 
         const digits =
           teamNumber
@@ -522,24 +537,11 @@ module.exports = {
             !emojiId
           ) continue;
 
-          if (
-            !existing.has(
-              emojiId
-            )
-          ) {
-
-            await team.message.react(
-              emojiId
-            );
-
-            await delay(
-              500
-            );
-
-            existing.add(
-              emojiId
-            );
-          }
+          await reactIfMissing(
+            team.message,
+            emojiId,
+            existing
+          );
         }
 
       } catch (err) {
@@ -568,22 +570,23 @@ module.exports = {
 
         try {
 
-          await clearOtherReactions(
+          const existing =
+            await clearOtherReactions(
+              team.message,
+              interaction.client.user.id
+            );
+
+          await reactIfMissing(
             team.message,
-            interaction.client.user.id
+            RELOAD_STOP_EMOJI,
+            existing
           );
 
-          await team.message.react(
-            RELOAD_STOP_EMOJI
+          await reactIfMissing(
+            team.message,
+            RELOAD_K_EMOJI,
+            existing
           );
-
-          await delay(500);
-
-          await team.message.react(
-            RELOAD_K_EMOJI
-          );
-
-          await delay(500);
 
           const digits =
             overflowNumber
@@ -628,11 +631,11 @@ module.exports = {
               !emojiId
             ) continue;
 
-            await team.message.react(
-              emojiId
+            await reactIfMissing(
+              team.message,
+              emojiId,
+              existing
             );
-
-            await delay(500);
           }
 
         } catch (err) {
