@@ -62,6 +62,15 @@ const RELOAD_STOP_EMOJI = "✋";
 const RELOAD_K_EMOJI =
   "1435978450958553130";
 
+const MANAGED_REACTION_EMOJIS =
+  new Set([
+    ACCEPTED_EMOJI_ID,
+    RELOAD_STOP_EMOJI,
+    RELOAD_K_EMOJI,
+    ...Object.values(NUMBER_EMOJIS),
+    ...Object.values(DUPLICATE_NUMBER_EMOJIS)
+  ]);
+
 // ================= GOOGLE =================
 const credentials = JSON.parse(
   Buffer.from(
@@ -103,10 +112,10 @@ async function logAudit(data) {
   });
 }
 
-async function clearOtherReactions(message, botUserId) {
+async function clearManagedReactions(message, botUserId) {
   await message.fetch();
 
-  const botReactionEmojis =
+  const existingBotReactions =
     new Set();
 
   for (const reaction of message.reactions.cache.values()) {
@@ -116,20 +125,29 @@ async function clearOtherReactions(message, botUserId) {
       reaction.emoji.name;
 
     for (const user of users.values()) {
-      if (user.id === botUserId) {
-        botReactionEmojis.add(
-          emoji
-        );
-
+      if (user.id !== botUserId) {
+        await reaction.users.remove(user.id);
+        await delay(250);
         continue;
       }
 
-      await reaction.users.remove(user.id);
-      await delay(250);
+      if (
+        MANAGED_REACTION_EMOJIS.has(
+          emoji
+        )
+      ) {
+        await reaction.users.remove(user.id);
+        await delay(250);
+        continue;
+      }
+
+      existingBotReactions.add(
+        emoji
+      );
     }
   }
 
-  return botReactionEmojis;
+  return existingBotReactions;
 }
 
 async function reactIfMissing(message, emoji, existing) {
@@ -483,7 +501,7 @@ module.exports = {
       try {
 
         const existing =
-          await clearOtherReactions(
+          await clearManagedReactions(
             team.message,
             interaction.client.user.id
           );
@@ -571,7 +589,7 @@ module.exports = {
         try {
 
           const existing =
-            await clearOtherReactions(
+            await clearManagedReactions(
               team.message,
               interaction.client.user.id
             );
