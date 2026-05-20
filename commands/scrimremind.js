@@ -4,8 +4,6 @@ const {
 
   PermissionFlagsBits,
 
-  GuildScheduledEventStatus,
-
   ChannelType
 
 } = require("discord.js");
@@ -24,6 +22,15 @@ const {
 
 const { appendScheduledReminder } = require("../lib/scrimEventSheet");
 
+const {
+  fetchGuildScheduledEvents,
+  getSelectableScheduledEvents,
+  buildAutocompleteChoices,
+  resolveGuildForEvents,
+  resolveScheduledEvent,
+  cacheScheduledEvent
+} = require("../lib/guildScheduledEvents");
+
 
 
 const LFG_CHANNEL_ID = "1371992858084773963";
@@ -35,16 +42,6 @@ const SCHEDULE_LOG_CHANNEL_ID = "1471082166535454780";
 const REMINDER_TIMEZONE =
 
   process.env.REMINDER_TIMEZONE || "Europe/London";
-
-
-
-const EVENT_CACHE_MS = 60_000;
-
-
-
-/** @type {Map<string, { fetchedAt: number, events: import("discord.js").GuildScheduledEvent[] }>} */
-
-const scheduledEventCache = new Map();
 
 
 
@@ -78,54 +75,6 @@ function toUnix(date) {
 
 
 
-function calendarDayInTimezone(date, timeZone) {
-
-  return new Intl.DateTimeFormat("en-CA", {
-
-    timeZone,
-
-    year: "numeric",
-
-    month: "2-digit",
-
-    day: "2-digit"
-
-  }).format(date);
-
-}
-
-
-
-function formatChoiceLabel(event) {
-
-  const when = event.scheduledStartAt
-
-    ? new Intl.DateTimeFormat("en-GB", {
-
-        timeZone: REMINDER_TIMEZONE,
-
-        weekday: "short",
-
-        day: "numeric",
-
-        month: "short",
-
-        hour: "numeric",
-
-        minute: "2-digit"
-
-      }).format(event.scheduledStartAt)
-
-    : "Time TBD";
-
-
-
-  return `${event.name} — ${when}`.slice(0, 100);
-
-}
-
-
-
 function formatReminderTime(date) {
 
   if (!date) {
@@ -139,345 +88,6 @@ function formatReminderTime(date) {
   const unix = toUnix(date);
 
   return `<t:${unix}:F> (<t:${unix}:R>)`;
-
-}
-
-
-
-function isToday(date) {
-
-  if (!date) {
-
-    return false;
-
-  }
-
-
-
-  const day = calendarDayInTimezone(date, REMINDER_TIMEZONE);
-
-  const today = calendarDayInTimezone(new Date(), REMINDER_TIMEZONE);
-
-
-
-  return day === today;
-
-}
-
-
-
-function isTomorrow(date) {
-
-  if (!date) {
-
-    return false;
-
-  }
-
-
-
-  const day = calendarDayInTimezone(date, REMINDER_TIMEZONE);
-
-  const tomorrowAnchor = new Date();
-
-  tomorrowAnchor.setDate(tomorrowAnchor.getDate() + 1);
-
-  const tomorrow = calendarDayInTimezone(
-    tomorrowAnchor,
-    REMINDER_TIMEZONE
-  );
-
-
-
-  return day === tomorrow;
-
-}
-
-
-
-function isTodayOrTomorrow(date) {
-
-  return isToday(date) || isTomorrow(date);
-
-}
-
-
-
-function isSelectableEvent(event) {
-
-  return (
-
-    event.status !== GuildScheduledEventStatus.Completed &&
-
-    event.status !== GuildScheduledEventStatus.Cancelled
-
-  );
-
-}
-
-
-
-async function fetchGuildScheduledEvents(guild, { force = false } = {}) {
-
-  const cached = scheduledEventCache.get(guild.id);
-
-
-
-  if (
-
-    !force &&
-
-    cached &&
-
-    Date.now() - cached.fetchedAt < EVENT_CACHE_MS
-
-  ) {
-
-    return cached.events;
-
-  }
-
-
-
-  const collection = await guild.scheduledEvents.fetch();
-
-  const events = [...collection.values()];
-
-
-
-  scheduledEventCache.set(guild.id, {
-
-    fetchedAt: Date.now(),
-
-    events
-
-  });
-
-
-
-  return events;
-
-}
-
-
-
-async function resolveScheduledEvent(guild, eventInput) {
-
-  if (!eventInput?.trim()) {
-
-    return null;
-
-  }
-
-
-
-  const eventId = eventInput.trim();
-
-
-
-  const fromGatewayCache =
-
-    guild.scheduledEvents.cache.get(eventId);
-
-
-
-  if (fromGatewayCache) {
-
-    return fromGatewayCache;
-
-  }
-
-
-
-  const fromAutocompleteCache =
-
-    scheduledEventCache.get(guild.id)?.events?.find(
-
-      event => event.id === eventId
-
-    );
-
-
-
-  if (fromAutocompleteCache) {
-
-    return fromAutocompleteCache;
-
-  }
-
-
-
-  try {
-
-    return await guild.scheduledEvents.fetch(eventId, {
-
-      force: true
-
-    });
-
-  } catch (err) {
-
-    console.error(
-
-      "[SCRIMREMIND] fetch scheduled event by id:",
-
-      eventId,
-
-      err?.message || err
-
-    );
-
-  }
-
-
-
-  const allEvents = await fetchGuildScheduledEvents(guild, {
-
-    force: true
-
-  });
-
-
-
-  const byId = allEvents.find(event => event.id === eventId);
-
-
-
-  if (byId) {
-
-    return byId;
-
-  }
-
-
-
-  if (!/^\d{17,20}$/.test(eventId)) {
-
-    const query = eventId.toLowerCase();
-
-    const nameMatches = allEvents.filter(event =>
-
-      event.name.toLowerCase().includes(query)
-
-    );
-
-
-
-    if (nameMatches.length === 1) {
-
-      return nameMatches[0];
-
-    }
-
-  }
-
-
-
-  return null;
-
-}
-
-
-
-function getSelectableScheduledEvents(events) {
-
-  const selectable = events
-
-    .filter(isSelectableEvent)
-
-    .sort((a, b) => {
-
-      const aTime = a.scheduledStartAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
-
-      const bTime = b.scheduledStartAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
-
-      return aTime - bTime;
-
-    });
-
-
-
-  const todayAndTomorrow = selectable.filter(
-
-    event =>
-
-      event.scheduledStartAt &&
-
-      isTodayOrTomorrow(event.scheduledStartAt)
-
-  );
-
-
-
-  if (todayAndTomorrow.length > 0) {
-
-    return todayAndTomorrow;
-
-  }
-
-
-
-  const now = Date.now();
-
-
-
-  const upcoming = selectable.filter(event =>
-
-    !event.scheduledStartAt ||
-
-    event.scheduledStartAt.getTime() >= now
-
-  );
-
-
-
-  return upcoming.length > 0 ? upcoming : selectable;
-
-}
-
-
-
-function buildAutocompleteChoices(events, focused) {
-
-  const query = focused.trim().toLowerCase();
-
-
-
-  let filtered = events;
-
-
-
-  if (query) {
-
-    filtered = events.filter(event =>
-
-      event.name.toLowerCase().includes(query)
-
-    );
-
-  }
-
-
-
-  if (filtered.length === 0 && events.length > 0) {
-
-    filtered = events;
-
-  }
-
-
-
-  return filtered
-
-    .slice(0, 25)
-
-    .map(event => ({
-
-      name: formatChoiceLabel(event),
-
-      value: event.id
-
-    }));
 
 }
 
@@ -957,29 +567,32 @@ module.exports = {
 
   async autocomplete(interaction) {
 
-    const focused = interaction.options.getFocused();
-
-
+    const focused = interaction.options.getFocused() ?? "";
 
     try {
 
-      const allEvents =
+      const guild = await resolveGuildForEvents(
+        interaction.client,
+        interaction
+      );
 
-        await fetchGuildScheduledEvents(interaction.guild);
+      if (!guild) {
+        console.warn("[SCRIMREMIND AUTOCOMPLETE] No guild on interaction");
+        return await interaction.respond([]);
+      }
 
+      const allEvents = await fetchGuildScheduledEvents(guild, { force: true });
+      const selectable = getSelectableScheduledEvents(allEvents, {
+        preferNearTerm: false
+      });
+      const choices = buildAutocompleteChoices(selectable, focused);
 
-
-      const selectable =
-
-        getSelectableScheduledEvents(allEvents);
-
-
-
-      const choices =
-
-        buildAutocompleteChoices(selectable, focused);
-
-
+      if (choices.length === 0) {
+        console.warn(
+          `[SCRIMREMIND AUTOCOMPLETE] No events guild ${guild.id} ` +
+            `(fetched ${allEvents.length})`
+        );
+      }
 
       return await interaction.respond(choices);
 
@@ -1067,23 +680,7 @@ module.exports = {
 
 
 
-    scheduledEventCache.set(guild.id, {
-
-      fetchedAt: Date.now(),
-
-      events: [
-
-        scheduledEvent,
-
-        ...(
-
-          scheduledEventCache.get(guild.id)?.events || []
-
-        ).filter(event => event.id !== scheduledEvent.id)
-
-      ]
-
-    });
+    cacheScheduledEvent(guild.id, scheduledEvent);
 
 
 

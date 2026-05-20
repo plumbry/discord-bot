@@ -56,7 +56,10 @@ function deriveDefaultKey({ scheduledEventId, eventName, mode }) {
 }
 
 async function resolveRulesEvent(interaction, eventId) {
-  const scheduledEvent = await resolveScheduledEvent(interaction.guild, eventId);
+  const guild = await resolveGuildForEvents(interaction.client, interaction);
+  const scheduledEvent = guild
+    ? await resolveScheduledEvent(guild, eventId)
+    : null;
 
   if (!scheduledEvent) {
     return {
