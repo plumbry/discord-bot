@@ -30,8 +30,10 @@ const {
   fetchGuildScheduledEvents,
   getSelectableScheduledEvents,
   buildAutocompleteChoices,
+  resolveGuildForEvents,
   formatRulesEventTime,
-  resolveScheduledEvent
+  resolveScheduledEvent,
+  isSelectableEvent
 } = require("../lib/guildScheduledEvents");
 const pendingRuleForms = new Map();
 const BAN_FORM_LINE_COUNT = 5;
@@ -641,18 +643,55 @@ module.exports = {
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
   async autocomplete(interaction) {
-    const focusedOption = interaction.options.getFocused(true);
+    let focusedName = "event";
+    let focusedValue = "";
 
     try {
-      if (focusedOption.name === "preset") {
+      const focusedOption = interaction.options.getFocused(true);
+      focusedName = focusedOption.name;
+      focusedValue = focusedOption.value ?? "";
+    } catch {
+      focusedValue = interaction.options.getFocused() ?? "";
+    }
+
+    try {
+      if (focusedName === "preset") {
         const presets = await listPresets(interaction.guildId);
-        const choices = buildPresetChoices(presets, focusedOption.value);
+        const choices = buildPresetChoices(presets, focusedValue);
         return await interaction.respond(choices);
       }
 
-      const allEvents = await fetchGuildScheduledEvents(interaction.guild);
-      const selectable = getSelectableScheduledEvents(allEvents);
-      const choices = buildAutocompleteChoices(selectable, focusedOption.value);
+      if (focusedName !== "event") {
+        return await interaction.respond([]);
+      }
+
+      const guild = await resolveGuildForEvents(
+        interaction.client,
+        interaction
+      );
+
+      if (!guild) {
+        console.warn("[RULES AUTOCOMPLETE] No guild on interaction");
+        return await interaction.respond([]);
+      }
+
+      const allEvents = await fetchGuildScheduledEvents(guild, { force: true });
+      let selectable = getSelectableScheduledEvents(allEvents, {
+        preferNearTerm: false
+      });
+
+      if (selectable.length === 0 && allEvents.length > 0) {
+        selectable = allEvents.filter(isSelectableEvent);
+      }
+
+      const choices = buildAutocompleteChoices(selectable, focusedValue);
+
+      if (choices.length === 0) {
+        console.warn(
+          `[RULES AUTOCOMPLETE] No events for guild ${guild.id} ` +
+            `(fetched ${allEvents.length}, selectable ${selectable.length})`
+        );
+      }
 
       return await interaction.respond(choices);
     } catch (err) {
