@@ -24,7 +24,7 @@ const { appendScheduledReminder } = require("../lib/scrimEventSheet");
 
 const {
   fetchGuildScheduledEvents,
-  getSelectableScheduledEvents,
+  getEventsForAutocomplete,
   buildAutocompleteChoices,
   resolveGuildForEvents,
   resolveScheduledEvent,
@@ -582,17 +582,13 @@ module.exports = {
       }
 
       const allEvents = await fetchGuildScheduledEvents(guild, { force: true });
-      const selectable = getSelectableScheduledEvents(allEvents, {
-        preferNearTerm: false
-      });
-      const choices = buildAutocompleteChoices(selectable, focused);
+      const forAutocomplete = getEventsForAutocomplete(allEvents);
+      const choices = buildAutocompleteChoices(forAutocomplete, focused);
 
-      if (choices.length === 0) {
-        console.warn(
-          `[SCRIMREMIND AUTOCOMPLETE] No events guild ${guild.id} ` +
-            `(fetched ${allEvents.length})`
-        );
-      }
+      console.log(
+        `[SCRIMREMIND AUTOCOMPLETE] guild ${guild.id}: ` +
+          `fetched=${allEvents.length} choices=${choices.length}`
+      );
 
       return await interaction.respond(choices);
 

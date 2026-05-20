@@ -28,12 +28,11 @@ const {
 } = require("../lib/rulesSheet");
 const {
   fetchGuildScheduledEvents,
-  getSelectableScheduledEvents,
+  getEventsForAutocomplete,
   buildAutocompleteChoices,
   resolveGuildForEvents,
   formatRulesEventTime,
-  resolveScheduledEvent,
-  isSelectableEvent
+  resolveScheduledEvent
 } = require("../lib/guildScheduledEvents");
 const pendingRuleForms = new Map();
 const BAN_FORM_LINE_COUNT = 5;
@@ -679,22 +678,13 @@ module.exports = {
       }
 
       const allEvents = await fetchGuildScheduledEvents(guild, { force: true });
-      let selectable = getSelectableScheduledEvents(allEvents, {
-        preferNearTerm: false
-      });
+      const forAutocomplete = getEventsForAutocomplete(allEvents);
+      const choices = buildAutocompleteChoices(forAutocomplete, focusedValue);
 
-      if (selectable.length === 0 && allEvents.length > 0) {
-        selectable = allEvents.filter(isSelectableEvent);
-      }
-
-      const choices = buildAutocompleteChoices(selectable, focusedValue);
-
-      if (choices.length === 0) {
-        console.warn(
-          `[RULES AUTOCOMPLETE] No events for guild ${guild.id} ` +
-            `(fetched ${allEvents.length}, selectable ${selectable.length})`
-        );
-      }
+      console.log(
+        `[RULES AUTOCOMPLETE] guild ${guild.id}: ` +
+          `fetched=${allEvents.length} choices=${choices.length}`
+      );
 
       return await interaction.respond(choices);
     } catch (err) {

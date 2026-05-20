@@ -470,6 +470,26 @@ client.once("ready", async () => {
 
   }
 
+  // ================= SCHEDULED EVENTS HEALTH CHECK =================
+
+  try {
+    const { fetchGuildScheduledEvents } = require("./lib/guildScheduledEvents");
+    const guild = await client.guilds.fetch(GUILD_ID);
+    const events = await fetchGuildScheduledEvents(guild, { force: true });
+
+    console.log(
+      `[STARTUP] ${guild.name} (${GUILD_ID}): ${events.length} scheduled event(s)`
+    );
+
+    for (const event of events.slice(0, 8)) {
+      console.log(
+        `[STARTUP]   - ${event.name} | id=${event.id} | status=${event.status}`
+      );
+    }
+  } catch (err) {
+    console.error("[STARTUP] Scheduled events check failed:", err?.message || err);
+  }
+
 });
 
 // ================= INTERACTIONS =================
