@@ -4,31 +4,10 @@ const {
   EmbedBuilder
 } = require('discord.js');
 
-const { google } = require('googleapis');
+const { getSheets } = require('../lib/sheets');
 
 // ================= CONSTANT =================
 const EVENT_BANS_SHEET_ID = process.env.MAIN_SHEET_ID;
-
-/**
- * Google Sheets auth helper
- */
-function getSheetsClient() {
-  const credentials = JSON.parse(
-    Buffer.from(
-      process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
-      'base64'
-    ).toString('utf8')
-  );
-
-  const auth = new google.auth.JWT(
-    credentials.client_email,
-    null,
-    credentials.private_key,
-    ['https://www.googleapis.com/auth/spreadsheets.readonly']
-  );
-
-  return google.sheets({ version: 'v4', auth });
-}
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -71,11 +50,9 @@ module.exports = {
     let eventBanStatus = 'None';
 
     try {
-      const sheets = getSheetsClient();
-
-      const res = await sheets.spreadsheets.values.get({
+      const res = await getSheets().spreadsheets.values.get({
         spreadsheetId: EVENT_BANS_SHEET_ID,
-        range: 'A2:J'
+        range: 'Event Bans!A2:K'
       });
 
       const rows = res.data.values || [];
@@ -83,7 +60,12 @@ module.exports = {
       const activeBan = rows.find(row => {
         const discordId = row[0];
         const remainingEvents = Number(row[4]);
-        return discordId === targetUser.id && remainingEvents > 0;
+        const type = row[2];
+        return (
+          discordId === targetUser.id &&
+          type !== 'Probation' &&
+          remainingEvents > 0
+        );
       });
 
       if (activeBan) {

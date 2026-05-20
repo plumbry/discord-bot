@@ -6,8 +6,8 @@ const {
   EmbedBuilder
 } = require("discord.js");
 
-const { google } = require("googleapis");
 const crypto = require("crypto");
+const { getSheets } = require("../lib/sheets");
 
 /* ===================== CONSTANTS ===================== */
 
@@ -28,22 +28,6 @@ if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64) {
 if (!process.env.MAIN_SHEET_ID) {
   throw new Error("Missing MAIN_SHEET_ID");
 }
-
-/* ===================== GOOGLE AUTH ===================== */
-
-const credentials = JSON.parse(
-  Buffer.from(
-    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
-    "base64"
-  ).toString("utf8")
-);
-
-const auth = new google.auth.GoogleAuth({
-  credentials,
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-});
-
-const sheets = google.sheets({ version: "v4", auth });
 
 /* ===================== HELPERS ===================== */
 
@@ -66,7 +50,7 @@ function parseUTCDateTime(date, time) {
 }
 
 async function updateRow(rowNumber, row) {
-  await sheets.spreadsheets.values.update({
+  await getSheets().spreadsheets.values.update({
     spreadsheetId: process.env.MAIN_SHEET_ID,
     range: SHEET_NAME + "!A" + rowNumber + ":Z" + rowNumber,
     valueInputOption: "RAW",
@@ -179,7 +163,7 @@ async function handleDM(interaction) {
     components: [buttons]
   });
 
-  await sheets.spreadsheets.values.append({
+  await getSheets().spreadsheets.values.append({
     spreadsheetId: process.env.MAIN_SHEET_ID,
     range: SHEET_NAME + "!A:Z",
     valueInputOption: "RAW",
@@ -216,7 +200,7 @@ async function handleDMButton(interaction) {
 
   await interaction.deferUpdate();
 
-  const res = await sheets.spreadsheets.values.get({
+  const res = await getSheets().spreadsheets.values.get({
     spreadsheetId: process.env.MAIN_SHEET_ID,
     range: SHEET_NAME + "!A2:Z"
   });
@@ -260,7 +244,7 @@ function startDMScheduler(client) {
     schedulerRunning = true;
 
     try {
-      const res = await sheets.spreadsheets.values.get({
+      const res = await getSheets().spreadsheets.values.get({
         spreadsheetId: process.env.MAIN_SHEET_ID,
         range: SHEET_NAME + "!A2:Z"
       });
@@ -290,15 +274,38 @@ function startDMScheduler(client) {
             await delay(USER_DM_DELAY_MS);
           } else {
             const guild = await client.guilds.fetch(row[14]);
-            await guild.members.fetch();
+            const targetRole =
+              await guild.roles.fetch(row[2]).catch(() => null);
 
-            const members = guild.members.cache.filter(m =>
-              m.roles.cache.has(row[2])
-            );
+            let memberList = targetRole
+              ? [...targetRole.members.values()]
+              : [];
 
-            total = members.size;
+            if (memberList.length === 0) {
 
-            for (const member of members.values()) {
+              console.log(
+                `[DM] Fetching all members for role ${row[2]} (not in cache)`
+              );
+
+              await guild.members.fetch();
+
+              memberList = guild.members.cache.filter(m =>
+                m.roles.cache.has(row[2])
+              ).map(m => m);
+
+            }
+
+            if (memberList.length > 200) {
+
+              console.warn(
+                `[DM] Large role blast: ${memberList.length} recipients`
+              );
+
+            }
+
+            total = memberList.length;
+
+            for (const member of memberList) {
               try {
                 await member.send(row[3]);
                 sent++;

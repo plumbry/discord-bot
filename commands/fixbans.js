@@ -1,10 +1,10 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
-const { google } = require("googleapis");
+const { getSheets } = require("../lib/sheets");
+const { EVENT_BAN_RANGE } = require("../lib/eventBanSheet");
 
 // ================= CONFIG =================
 
 const SHEET_ID = process.env.MAIN_SHEET_ID;
-const EVENT_SHEET = "Event Bans";
 const BAN_CHANNEL_ID = "1472795189515915466";
 
 // ================= MESSAGE FORMATTERS =================
@@ -42,26 +42,7 @@ async function execute(interaction) {
     return interaction.editReply("❌ MAIN_SHEET_ID is not configured.");
   }
 
-  let credentials;
-
-  try {
-    credentials = JSON.parse(
-      Buffer.from(
-        process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
-        "base64"
-      ).toString("utf8")
-    );
-  } catch (err) {
-    console.error("Google credentials parse failed:", err);
-    return interaction.editReply("❌ Failed to load Google credentials.");
-  }
-
-  const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-  });
-
-  const sheets = google.sheets({ version: "v4", auth });
+  const sheets = getSheets();
 
   // ================= CHANNEL =================
 
@@ -81,7 +62,7 @@ async function execute(interaction) {
 
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
-      range: `${EVENT_SHEET}!A2:J`
+      range: EVENT_BAN_RANGE
     });
 
     rows = res.data.values || [];

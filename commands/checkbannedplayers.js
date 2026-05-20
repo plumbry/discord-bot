@@ -1,29 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { fetchAllMessages } = require("../lib/messages");
 
 const EVENT_BAN_ROLE = "1463660686231207956";
-
-async function fetchAllMessages(channel) {
-
-  let messages = [];
-  let lastId;
-
-  while (true) {
-
-    const options = { limit: 100 };
-    if (lastId) options.before = lastId;
-
-    const batch = await channel.messages.fetch(options);
-
-    if (!batch.size) break;
-
-    messages.push(...batch.values());
-    lastId = batch.last().id;
-
-  }
-
-  return messages.reverse();
-
-}
 
 module.exports = {
 

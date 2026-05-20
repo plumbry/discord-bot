@@ -1,25 +1,10 @@
 const { SlashCommandBuilder } = require("discord.js");
-const { google } = require("googleapis");
+const { getSheets } = require("../lib/sheets");
 
 // ================= CONFIG =================
 const VERIFY_CATEGORY_ID = "1405195809057669271";
 const NEW_MEMBER_ROLE_ID = "1419812379692367902";
 const WELCOME_CHANNEL_ID = "1471071557991272459";
-
-// ================= GOOGLE SHEETS =================
-const credentials = JSON.parse(
-  Buffer.from(
-    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
-    "base64"
-  ).toString("utf8")
-);
-
-const auth = new google.auth.GoogleAuth({
-  credentials,
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-});
-
-const sheets = google.sheets({ version: "v4", auth });
 
 const SPREADSHEET_ID = process.env.MAIN_SHEET_ID;
 const WELCOME_DM_RANGE = "Welcome DMs!A:E";
@@ -69,7 +54,7 @@ let welcomeQueue = [];
 let welcomeTimeout = null;
 
 async function logWelcomeDM(member, status, error = "") {
-  await sheets.spreadsheets.values.append({
+  await getSheets().spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
     range: WELCOME_DM_RANGE,
     valueInputOption: "RAW",

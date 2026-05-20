@@ -3,31 +3,12 @@ const {
   PermissionFlagsBits
 } = require('discord.js');
 
-const { google } = require('googleapis');
+const { getSheets } = require('../lib/sheets');
 
 // ================= CONSTANTS =================
 const LOG_CHANNEL_ID = '1471082166535454780';
 const AUDIT_SHEET_ID = process.env.MAIN_SHEET_ID;
 const AUDIT_RANGE = 'Audit Log!A:G';
-
-// ================= GOOGLE SHEETS =================
-function getSheetsClient() {
-  const credentials = JSON.parse(
-    Buffer.from(
-      process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
-      'base64'
-    ).toString('utf8')
-  );
-
-  const auth = new google.auth.JWT(
-    credentials.client_email,
-    null,
-    credentials.private_key,
-    ['https://www.googleapis.com/auth/spreadsheets']
-  );
-
-  return google.sheets({ version: 'v4', auth });
-}
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -132,9 +113,7 @@ module.exports = {
     }
 
     try {
-      const sheets = getSheetsClient();
-
-      await sheets.spreadsheets.values.append({
+      await getSheets().spreadsheets.values.append({
         spreadsheetId: AUDIT_SHEET_ID,
         range: AUDIT_RANGE,
         valueInputOption: 'RAW',

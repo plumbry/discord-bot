@@ -1,46 +1,12 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
-const { google } = require("googleapis");
 const { getAccessToken, getLiveStreams } = require("../twitchBatch");
+const { getSheets } = require("../lib/sheets");
+const { fetchAllMessages } = require("../lib/messages");
 
 const SPREADSHEET_ID = process.env.MAIN_SHEET_ID;
 const SHEET_NAME = "'Live Check'";
 
-const credentials = JSON.parse(
-  Buffer.from(
-    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
-    "base64"
-  ).toString("utf8")
-);
-
-const auth = new google.auth.GoogleAuth({
-  credentials,
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-});
-
-const sheets = google.sheets({ version: "v4", auth });
-
 const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)/i;
-
-async function fetchAllMessages(channel) {
-
-  let messages = [];
-  let lastId;
-
-  while (true) {
-
-    const options = { limit: 100 };
-    if (lastId) options.before = lastId;
-
-    const batch = await channel.messages.fetch(options);
-    if (!batch.size) break;
-
-    messages.push(...batch.values());
-    lastId = batch.last().id;
-
-  }
-
-  return messages;
-}
 
 async function getTwitchUsers(channel) {
 
@@ -68,7 +34,7 @@ async function getTwitchUsers(channel) {
 
 async function appendRows(rows) {
 
-  await sheets.spreadsheets.values.append({
+  await getSheets().spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
     range: `${SHEET_NAME}!A1`,
     valueInputOption: "RAW",

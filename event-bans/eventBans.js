@@ -3,37 +3,28 @@ const {
   PermissionFlagsBits
 } = require("discord.js");
 
-const { google } = require("googleapis");
+const { getSheets } = require("../lib/sheets");
+
+const {
+  getEventBanRows,
+  writeEventBanRows,
+  appendEventBanRow,
+  batchUpdateEventBanRows,
+  sheetRowNumber
+} = require("../lib/eventBanSheet");
+
+const {
+  EVENT_BAN_TYPE_LABEL,
+  syncEventBanRole
+} = require("../lib/eventBanDiscord");
 
 // ================= CONFIG =================
 
 const SHEET_ID = process.env.MAIN_SHEET_ID;
 
-const EVENT_SHEET = "Event Bans";
 const AUDIT_SHEET = "Audit Log";
 
 const BAN_CHANNEL_ID = "1472795189515915466";
-
-// ================= GOOGLE AUTH =================
-
-const credentials = JSON.parse(
-  Buffer.from(
-    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
-    "base64"
-  ).toString("utf8")
-);
-
-const auth = new google.auth.GoogleAuth({
-  credentials,
-  scopes: [
-    "https://www.googleapis.com/auth/spreadsheets"
-  ]
-});
-
-const sheets = google.sheets({
-  version: "v4",
-  auth
-});
 
 // ================= HELPERS =================
 
@@ -110,63 +101,8 @@ function getDaysRemaining(endDateStr) {
 
 // ================= SHEETS =================
 
-async function getRows() {
-
-  try {
-
-    const res =
-      await sheets.spreadsheets.values.get({
-        spreadsheetId: SHEET_ID,
-        range: `${EVENT_SHEET}!A2:J`
-      });
-
-    return res.data.values || [];
-
-  } catch (err) {
-
-    console.error(
-      "GET ROWS ERROR:",
-      err
-    );
-
-    return [];
-
-  }
-
-}
-
-async function writeRows(rows) {
-
-  try {
-
-    await sheets.spreadsheets.values.clear({
-      spreadsheetId: SHEET_ID,
-      range: `${EVENT_SHEET}!A2:J`
-    });
-
-    if (rows.length) {
-
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: SHEET_ID,
-        range: `${EVENT_SHEET}!A2:J`,
-        valueInputOption: "RAW",
-        requestBody: {
-          values: rows
-        }
-      });
-
-    }
-
-  } catch (err) {
-
-    console.error(
-      "WRITE ROWS ERROR:",
-      err
-    );
-
-  }
-
-}
+const getRows = getEventBanRows;
+const writeRows = writeEventBanRows;
 
 async function logAudit(
   action,
@@ -175,6 +111,8 @@ async function logAudit(
 ) {
 
   try {
+
+    const sheets = getSheets();
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: SHEET_ID,
@@ -264,6 +202,62 @@ async function handleExpiredProbations(
 
 }
 
+// ================= SIGNUP CHECKS (roletagged, etc.) =================
+
+/**
+ * Whether a user should be blocked from a signup for a given event.
+ *
+ * Ignores probation rows (probationers are not eligible to be tagged in signups).
+ * Event bans: block when events remaining > 0.
+ */
+function getSignupBlockReason(userId, rows) {
+
+  for (const r of rows) {
+
+    if (r[0] !== userId) {
+      continue;
+    }
+
+    if (r[2] === "Probation") {
+      continue;
+    }
+
+    const remaining = Number(r[4] || 0);
+
+    if (remaining <= 0) {
+      continue;
+    }
+
+    return {
+      kind: "event_ban",
+      userId,
+      tag: r[1],
+      remaining
+    };
+
+  }
+
+  return null;
+
+}
+
+function formatSignupBlockMessage(block) {
+
+  if (!block) {
+    return "";
+  }
+
+  const mention = block.userId
+    ? `<@${block.userId}>`
+    : (block.tag || "User");
+
+  return (
+    `${mention} has an active event ban ` +
+    `(${block.remaining} event(s) remaining).`
+  );
+
+}
+
 // ================= COMMAND =================
 
 const eventBanCommand =
@@ -295,27 +289,6 @@ const eventBanCommand =
             .setName("user")
             .setDescription("User")
             .setRequired(true)
-        )
-
-        .addStringOption(option =>
-          option
-            .setName("type")
-            .setDescription("Ban type")
-            .setRequired(true)
-            .addChoices(
-              {
-                name: "Money",
-                value: "Money"
-              },
-              {
-                name: "No Money",
-                value: "No Money"
-              },
-              {
-                name: "All",
-                value: "All"
-              }
-            )
         )
 
         .addIntegerOption(option =>
@@ -383,35 +356,14 @@ const eventBanCommand =
         .setName("eventpassed")
 
         .setDescription(
-          "Reduce remaining bans"
-        )
-
-        .addStringOption(option =>
-          option
-            .setName("type")
-            .setDescription("Event type")
-            .setRequired(true)
-            .addChoices(
-              {
-                name: "Money",
-                value: "Money"
-              },
-              {
-                name: "No Money",
-                value: "No Money"
-              },
-              {
-                name: "All",
-                value: "All"
-              }
-            )
+          "Reduce remaining bans for all active event bans"
         )
 
         .addIntegerOption(option =>
           option
             .setName("events")
             .setDescription(
-              "Events passed"
+              "Number of events that passed"
             )
             .setRequired(true)
         )
@@ -480,11 +432,6 @@ async function handleEventBan(
           "user"
         );
 
-      const type =
-        interaction.options.getString(
-          "type"
-        );
-
       const events =
         interaction.options.getInteger(
           "events"
@@ -498,7 +445,7 @@ async function handleEventBan(
       const row = [
         user.id,
         user.tag,
-        type,
+        EVENT_BAN_TYPE_LABEL,
         events,
         events,
         today(),
@@ -515,12 +462,18 @@ async function handleEventBan(
 
       row[9] = msg.id;
 
+      await appendEventBanRow(row);
+
       rows.push(row);
 
-      await writeRows(rows);
+      await syncEventBanRole(
+        interaction.guild,
+        user.id,
+        rows
+      );
 
       await logAudit(
-        `Applied ${events}-event ${type} ban`,
+        `Applied ${events}-event ban`,
         interaction.user,
         user
       );
@@ -612,9 +565,9 @@ async function handleEventBan(
 
       row[9] = msg.id;
 
-      rows.push(row);
+      await appendEventBanRow(row);
 
-      await writeRows(rows);
+      rows.push(row);
 
       await logAudit(
         `Applied ${days}-day probation`,
@@ -633,65 +586,72 @@ async function handleEventBan(
 
     if (sub === "eventpassed") {
 
-      const type =
-        interaction.options
-          .getString("type")
-          .toLowerCase();
-
       const events =
         interaction.options.getInteger(
           "events"
         );
 
-      for (const r of rows) {
+      const sheetUpdates = [];
+      const usersToSync = new Set();
 
-        if (r[2] === "Probation")
+      for (let i = 0; i < rows.length; i++) {
+
+        const r = rows[i];
+
+        if (r[2] === "Probation") {
           continue;
+        }
 
-        const rowType =
-          r[2].toLowerCase();
+        if (Number(r[4]) <= 0) {
+          continue;
+        }
 
-        if (
-          (
-            type === "all" ||
-            rowType === type
-          ) &&
-          Number(r[4]) > 0
-        ) {
+        r[4] = Math.max(
+          0,
+          Number(r[4]) - events
+        );
 
-          r[4] = Math.max(
-            0,
-            Number(r[4]) - events
-          );
+        r[6] = today();
 
-          r[6] = today();
+        sheetUpdates.push({
+          sheetRow: sheetRowNumber(i),
+          row: r
+        });
 
-          if (r[9]) {
+        usersToSync.add(r[0]);
 
-            try {
+        if (r[9]) {
 
-              const msg =
-                await banChannel.messages.fetch(
-                  r[9]
-                );
+          try {
 
-              await msg.edit(
-                formatEventBan(r)
+            const msg =
+              await banChannel.messages.fetch(
+                r[9]
               );
 
-            } catch {}
+            await msg.edit(
+              formatEventBan(r)
+            );
 
-          }
+          } catch {}
 
         }
 
       }
 
-      await writeRows(rows);
+      await batchUpdateEventBanRows(sheetUpdates);
+
+      for (const userId of usersToSync) {
+        await syncEventBanRole(
+          interaction.guild,
+          userId,
+          rows
+        );
+      }
 
       return interaction.editReply({
         content:
-          "✅ Event bans updated."
+          `✅ Updated **${sheetUpdates.length}** event ban row(s).`
       });
 
     }
@@ -721,7 +681,7 @@ async function handleEventBan(
 
       text += activeBans.length
         ? activeBans.map(r =>
-            `${r[1]} — ${r[2]} | ${r[4]} events remaining`
+            `${r[1]} — ${r[4]} events remaining`
           ).join("\n")
         : "None";
 
@@ -768,6 +728,12 @@ async function handleEventBan(
 
       await writeRows(filtered);
 
+      await syncEventBanRole(
+        interaction.guild,
+        user.id,
+        filtered
+      );
+
       await logAudit(
         "Removed Event Ban",
         interaction.user,
@@ -802,5 +768,8 @@ async function handleEventBan(
 module.exports = {
   eventBanCommand,
   handleEventBan,
-  handleExpiredProbations
+  handleExpiredProbations,
+  getRows,
+  getSignupBlockReason,
+  formatSignupBlockMessage
 };

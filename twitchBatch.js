@@ -1,6 +1,15 @@
 const fetch = require("node-fetch");
 
+let cachedToken = null;
+let tokenExpiresAt = 0;
+
 async function getAccessToken() {
+
+  const now = Date.now();
+
+  if (cachedToken && now < tokenExpiresAt - 60_000) {
+    return cachedToken;
+  }
 
   const res = await fetch("https://id.twitch.tv/oauth2/token", {
     method: "POST",
@@ -12,13 +21,20 @@ async function getAccessToken() {
   });
 
   const data = await res.json();
-  return data.access_token;
+
+  cachedToken = data.access_token;
+  tokenExpiresAt =
+    now + (Number(data.expires_in) || 3600) * 1000;
+
+  return cachedToken;
 
 }
 
 async function getLiveStreams(usernames, token) {
 
-  if (!usernames.length) return {};
+  if (!usernames.length) {
+    return {};
+  }
 
   const url =
     "https://api.twitch.tv/helix/streams?" +
@@ -35,7 +51,7 @@ async function getLiveStreams(usernames, token) {
 
   const liveMap = {};
 
-  for (const stream of data.data) {
+  for (const stream of data.data || []) {
     liveMap[stream.user_login.toLowerCase()] = stream;
   }
 

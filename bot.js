@@ -1,4 +1,9 @@
+require("dotenv").config();
+
 console.log("=== BOT STARTING ===");
+
+const GUILD_ID =
+  process.env.GUILD_ID || "1371615693392576580";
 
 // ================= CORE =================
 
@@ -137,6 +142,34 @@ try {
 
 }
 
+// ================= SCRIM REMIND SHEET =================
+
+let startScrimRemindScheduler = null;
+
+try {
+
+  ({
+    startScrimRemindScheduler
+  } = require("./lib/scrimEventSheet"));
+
+  console.log("✅ scrimEventSheet loaded");
+
+} catch (err) {
+
+  console.error(
+    "⚠️ scrimEventSheet not loaded:"
+  );
+
+  console.error(err);
+
+}
+
+// ================= GAME CALL =================
+
+const {
+  activeCalls
+} = require("./commands/gamecall");
+
 // ================= CLIENT =================
 
 const client = new Client({
@@ -145,7 +178,8 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.DirectMessages
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.GuildScheduledEvents
   ]
 });
 
@@ -216,7 +250,7 @@ for (const file of commandFiles) {
 
 // ================= READY =================
 
-client.once("clientReady", async () => {
+client.once("ready", async () => {
 
   console.log(
     `🚀 Logged in as ${client.user.tag}`
@@ -308,14 +342,41 @@ client.once("clientReady", async () => {
 
   }
 
-  // ================= REGISTER NORMAL COMMANDS =================
+  // ================= EVENTBAN =================
+
+  if (eventBanCommand) {
+
+    try {
+
+      const json =
+        eventBanCommand.toJSON();
+
+      commandJSON.push(json);
+
+      console.log(
+        `📦 Registering command: ${json.name}`
+      );
+
+    } catch (err) {
+
+      console.error(
+        "❌ Failed converting eventban command:"
+      );
+
+      console.error(err);
+
+    }
+
+  }
+
+  // ================= REGISTER ALL COMMANDS =================
 
   try {
 
     await rest.put(
       Routes.applicationGuildCommands(
         client.user.id,
-        "1371615693392576580"
+        GUILD_ID
       ),
       {
         body: commandJSON
@@ -323,91 +384,88 @@ client.once("clientReady", async () => {
     );
 
     console.log(
-      "✅ Standard slash commands registered"
+      `✅ Registered ${commandJSON.length} slash commands`
     );
 
   } catch (err) {
 
     console.error(
-      "❌ Standard command registration failed:"
+      "❌ Command registration failed:"
     );
 
     console.error(err);
 
   }
 
-  // ================= REGISTER EVENTBAN SEPARATELY =================
-
-  if (eventBanCommand) {
-
-    try {
-
-      const eventJSON =
-        eventBanCommand.toJSON();
-
-      console.log(
-        "EVENTBAN JSON:",
-        eventJSON
-      );
-
-      await rest.post(
-        Routes.applicationGuildCommands(
-          client.user.id,
-          "1371615693392576580"
-        ),
-        {
-          body: eventJSON
-        }
-      );
-
-      console.log(
-        "✅ Eventban registered separately"
-      );
-
-    } catch (err) {
-
-      console.error(
-        "❌ Eventban registration failed:"
-      );
-
-      console.error(err);
-
-    }
-
-  }
-
-  // ================= DM SCHEDULER =================
+  // ================= DM SCHEDULER (staggered start) =================
 
   if (
     dm?.startDMScheduler &&
     MAIN_SHEET_ID
   ) {
 
-    try {
+    setTimeout(() => {
 
-      dm.startDMScheduler(
-        client,
-        MAIN_SHEET_ID
-      );
+      try {
 
-      console.log(
-        "✅ DM scheduler started"
-      );
+        dm.startDMScheduler(
+          client,
+          MAIN_SHEET_ID
+        );
 
-    } catch (err) {
+        console.log(
+          "✅ DM scheduler started"
+        );
 
-      console.error(
-        "❌ DM scheduler error:"
-      );
+      } catch (err) {
 
-      console.error(err);
+        console.error(
+          "❌ DM scheduler error:"
+        );
 
-    }
+        console.error(err);
+
+      }
+
+    }, 90 * 1000);
 
   } else {
 
     console.log(
       "⚠️ DM scheduler disabled"
+    );
+
+  }
+
+  // ================= SCRIM REMIND SCHEDULER (staggered start) =================
+
+  if (
+    startScrimRemindScheduler &&
+    MAIN_SHEET_ID
+  ) {
+
+    setTimeout(() => {
+
+      try {
+
+        startScrimRemindScheduler(client);
+
+      } catch (err) {
+
+        console.error(
+          "❌ Scrim remind scheduler error:"
+        );
+
+        console.error(err);
+
+      }
+
+    }, 100 * 1000);
+
+  } else {
+
+    console.log(
+      "⚠️ Scrim remind scheduler disabled"
     );
 
   }
@@ -425,10 +483,6 @@ client.on(
     if (interaction.isButton()) {
 
       try {
-
-        const {
-          activeCalls
-        } = require("./commands/gamecall");
 
         const call =
           activeCalls.get(
@@ -546,6 +600,20 @@ client.on(
 
         }
 
+        for (const command of client.commands.values()) {
+          if (typeof command.handleButton !== "function") {
+            continue;
+          }
+
+          const handled = await command.handleButton(
+            interaction
+          );
+
+          if (handled) {
+            return;
+          }
+        }
+
       } catch (err) {
 
         console.error(
@@ -633,6 +701,20 @@ WHO IS NOT IN <@&${call.roleId}>`
 
         }
 
+        for (const command of client.commands.values()) {
+          if (typeof command.handleModalSubmit !== "function") {
+            continue;
+          }
+
+          const handled = await command.handleModalSubmit(
+            interaction
+          );
+
+          if (handled) {
+            return;
+          }
+        }
+
       } catch (err) {
 
         console.error(
@@ -650,13 +732,47 @@ WHO IS NOT IN <@&${call.roleId}>`
 
             await interaction.reply({
               content:
-                "❌ Failed to override game code.",
+                "❌ Modal action failed.",
               ephemeral: true
             });
 
           }
 
         } catch {}
+
+      }
+
+      return;
+
+    }
+
+    // ================= AUTOCOMPLETE =================
+
+    if (interaction.isAutocomplete()) {
+
+      const command =
+        client.commands.get(
+          interaction.commandName
+        );
+
+      if (command?.autocomplete) {
+
+        try {
+
+          return await command.autocomplete(
+            interaction
+          );
+
+        } catch (err) {
+
+          console.error(
+            "❌ Autocomplete error:",
+            err
+          );
+
+          return interaction.respond([]).catch(() => {});
+
+        }
 
       }
 

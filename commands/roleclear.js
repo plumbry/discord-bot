@@ -3,7 +3,7 @@ const {
   PermissionFlagsBits
 } = require("discord.js");
 
-const { google } = require("googleapis");
+const { getSheets } = require("../lib/sheets");
 
 // ================= CONSTANTS =================
 const LOG_CHANNEL_ID = "1471082166535454780";
@@ -12,27 +12,12 @@ const AUDIT_RANGE = "Audit Log!A:G";
 
 const ROLE_DELAY_MS = 900;
 
-// ================= GOOGLE =================
-const credentials = JSON.parse(
-  Buffer.from(
-    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
-    "base64"
-  ).toString("utf8")
-);
-
-const auth = new google.auth.GoogleAuth({
-  credentials,
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-});
-
-const sheets = google.sheets({ version: "v4", auth });
-
 // ================= HELPERS =================
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 const isoNow = () => new Date().toISOString();
 
 async function logAudit(data) {
-  await sheets.spreadsheets.values.append({
+  await getSheets().spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
     range: AUDIT_RANGE,
     valueInputOption: "RAW",
@@ -90,9 +75,21 @@ module.exports = {
       });
     }
 
-    await guild.members.fetch();
+    await guild.roles.fetch(role.id);
 
-    const members = Array.from(role.members.values()).filter(m => !m.user.bot);
+    let members = Array.from(
+      role.members.values()
+    ).filter(m => !m.user.bot);
+
+    if (members.length === 0) {
+
+      await guild.members.fetch();
+
+      members = Array.from(
+        role.members.values()
+      ).filter(m => !m.user.bot);
+
+    }
 
     if (members.length === 0) {
       return interaction.reply({

@@ -1,9 +1,24 @@
 const {
   SlashCommandBuilder,
-  PermissionFlagsBits
+  PermissionFlagsBits,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ComponentType
 } = require("discord.js");
 
-const { google } = require("googleapis");
+const { getSheets } = require("../lib/sheets");
+
+const {
+  getRows,
+  getSignupBlockReason,
+  formatSignupBlockMessage
+} = require("../event-bans/eventBans");
+
+const {
+  formatInvalidTierSignupMessage,
+  validateTeamTierCombo
+} = require("../lib/tierRestrictions");
 
 // ================= CONSTANTS =================
 const LOG_CHANNEL_ID = "1471082166535454780";
@@ -11,9 +26,11 @@ const SHEET_ID = process.env.MAIN_SHEET_ID;
 const AUDIT_RANGE = "Audit Log!A:G";
 
 const MESSAGE_SCAN_LIMIT = 100;
-const ROLE_DELAY_MS = 750;
-
-const BLOCKED_ROLE_ID = "1463660686231207956";
+const ROLE_BATCH_SIZE = 5;
+const ROLE_BATCH_DELAY_MS = 200;
+const REACTION_DELAY_MS = 100;
+const REACT_ADD_DELAY_MS = 300;
+const BAN_PROMPT_TIMEOUT_MS = 120_000;
 
 // ================= EMOJIS =================
 const ACCEPTED_EMOJI_ID = "1405510864496361482";
@@ -46,15 +63,24 @@ const DUPLICATE_NUMBER_EMOJIS = {
 // ================= TEAM LIMITS =================
 const TEAM_LIMITS = {
   normal: {
+    1: 100,
     2: 50,
     3: 33,
     4: 25
   },
   reload: {
+    1: 40,
     2: 20,
     3: 13,
     4: 10
   }
+};
+
+const MODE_LABELS = {
+  1: "Solo",
+  2: "Duos",
+  3: "Trios",
+  4: "Squads"
 };
 
 const RELOAD_STOP_EMOJI = "✋";
@@ -71,30 +97,12 @@ const MANAGED_REACTION_EMOJIS =
     ...Object.values(DUPLICATE_NUMBER_EMOJIS)
   ]);
 
-// ================= GOOGLE =================
-const credentials = JSON.parse(
-  Buffer.from(
-    process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64,
-    "base64"
-  ).toString("utf8")
-);
-
-const auth = new google.auth.GoogleAuth({
-  credentials,
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-});
-
-const sheets = google.sheets({
-  version: "v4",
-  auth
-});
-
 // ================= HELPERS =================
 const delay = (ms) => new Promise(r => setTimeout(r, ms));
 const isoNow = () => new Date().toISOString();
 
 async function logAudit(data) {
-  await sheets.spreadsheets.values.append({
+  await getSheets().spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
     range: AUDIT_RANGE,
     valueInputOption: "RAW",
@@ -143,35 +151,84 @@ function getNumberReactionEmojis(number) {
   return emojis;
 }
 
-async function reconcileManagedReactions(message, botUserId, expectedEmojis) {
-  await message.fetch();
+function managedReactionsLookCorrect(
+  message,
+  expectedEmojis
+) {
 
-  const existingBotManaged = [];
+  const botManaged = [];
 
   for (const reaction of message.reactions.cache.values()) {
-    const users = await reaction.users.fetch();
+
     const emoji =
       reaction.emoji.id ||
       reaction.emoji.name;
 
-    for (const user of users.values()) {
-      if (user.id !== botUserId) {
-        await reaction.users.remove(user.id);
-        await delay(250);
-        continue;
+    if (!MANAGED_REACTION_EMOJIS.has(emoji)) {
+      continue;
+    }
+
+    if (reaction.count > 1 || !reaction.me) {
+      return false;
+    }
+
+    botManaged.push(emoji);
+
+  }
+
+  return (
+    botManaged.length === expectedEmojis.length &&
+    botManaged.every(
+      (emoji, index) => emoji === expectedEmojis[index]
+    )
+  );
+
+}
+
+async function reconcileManagedReactions(message, botUserId, expectedEmojis) {
+
+  if (message.partial) {
+    await message.fetch();
+  }
+
+  if (managedReactionsLookCorrect(message, expectedEmojis)) {
+    return new Set(expectedEmojis);
+  }
+
+  const existingBotManaged = [];
+
+  for (const reaction of message.reactions.cache.values()) {
+
+    const emoji =
+      reaction.emoji.id ||
+      reaction.emoji.name;
+
+    if (!MANAGED_REACTION_EMOJIS.has(emoji)) {
+      continue;
+    }
+
+    if (reaction.count > 1 || !reaction.me) {
+
+      const users = await reaction.users.fetch();
+
+      for (const user of users.values()) {
+
+        if (user.id !== botUserId) {
+          await reaction.users.remove(user.id);
+          await delay(REACTION_DELAY_MS);
+        }
+
       }
 
-      if (
-        MANAGED_REACTION_EMOJIS.has(
-          emoji
-        )
-      ) {
-        existingBotManaged.push({
-          reaction,
-          emoji
-        });
-      }
     }
+
+    if (reaction.me) {
+      existingBotManaged.push({
+        reaction,
+        emoji
+      });
+    }
+
   }
 
   const existingEmojis =
@@ -195,7 +252,7 @@ async function reconcileManagedReactions(message, botUserId, expectedEmojis) {
     await item.reaction.users.remove(
       botUserId
     );
-    await delay(250);
+    await delay(REACTION_DELAY_MS);
   }
 
   return new Set();
@@ -214,13 +271,338 @@ async function reactIfMissing(message, emoji, existing) {
     emoji
   );
 
-  await delay(
-    500
-  );
+  await delay(REACT_ADD_DELAY_MS);
 
   existing.add(
     emoji
   );
+}
+
+async function assignRolesInBatches(
+  guild,
+  userIds,
+  role
+) {
+
+  let added = 0;
+  let skipped = 0;
+  const ids = [...userIds];
+
+  for (let i = 0; i < ids.length; i += ROLE_BATCH_SIZE) {
+
+    const batch = ids.slice(i, i + ROLE_BATCH_SIZE);
+
+    await Promise.all(
+      batch.map(async (userId) => {
+
+        let member = guild.members.cache.get(userId);
+
+        if (!member) {
+          member = await guild.members.fetch(userId).catch(() => null);
+        }
+
+        if (!member) {
+          return;
+        }
+
+        if (member.roles.cache.has(role.id)) {
+          skipped++;
+          return;
+        }
+
+        try {
+          await member.roles.add(role);
+          added++;
+        } catch (err) {
+          console.error(err);
+        }
+
+      })
+    );
+
+    if (i + ROLE_BATCH_SIZE < ids.length) {
+      await delay(ROLE_BATCH_DELAY_MS);
+    }
+
+  }
+
+  return { added, skipped };
+
+}
+
+function buildFlaggedBanSummary(flaggedTeams) {
+
+  const lines = flaggedTeams.map(({ team, blockReason }) =>
+    `• ${team.users.map(u => `<@${u.id}>`).join(" ")} — ${formatSignupBlockMessage(blockReason)}`
+  );
+
+  return lines.join("\n").slice(0, 3500);
+
+}
+
+async function promptBannedTeamDecision(interaction, flaggedTeams) {
+
+  const summary = buildFlaggedBanSummary(flaggedTeams);
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`roletagged_ban_skip_${interaction.id}`)
+      .setLabel("Skip banned teams")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`roletagged_ban_include_${interaction.id}`)
+      .setLabel("Role banned teams too")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(`roletagged_ban_cancel_${interaction.id}`)
+      .setLabel("Cancel")
+      .setStyle(ButtonStyle.Danger)
+  );
+
+  const prompt = await interaction.followUp({
+    content:
+      `**${flaggedTeams.length} signup team(s) include players with an active event ban** ` +
+      `\n\n${summary}\n\nChoose how to continue:`,
+    components: [row],
+    ephemeral: true
+  });
+
+  try {
+
+    const choice = await prompt.awaitMessageComponent({
+      componentType: ComponentType.Button,
+      time: BAN_PROMPT_TIMEOUT_MS,
+      filter: i =>
+        i.user.id === interaction.user.id &&
+        i.customId.endsWith(interaction.id)
+    });
+
+    await choice.deferUpdate();
+
+    await prompt.edit({
+      content: choice.component.label + " — continuing…",
+      components: []
+    });
+
+    if (choice.customId.startsWith("roletagged_ban_cancel_")) {
+      return "cancel";
+    }
+
+    if (choice.customId.startsWith("roletagged_ban_include_")) {
+      return "include";
+    }
+
+    return "skip";
+
+  } catch {
+
+    await prompt.edit({
+      content: "Timed out — cancelled. Run /roletagged again.",
+      components: []
+    }).catch(() => {});
+
+    return "cancel";
+
+  }
+
+}
+
+async function finishRoletagged(
+  interaction,
+  {
+    validTeams,
+    skippedBannedTeams,
+    includedDespiteBan,
+    tierRejectedCount,
+    role,
+    isReload,
+    requiredTeamSize,
+    channel,
+    guild
+  }
+) {
+
+  if (validTeams.length === 0) {
+
+    return interaction.editReply(
+      "No teams selected for role assignment."
+    );
+
+  }
+
+  const teamLimit =
+    TEAM_LIMITS[isReload ? "reload" : "normal"][requiredTeamSize];
+
+  const roledTeams =
+    validTeams.slice(0, teamLimit);
+
+  const overflowTeams =
+    validTeams.slice(teamLimit);
+
+  const roledUserIds =
+    new Set();
+
+  for (const team of roledTeams) {
+
+    for (const user of team.users) {
+      roledUserIds.add(user.id);
+    }
+
+  }
+
+  const { added, skipped } = await assignRolesInBatches(
+    guild,
+    roledUserIds,
+    role
+  );
+
+  let teamNumber = 1;
+
+  for (const team of roledTeams) {
+
+    try {
+
+      const expectedEmojis = [
+        ACCEPTED_EMOJI_ID,
+        ...getNumberReactionEmojis(teamNumber)
+      ];
+
+      const existing =
+        await reconcileManagedReactions(
+          team.message,
+          interaction.client.user.id,
+          expectedEmojis
+        );
+
+      for (const emojiId of expectedEmojis) {
+        await reactIfMissing(
+          team.message,
+          emojiId,
+          existing
+        );
+      }
+
+    } catch (err) {
+
+      console.error("[REACT ERROR]", err);
+
+    }
+
+    teamNumber++;
+
+  }
+
+  if (overflowTeams.length > 0) {
+
+    let overflowNumber = 1;
+
+    for (const team of overflowTeams) {
+
+      try {
+
+        const expectedEmojis = [
+          RELOAD_STOP_EMOJI,
+          RELOAD_K_EMOJI,
+          ...getNumberReactionEmojis(overflowNumber)
+        ];
+
+        const existing =
+          await reconcileManagedReactions(
+            team.message,
+            interaction.client.user.id,
+            expectedEmojis
+          );
+
+        for (const emojiId of expectedEmojis) {
+          await reactIfMissing(
+            team.message,
+            emojiId,
+            existing
+          );
+        }
+
+      } catch (err) {
+
+        console.error("[OVERFLOW REACT ERROR]", err);
+
+      }
+
+      overflowNumber++;
+
+    }
+
+  }
+
+  const banNote = includedDespiteBan
+    ? "\nBanned teams: included by moderator"
+    : skippedBannedTeams.length > 0
+      ? `\nBanned teams skipped: ${skippedBannedTeams.length}`
+      : "";
+
+  const tierNote =
+    tierRejectedCount > 0
+      ? `\nInvalid tier combos rejected: ${tierRejectedCount}`
+      : "";
+
+  const result =
+
+    "Role assignment complete\n" +
+      "Mode: " + (MODE_LABELS[requiredTeamSize] || requiredTeamSize) + "\n" +
+      "Reload: " + (isReload ? "Yes" : "No") + "\n" +
+    "Role: " + role.name + "\n" +
+    "Added: " + added + "\n" +
+    "Skipped: " + skipped + "\n" +
+    "Valid Teams: " + validTeams.length + "\n" +
+    "Roled Teams: " + roledTeams.length + "\n" +
+    "Overflow Teams: " + overflowTeams.length +
+    banNote +
+    tierNote;
+
+  await interaction.editReply(result);
+
+  try {
+
+    const logChannel =
+      await guild.channels.fetch(LOG_CHANNEL_ID);
+
+    await logChannel.send(
+
+      "Role Assigned via /roletagged\n" +
+      "Moderator: " +
+      interaction.user.tag +
+      "\nRole: " +
+      role.name +
+      "\nMode: " +
+      (MODE_LABELS[requiredTeamSize] || requiredTeamSize) +
+      "\nReload: " +
+      (isReload ? "Yes" : "No") +
+      "\nTeams: " +
+      validTeams.length +
+      banNote +
+      tierNote
+    );
+
+  } catch {}
+
+  try {
+
+    await logAudit({
+
+      action: "ROLE_TAGGED_ASSIGN",
+
+      moderator: interaction.user,
+
+      context:
+        `role=${role.id} mode=${requiredTeamSize} reload=${isReload} teams=${validTeams.length} ` +
+        `included_banned=${includedDespiteBan} skipped_banned=${skippedBannedTeams.length}`
+    });
+
+  } catch (err) {
+
+    console.error(err);
+
+  }
+
 }
 
 // ================= COMMAND =================
@@ -241,16 +623,11 @@ module.exports = {
         .setDescription("Team size")
         .setRequired(true)
         .addChoices(
+          { name: "Solos (no tier check)", value: "1" },
           { name: "Duos", value: "2" },
           { name: "Trios", value: "3" },
           { name: "Squads", value: "4" }
         )
-    )
-
-    .addBooleanOption(o =>
-      o.setName("skip")
-        .setDescription("Ignore event banned checks")
-        .setRequired(false)
     )
 
     .addBooleanOption(o =>
@@ -275,9 +652,6 @@ module.exports = {
     const role =
       interaction.options.getRole("role");
 
-    const ignoreBlocked =
-      interaction.options.getBoolean("skip") || false;
-
     const isReload =
       interaction.options.getBoolean("reload") || false;
 
@@ -293,16 +667,25 @@ module.exports = {
       "Scanning signups..."
     );
 
+    let eventBanRows = [];
+
+    try {
+      eventBanRows = await getRows();
+    } catch (err) {
+      console.error("[ROLETAGGED] Event ban sheet read failed:", err);
+      return interaction.editReply(
+        "Could not load Event Bans sheet. Try again later."
+      );
+    }
+
     const messages =
       await channel.messages.fetch({
         limit: MESSAGE_SCAN_LIMIT
       });
 
-    await guild.members.fetch();
+    const eligibleTeams = [];
 
-    const taggedUserIds = new Set();
-
-    const validTeams = [];
+    const flaggedTeams = [];
 
     const candidateTeams = [];
 
@@ -373,6 +756,8 @@ module.exports = {
 
     // ================= VALIDATE =================
 
+    let tierRejectedCount = 0;
+
     for (const team of candidateTeams) {
 
       const hasDuplicate =
@@ -398,64 +783,70 @@ module.exports = {
         continue;
       }
 
-      let blockedMember =
-        null;
+      if (requiredTeamSize > 1) {
 
-      if (
-        !ignoreBlocked
-      ) {
+        const tierCheck = await validateTeamTierCombo(
+          guild,
+          team.users,
+          requiredTeamSize
+        );
 
-        for (const user of team.users) {
+        if (!tierCheck.ok) {
 
-          const member =
-            guild.members.cache.get(
-              user.id
+          tierRejectedCount++;
+
+          try {
+
+            await channel.send(
+              formatInvalidTierSignupMessage({
+                users: team.users,
+                tiers: tierCheck.tiers,
+                teamSize: requiredTeamSize,
+                reason: tierCheck.reason,
+                ambiguousUser: tierCheck.ambiguousUser
+              })
             );
 
-          if (
-            member?.roles.cache.has(
-              BLOCKED_ROLE_ID
-            )
-          ) {
-            blockedMember =
-              member;
-            break;
-          }
+          } catch {}
+
+          continue;
+
         }
+
       }
 
-      if (
-        blockedMember
-      ) {
+      let blockReason = null;
 
-        try {
+      for (const user of team.users) {
 
-          await channel.send(
-            `${blockedMember} cannot sign up. Entire signup skipped.`
-          );
+        blockReason = getSignupBlockReason(
+          user.id,
+          eventBanRows
+        );
 
-        } catch {}
+        if (blockReason) {
+          break;
+        }
+
+      }
+
+      if (blockReason) {
+
+        flaggedTeams.push({
+          team,
+          blockReason
+        });
 
         continue;
       }
 
-      validTeams.push(
-        team
-      );
+      eligibleTeams.push(team);
 
-      for (
-        const user
-        of team.users
-      ) {
-
-        taggedUserIds.add(
-          user.id
-        );
-      }
     }
 
     if (
-      validTeams.length === 0
+      eligibleTeams.length === 0 &&
+      flaggedTeams.length === 0
     ) {
 
       return interaction.editReply(
@@ -463,241 +854,79 @@ module.exports = {
       );
     }
 
-    // ================= ROLE ASSIGNMENT =================
+    let validTeams = [...eligibleTeams];
+    let skippedBannedTeams = [];
+    let includedDespiteBan = false;
 
-    let added = 0;
-    let skipped = 0;
+    if (flaggedTeams.length > 0) {
 
-    const teamLimit =
-      TEAM_LIMITS[isReload ? "reload" : "normal"][requiredTeamSize];
-
-    const roledTeams =
-      validTeams.slice(0, teamLimit);
-
-    const overflowTeams =
-      validTeams.slice(teamLimit);
-
-    const roledUserIds =
-      new Set();
-
-    for (
-      const team
-      of roledTeams
-    ) {
-
-      for (
-        const user
-        of team.users
-      ) {
-
-        roledUserIds.add(
-          user.id
-        );
-      }
-    }
-
-    for (
-      const userId
-      of roledUserIds
-    ) {
-
-      const member =
-        guild.members.cache.get(
-          userId
-        );
-
-      if (
-        !member
-      ) continue;
-
-      if (
-        member.roles.cache.has(
-          role.id
-        )
-      ) {
-
-        skipped++;
-        continue;
-      }
-
-      try {
-
-        await member.roles.add(
-          role
-        );
-
-        added++;
-
-      } catch (err) {
-
-        console.error(
-          err
-        );
-      }
-
-      await delay(
-        ROLE_DELAY_MS
+      await interaction.editReply(
+        `Scan complete. Found **${flaggedTeams.length}** team(s) with an active event ban. Choose an option below (only you can see this).`
       );
-    }
 
-    // ================= REACTIONS =================
+      const decision =
+        await promptBannedTeamDecision(
+          interaction,
+          flaggedTeams
+        );
 
-    let teamNumber = 1;
+      if (decision === "cancel") {
 
-    for (
-      const team
-      of roledTeams
-    ) {
+        return interaction.editReply(
+          "Cancelled — no roles were assigned."
+        );
 
-      try {
+      }
 
-        const expectedEmojis = [
-          ACCEPTED_EMOJI_ID,
-          ...getNumberReactionEmojis(
-            teamNumber
-          )
+      if (decision === "include") {
+
+        validTeams = [
+          ...eligibleTeams,
+          ...flaggedTeams.map(item => item.team)
         ];
 
-        const existing =
-          await reconcileManagedReactions(
-            team.message,
-            interaction.client.user.id,
-            expectedEmojis
-          );
+        includedDespiteBan = true;
 
-        for (const emojiId of expectedEmojis) {
-          await reactIfMissing(
-            team.message,
-            emojiId,
-            existing
-          );
-        }
+      } else {
 
-      } catch (err) {
+        skippedBannedTeams = flaggedTeams;
 
-        console.error(
-          "[REACT ERROR]",
-          err
-        );
-      }
+        for (const { team, blockReason } of flaggedTeams) {
 
-      teamNumber++;
-    }
+          try {
 
-    // ================= OVERFLOW =================
-
-    if (
-      overflowTeams.length > 0
-    ) {
-
-      let overflowNumber = 1;
-
-      for (
-        const team
-        of overflowTeams
-      ) {
-
-        try {
-
-          const expectedEmojis = [
-            RELOAD_STOP_EMOJI,
-            RELOAD_K_EMOJI,
-            ...getNumberReactionEmojis(
-              overflowNumber
-            )
-          ];
-
-          const existing =
-            await reconcileManagedReactions(
-              team.message,
-              interaction.client.user.id,
-              expectedEmojis
+            await channel.send(
+              `Skipped signup (event ban): ${team.users.map(
+                u => `<@${u.id}>`
+              ).join(" ")}\n${formatSignupBlockMessage(blockReason)}`
             );
 
-          for (const emojiId of expectedEmojis) {
-            await reactIfMissing(
-              team.message,
-              emojiId,
-              existing
-            );
-          }
+          } catch {}
 
-        } catch (err) {
-
-          console.error(
-            "[OVERFLOW REACT ERROR]",
-            err
-          );
         }
 
-        overflowNumber++;
       }
+
     }
 
-    // ================= RESULTS =================
+    if (validTeams.length === 0) {
 
-    const result =
-
-      "Role assignment complete\n" +
-      "Mode: " + requiredTeamSize + "\n" +
-      "Reload: " + (isReload ? "Yes" : "No") + "\n" +
-      "Role: " + role.name + "\n" +
-      "Added: " + added + "\n" +
-      "Skipped: " + skipped + "\n" +
-      "Valid Teams: " + validTeams.length + "\n" +
-      "Roled Teams: " + roledTeams.length + "\n" +
-      "Overflow Teams: " + overflowTeams.length;
-
-    await interaction.editReply(
-      result
-    );
-
-    // ================= LOG =================
-
-    try {
-
-      const logChannel =
-        await guild.channels.fetch(
-          LOG_CHANNEL_ID
-        );
-
-      await logChannel.send(
-
-        "Role Assigned via /roletagged\n" +
-        "Moderator: " +
-        interaction.user.tag +
-        "\nRole: " +
-        role.name +
-        "\nMode: " +
-        requiredTeamSize +
-        "\nReload: " +
-        (isReload ? "Yes" : "No") +
-        "\nTeams: " +
-        validTeams.length
-      );
-
-    } catch {}
-
-    try {
-
-      await logAudit({
-
-        action:
-        "ROLE_TAGGED_ASSIGN",
-
-        moderator:
-        interaction.user,
-
-        context:
-        `role=${role.id} mode=${requiredTeamSize} reload=${isReload} teams=${validTeams.length}`
-      });
-
-    } catch (err) {
-
-      console.error(
-        err
+      return interaction.editReply(
+        "No teams selected for role assignment."
       );
     }
+
+    await finishRoletagged(interaction, {
+      validTeams,
+      skippedBannedTeams,
+      includedDespiteBan,
+      tierRejectedCount,
+      role,
+      isReload,
+      requiredTeamSize,
+      channel,
+      guild
+    });
 
   }
 };

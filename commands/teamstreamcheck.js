@@ -3,60 +3,10 @@ const {
   PermissionFlagsBits
 } = require("discord.js");
 
+const { fetchAllMessages } = require("../lib/messages");
+
 const TWITCH_REGEX = /twitch\.tv\/([a-zA-Z0-9_]+)/gi;
 const ACCEPTED_EMOJI_ID = "1405510864496361482";
-
-async function fetchAllMessages(channel) {
-  try {
-    if (!channel?.viewable) return [];
-
-    if (channel.isThread?.()) {
-      if (channel.archived) {
-        try {
-          await channel.setArchived(false);
-        } catch {
-          return [];
-        }
-      }
-
-      try {
-        await channel.join();
-      } catch {
-        return [];
-      }
-    }
-
-    const perms = channel.permissionsFor(channel.client.user);
-
-    if (
-      !perms?.has(PermissionFlagsBits.ViewChannel) ||
-      !perms?.has(PermissionFlagsBits.ReadMessageHistory)
-    ) {
-      return [];
-    }
-
-    const messages = [];
-    let lastId;
-
-    while (true) {
-      const options = { limit: 100 };
-      if (lastId) options.before = lastId;
-
-      const batch = await channel.messages.fetch(options);
-
-      if (!batch.size) break;
-
-      messages.push(...batch.values());
-      lastId = batch.last()?.id;
-    }
-
-    return messages.reverse();
-
-  } catch (err) {
-    console.error("❌ fetchAllMessages:", err);
-    return [];
-  }
-}
 
 async function getTeams(signupChannel) {
   const messages = await fetchAllMessages(signupChannel);
@@ -66,34 +16,49 @@ async function getTeams(signupChannel) {
   for (const msg of messages) {
     if (msg.author.bot) continue;
 
+    const acceptedReaction =
+      msg.reactions.cache.get(ACCEPTED_EMOJI_ID) ||
+      msg.reactions.cache.find(
+        reaction => reaction.emoji.id === ACCEPTED_EMOJI_ID
+      );
+
+    if (
+      !acceptedReaction ||
+      acceptedReaction.count === 0
+    ) {
+      continue;
+    }
+
     let accepted = false;
 
-    // Do not force reaction fetch on historical messages
-    for (const reaction of msg.reactions.cache.values()) {
-
-      if (
-        reaction.emoji.id !== ACCEPTED_EMOJI_ID
-      ) {
-        continue;
-      }
+    if (
+      acceptedReaction.me &&
+      acceptedReaction.count === 1
+    ) {
+      accepted = true;
+    } else {
 
       try {
-        const users = await reaction.users.fetch();
 
-        if (users.size > 0) {
-          accepted = true;
-          break;
-        }
+        const users =
+          await acceptedReaction.users.fetch();
+
+        accepted = users.size > 0;
 
       } catch (err) {
+
         console.log(
           `Reaction user fetch failed ${msg.id}:`,
           err.code
         );
+
       }
+
     }
 
-    if (!accepted) continue;
+    if (!accepted) {
+      continue;
+    }
 
     // Captain + tagged teammates
     const members = [

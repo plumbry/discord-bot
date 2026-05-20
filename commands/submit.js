@@ -1,13 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
-const { google } = require('googleapis');
+const { getSheets } = require('../lib/sheets');
 
-const SPREADSHEET_ID = 'YOUR_SPREADSHEET_ID';
 const SHEET_NAME = 'Player_Scores';
-
-const auth = new google.auth.GoogleAuth({
-  keyFile: 'credentials.json',
-  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-});
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -15,11 +9,22 @@ module.exports = {
     .setDescription('Submit match results')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
-  async execute(interaction) {
+  async execute(interaction, { SUBMIT_SHEET_ID } = {}) {
     await interaction.deferReply({ ephemeral: true });
 
+    const spreadsheetId =
+      SUBMIT_SHEET_ID ||
+      process.env.SUBMIT_SHEET_ID ||
+      process.env.MAIN_SHEET_ID;
+
+    if (!spreadsheetId) {
+      return interaction.editReply({
+        content: 'SUBMIT_SHEET_ID is not configured.'
+      });
+    }
+
     try {
-      const sheets = google.sheets({ version: 'v4', auth });
+      const sheets = getSheets();
 
       // =========================
       // LOAD EXISTING DATA
@@ -30,7 +35,7 @@ module.exports = {
       // AY contains spreadsheet formulas for penalties
       // and should NEVER be touched by the bot.
       const response = await sheets.spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_ID,
+        spreadsheetId,
         range: `${SHEET_NAME}!A3:AX`,
       });
 
@@ -80,7 +85,7 @@ module.exports = {
       // Only write A:AX.
       // AY formulas remain untouched in the sheet.
       await sheets.spreadsheets.values.update({
-        spreadsheetId: SPREADSHEET_ID,
+        spreadsheetId,
         range: `${SHEET_NAME}!A3:AX`,
         valueInputOption: 'USER_ENTERED',
         requestBody: {
