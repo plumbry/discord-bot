@@ -14,7 +14,6 @@ const {
   buildRulesMessage,
   buildBansMessage,
   normalizeBans,
-  isDefaultBan,
   extraBansOnly,
   formatListInput
 } = require("../lib/rulesTemplate");
@@ -22,8 +21,7 @@ const { getEvent, setEvent } = require("../lib/rulesStore");
 const {
   listPresets,
   getPreset,
-  setPreset,
-  deletePreset
+  setPreset
 } = require("../lib/rulesSheet");
 const {
   fetchGuildScheduledEvents,
@@ -113,11 +111,6 @@ function parseBanLineFields(fields, { requireFirst = false } = {}) {
   return { lines: lines.filter(Boolean) };
 }
 
-function removeItemCaseInsensitive(items, removeValue) {
-  const target = removeValue.trim().toLowerCase();
-  return items.filter(item => item.toLowerCase() !== target);
-}
-
 function buildBanLineInput(index, value = "") {
   const input = new TextInputBuilder()
     .setCustomId(`ban_${index}`)
@@ -143,6 +136,15 @@ function buildAddBanLineRow(key) {
   );
 }
 
+function buildContinueBansRow(token) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`rules_continue_bans:${token}`)
+      .setLabel("Continue to banned items")
+      .setStyle(ButtonStyle.Primary)
+  );
+}
+
 function formatBansManageReply(key, bans, extra = "") {
   const effective = normalizeBans(bans);
   const lines = effective.map(item => `- ${item}`).join("\n");
@@ -150,7 +152,7 @@ function formatBansManageReply(key, bans, extra = "") {
   return (
     `**Key:** \`${key}\`\n` +
     `**Banned items (${effective.length}):**\n${lines}\n` +
-    `Use **Add ban line** for more, or \`/rules bans form key:${key}\` to edit the first ${BAN_FORM_LINE_COUNT}.` +
+    `Use **Add ban line** for more, or \`/rules bans key:${key}\` to edit the first ${BAN_FORM_LINE_COUNT}.` +
     extra
   );
 }
@@ -206,6 +208,49 @@ function showBansFormModal(interaction, key, extraBans = []) {
   return interaction.showModal(
     buildBanFormModal(`rules_bans_form:${key}`, "Edit Banned Items", extraBans)
   );
+}
+
+function buildDetailsFormModal(customId, defaults = {}) {
+  const modal = new ModalBuilder()
+    .setCustomId(customId)
+    .setTitle("Event details");
+
+  const streamInput = new TextInputBuilder()
+    .setCustomId("stream_title")
+    .setLabel("Stream title (optional)")
+    .setStyle(TextInputStyle.Short)
+    .setRequired(false)
+    .setMaxLength(150);
+
+  if (defaults.streamTitle) {
+    streamInput.setValue(defaults.streamTitle.slice(0, 150));
+  }
+
+  const perGameInput = new TextInputBuilder()
+    .setCustomId("per_game_rules")
+    .setLabel("Per-game rules (optional)")
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(false)
+    .setMaxLength(1200);
+
+  if (defaults.perGameRules) {
+    perGameInput.setValue(defaults.perGameRules.slice(0, 1200));
+  }
+
+  const savePresetInput = new TextInputBuilder()
+    .setCustomId("save_preset")
+    .setLabel("Save as preset (optional)")
+    .setStyle(TextInputStyle.Short)
+    .setRequired(false)
+    .setMaxLength(64);
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(streamInput),
+    new ActionRowBuilder().addComponents(perGameInput),
+    new ActionRowBuilder().addComponents(savePresetInput)
+  );
+
+  return modal;
 }
 
 function showAddBanLineModal(interaction, key) {
@@ -288,48 +333,18 @@ function buildPresetPayload({
 
 function resolveFormConfig(interaction, presetRecord = null) {
   const mode = interaction.options.getString("mode") || presetRecord?.mode;
-  const eventType =
-    interaction.options.getString("event_type") ||
-    presetRecord?.eventType ||
-    "standard";
-  const tierRestrictionsUrl =
-    interaction.options.getString("tier_link") ||
-    presetRecord?.tierRestrictionsUrl ||
-    DEFAULT_TIER_RESTRICTIONS_URL;
-
-  const noDropmap = interaction.options.getBoolean("no_dropmap");
-  const dropmapEnabled =
-    noDropmap === null
-      ? presetRecord?.dropmapEnabled ?? true
-      : !noDropmap;
-
-  const separateDropmapOption = interaction.options.getBoolean("separate_dropmap");
-  const separateDropmaps =
-    separateDropmapOption === null
-      ? presetRecord?.separateDropmaps ?? false
-      : separateDropmapOption;
-
-  const dropmapNoteOption = interaction.options.getString("dropmap_note");
-  const dropmapExtraLine =
-    dropmapNoteOption === null
-      ? presetRecord?.dropmapExtraLine || ""
-      : dropmapNoteOption;
-
-  const penalty1Option = interaction.options.getInteger("penalty_1");
-  const penalty2Option = interaction.options.getInteger("penalty_2");
-  const penalty3Option = interaction.options.getString("penalty_3");
 
   return {
     mode,
-    eventType,
-    tierRestrictionsUrl,
-    dropmapEnabled,
-    separateDropmaps,
-    dropmapExtraLine,
-    firstPenalty: penalty1Option ?? presetRecord?.firstPenalty ?? 20,
-    secondPenalty: penalty2Option ?? presetRecord?.secondPenalty ?? 40,
-    thirdPenaltyText:
-      penalty3Option || presetRecord?.thirdPenaltyText || "Disqualification",
+    eventType: presetRecord?.eventType || "standard",
+    tierRestrictionsUrl:
+      presetRecord?.tierRestrictionsUrl || DEFAULT_TIER_RESTRICTIONS_URL,
+    dropmapEnabled: presetRecord?.dropmapEnabled ?? true,
+    separateDropmaps: presetRecord?.separateDropmaps ?? false,
+    dropmapExtraLine: presetRecord?.dropmapExtraLine || "",
+    firstPenalty: presetRecord?.firstPenalty ?? 20,
+    secondPenalty: presetRecord?.secondPenalty ?? 40,
+    thirdPenaltyText: presetRecord?.thirdPenaltyText || "Disqualification",
     streamTitle: presetRecord?.streamTitle || "",
     perGameRules: presetRecord?.perGameRules || [],
     extraBans: presetRecord?.extraBans || []
@@ -430,117 +445,8 @@ module.exports = {
     .setDescription("Post and manage event rules + banned items")
     .addSubcommand(sub =>
       sub
-        .setName("post")
-        .setDescription("Post event rules and initial banned list")
-        .addStringOption(option =>
-          option
-            .setName("event")
-            .setDescription("Scheduled event from the Events tab")
-            .setRequired(true)
-            .setAutocomplete(true)
-        )
-        .addStringOption(option =>
-          option
-            .setName("mode")
-            .setDescription("Game mode (optional if using preset)")
-            .setRequired(false)
-            .addChoices(
-              { name: "Solo", value: "solo" },
-              { name: "Duo", value: "duo" },
-              { name: "Trio", value: "trio" },
-              { name: "Squad", value: "squad" }
-            )
-        )
-        .addStringOption(option =>
-          option
-            .setName("preset")
-            .setDescription("Load a saved rules + bans preset")
-            .setRequired(false)
-            .setAutocomplete(true)
-        )
-        .addStringOption(option =>
-          option
-            .setName("event_type")
-            .setDescription("Standard or special event format")
-            .setRequired(false)
-            .addChoices(
-              { name: "Standard", value: "standard" },
-              { name: "Special", value: "special" }
-            )
-        )
-        .addStringOption(option =>
-          option
-            .setName("key")
-            .setDescription("Unique key for later updates (optional)")
-            .setRequired(false)
-        )
-        .addStringOption(option =>
-          option
-            .setName("bans")
-            .setDescription("Comma or newline separated banned items")
-            .setRequired(false)
-        )
-        .addStringOption(option =>
-          option
-            .setName("tier_link")
-            .setDescription("Override tier restrictions URL")
-            .setRequired(false)
-        )
-        .addStringOption(option =>
-          option
-            .setName("per_game_rules")
-            .setDescription("Special rules per game (comma or newline separated)")
-            .setRequired(false)
-        )
-        .addStringOption(option =>
-          option
-            .setName("stream_title")
-            .setDescription("Stream title for this event")
-            .setRequired(false)
-        )
-        .addBooleanOption(option =>
-          option
-            .setName("no_dropmap")
-            .setDescription("Set true if this event does not use a dropmap")
-            .setRequired(false)
-        )
-        .addBooleanOption(option =>
-          option
-            .setName("separate_dropmap")
-            .setDescription("Add line saying girls/guys have separate dropmap")
-            .setRequired(false)
-        )
-        .addStringOption(option =>
-          option
-            .setName("dropmap_note")
-            .setDescription("Optional additional dropmap line")
-            .setRequired(false)
-        )
-        .addIntegerOption(option =>
-          option
-            .setName("penalty_1")
-            .setDescription("Penalty points for first offense")
-            .setRequired(false)
-            .setMinValue(0)
-        )
-        .addIntegerOption(option =>
-          option
-            .setName("penalty_2")
-            .setDescription("Penalty points for second offense")
-            .setRequired(false)
-            .setMinValue(0)
-        )
-        .addStringOption(option =>
-          option
-            .setName("penalty_3")
-            .setDescription("Third offense result")
-            .setRequired(false)
-        )
-    )
-    .addSubcommand(sub =>
-      sub
         .setName("form")
-        .setDescription("Open a form to submit rules")
+        .setDescription("Post rules for a scheduled event")
         .addStringOption(option =>
           option
             .setName("event")
@@ -563,210 +469,20 @@ module.exports = {
         .addStringOption(option =>
           option
             .setName("preset")
-            .setDescription("Load a saved rules + bans preset")
+            .setDescription("Load settings from the Rules sheet")
             .setRequired(false)
             .setAutocomplete(true)
         )
-        .addStringOption(option =>
-          option
-            .setName("event_type")
-            .setDescription("Standard or special event format")
-            .setRequired(false)
-            .addChoices(
-              { name: "Standard", value: "standard" },
-              { name: "Special", value: "special" }
-            )
-        )
-        .addStringOption(option =>
-          option
-            .setName("key")
-            .setDescription("Unique key for later updates (optional)")
-            .setRequired(false)
-        )
-        .addStringOption(option =>
-          option
-            .setName("tier_link")
-            .setDescription("Override tier restrictions URL")
-            .setRequired(false)
-        )
-        .addBooleanOption(option =>
-          option
-            .setName("no_dropmap")
-            .setDescription("Set true if this event does not use a dropmap")
-            .setRequired(false)
-        )
-        .addBooleanOption(option =>
-          option
-            .setName("separate_dropmap")
-            .setDescription("Add line saying girls/guys have separate dropmap")
-            .setRequired(false)
-        )
-        .addStringOption(option =>
-          option
-            .setName("dropmap_note")
-            .setDescription("Optional additional dropmap line")
-            .setRequired(false)
-        )
-        .addIntegerOption(option =>
-          option
-            .setName("penalty_1")
-            .setDescription("Penalty points for first offense")
-            .setRequired(false)
-            .setMinValue(0)
-        )
-        .addIntegerOption(option =>
-          option
-            .setName("penalty_2")
-            .setDescription("Penalty points for second offense")
-            .setRequired(false)
-            .setMinValue(0)
-        )
-        .addStringOption(option =>
-          option
-            .setName("penalty_3")
-            .setDescription("Third offense result")
-            .setRequired(false)
-        )
-        .addStringOption(option =>
-          option
-            .setName("stream_title")
-            .setDescription("Stream title for this event")
-            .setRequired(false)
-        )
-        .addStringOption(option =>
-          option
-            .setName("per_game_rules")
-            .setDescription("Per-game rules (comma or newline separated)")
-            .setRequired(false)
-        )
-        .addStringOption(option =>
-          option
-            .setName("save_preset")
-            .setDescription("Save as preset name after posting")
-            .setRequired(false)
-        )
     )
-    .addSubcommandGroup(group =>
-      group
+    .addSubcommand(sub =>
+      sub
         .setName("bans")
-        .setDescription("Manage banned items")
-        .addSubcommand(sub =>
-          sub
-            .setName("form")
-            .setDescription("Edit banned items in a 5-line form")
-            .addStringOption(option =>
-              option
-                .setName("key")
-                .setDescription("Rules key")
-                .setRequired(true)
-            )
-        )
-    )
-    .addSubcommand(sub =>
-      sub
-        .setName("add")
-        .setDescription("Add one banned item")
+        .setDescription("Edit banned items for a posted event")
         .addStringOption(option =>
           option
             .setName("key")
-            .setDescription("Rules key")
+            .setDescription("Rules key from when you posted")
             .setRequired(true)
-        )
-        .addStringOption(option =>
-          option
-            .setName("item")
-            .setDescription("Item to ban")
-            .setRequired(true)
-        )
-    )
-    .addSubcommand(sub =>
-      sub
-        .setName("remove")
-        .setDescription("Remove one banned item")
-        .addStringOption(option =>
-          option
-            .setName("key")
-            .setDescription("Rules key")
-            .setRequired(true)
-        )
-        .addStringOption(option =>
-          option
-            .setName("item")
-            .setDescription("Item to remove")
-            .setRequired(true)
-        )
-    )
-    .addSubcommand(sub =>
-      sub
-        .setName("set")
-        .setDescription("Replace full banned list")
-        .addStringOption(option =>
-          option
-            .setName("key")
-            .setDescription("Rules key")
-            .setRequired(true)
-        )
-        .addStringOption(option =>
-          option
-            .setName("items")
-            .setDescription("Comma or newline separated banned items")
-            .setRequired(true)
-        )
-    )
-    .addSubcommand(sub =>
-      sub
-        .setName("clear")
-        .setDescription("Clear all banned items")
-        .addStringOption(option =>
-          option
-            .setName("key")
-            .setDescription("Rules key")
-            .setRequired(true)
-        )
-    )
-    .addSubcommand(sub =>
-      sub
-        .setName("show")
-        .setDescription("Show current rules key and banned list")
-        .addStringOption(option =>
-          option
-            .setName("key")
-            .setDescription("Rules key")
-            .setRequired(true)
-        )
-    )
-    .addSubcommandGroup(group =>
-      group
-        .setName("preset")
-        .setDescription("Manage saved rules + bans presets")
-        .addSubcommand(sub =>
-          sub
-            .setName("list")
-            .setDescription("List saved presets")
-        )
-        .addSubcommand(sub =>
-          sub
-            .setName("show")
-            .setDescription("Show a saved preset")
-            .addStringOption(option =>
-              option
-                .setName("name")
-                .setDescription("Preset name")
-                .setRequired(true)
-                .setAutocomplete(true)
-            )
-        )
-        .addSubcommand(sub =>
-          sub
-            .setName("delete")
-            .setDescription("Delete a saved preset")
-            .addStringOption(option =>
-              option
-                .setName("name")
-                .setDescription("Preset name")
-                .setRequired(true)
-                .setAutocomplete(true)
-            )
         )
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
@@ -775,7 +491,7 @@ module.exports = {
     const focusedOption = interaction.options.getFocused(true);
 
     try {
-      if (focusedOption.name === "preset" || focusedOption.name === "name") {
+      if (focusedOption.name === "preset") {
         const presets = await listPresets(interaction.guildId);
         const choices = buildPresetChoices(presets, focusedOption.value);
         return await interaction.respond(choices);
@@ -799,72 +515,26 @@ module.exports = {
 
   async execute(interaction) {
     const subcommand = interaction.options.getSubcommand();
-    const subcommandGroup = interaction.options.getSubcommandGroup(false);
     const guildId = interaction.guildId;
 
-    if (subcommandGroup === "preset") {
-      await interaction.deferReply({ ephemeral: true });
+    if (subcommand === "bans") {
+      const key = sanitizeKey(interaction.options.getString("key", true));
+      const eventRecord = getEvent(guildId, key);
 
-      try {
-        if (subcommand === "list") {
-          const presets = await listPresets(guildId);
-
-          if (presets.length === 0) {
-            return interaction.editReply({
-              content:
-                "No saved presets in the **Rules** sheet yet. " +
-                "Use `/rules form` with **save_preset**."
-            });
-          }
-
-          const lines = presets.map(preset => {
-            const banCount = (preset.extraBans || []).length;
-            return `- **${preset.name || preset.key}** (\`${preset.key}\`) — ${preset.mode}, ${banCount} extra ban(s)`;
-          });
-
-          return interaction.editReply({
-            content: `**Saved presets (${presets.length})**\n${lines.join("\n")}`
-          });
-        }
-
-        const presetKey = sanitizeKey(interaction.options.getString("name", true));
-        const preset = await getPreset(guildId, presetKey);
-
-        if (!preset) {
-          return interaction.editReply({
-            content: `No preset found for \`${presetKey}\` in the **Rules** sheet.`
-          });
-        }
-
-        if (subcommand === "delete") {
-          await deletePreset(guildId, presetKey);
-          return interaction.editReply({
-            content: `Deleted preset **${preset.name || presetKey}** from the **Rules** sheet.`
-          });
-        }
-
-        const bansText = (preset.extraBans || []).map(item => `- ${item}`).join("\n");
-        const perGameText = preset.perGameRules?.length
-          ? preset.perGameRules.map(rule => `- ${rule}`).join("\n")
-          : "- None";
-
-        return interaction.editReply({
+      if (!eventRecord) {
+        return interaction.reply({
           content:
-            `**Preset:** ${preset.name || preset.key}\n` +
-            `**Key:** \`${preset.key}\`\n` +
-            `**Mode:** ${preset.mode}\n` +
-            `**Event type:** ${preset.eventType || "standard"}\n` +
-            `**Stream title:** ${preset.streamTitle || "(uses event name)"}\n` +
-            `**Dropmap:** ${preset.dropmapEnabled === false ? "No" : "Yes"}\n` +
-            `**Separate dropmaps:** ${preset.separateDropmaps ? "Yes" : "No"}\n` +
-            `**Penalties:** -${preset.firstPenalty ?? 20} / -${preset.secondPenalty ?? 40} / ${preset.thirdPenaltyText || "Disqualification"}\n` +
-            `**Per-game rules:**\n${perGameText}\n` +
-            `**Extra bans:**\n${bansText || "- None"}`
+            `No rules entry found for key \`${key}\`.\n` +
+            "Post one first with `/rules form`.",
+          ephemeral: true
         });
-      } catch (err) {
-        console.error("[RULES PRESET]", err);
-        return interaction.editReply({ content: sheetErrorMessage(err) });
       }
+
+      return showBansFormModal(
+        interaction,
+        key,
+        extraBansOnly(eventRecord.bans)
+      );
     }
 
     if (subcommand === "form") {
@@ -920,7 +590,6 @@ module.exports = {
       const firstPenalty = formConfig.firstPenalty;
       const secondPenalty = formConfig.secondPenalty;
       const thirdPenaltyText = formConfig.thirdPenaltyText;
-      const requestedKey = sanitizeKey(interaction.options.getString("key") || "");
       const defaultKey = deriveDefaultKey({
         scheduledEventId: resolved.scheduledEventId,
         eventName: resolved.eventName,
@@ -928,15 +597,7 @@ module.exports = {
       });
 
       const token = `${interaction.user.id}-${Date.now()}`;
-      const streamTitle =
-        interaction.options.getString("stream_title") ||
-        formConfig.streamTitle ||
-        resolved.eventName;
-      const perGameRules = parseRulesLines(
-        interaction.options.getString("per_game_rules") ||
-          formatListInput(formConfig.perGameRules)
-      );
-      const savePresetRaw = interaction.options.getString("save_preset") || "";
+      const defaultStreamTitle = formConfig.streamTitle || resolved.eventName;
 
       pendingRuleForms.set(token, {
         mode,
@@ -948,235 +609,51 @@ module.exports = {
         firstPenalty,
         secondPenalty,
         thirdPenaltyText,
-        requestedKey: requestedKey || defaultKey,
+        requestedKey: defaultKey,
         scheduledEventId: resolved.scheduledEventId,
         eventName: resolved.eventName,
         eventDateTime: resolved.eventDateTime,
-        streamTitle,
-        perGameRules,
-        savePresetRaw,
+        streamTitle: defaultStreamTitle,
+        perGameRules: formConfig.perGameRules,
+        savePresetRaw: "",
+        extraBans: formConfig.extraBans,
         guildId: interaction.guildId,
         channelId: interaction.channelId
       });
 
       return interaction.showModal(
-        buildBanFormModal(
-          `rules_form_submit:${token}`,
-          "Banned Items",
-          formConfig.extraBans
-        )
+        buildDetailsFormModal(`rules_details_submit:${token}`, {
+          streamTitle: defaultStreamTitle,
+          perGameRules: formatListInput(formConfig.perGameRules)
+        })
       );
     }
-
-    if (subcommandGroup === "bans" && subcommand === "form") {
-      const key = sanitizeKey(interaction.options.getString("key", true));
-      const eventRecord = getEvent(guildId, key);
-
-      if (!eventRecord) {
-        return interaction.reply({
-          content:
-            `No rules entry found for key \`${key}\`.\n` +
-            "Post one first with `/rules form`.",
-          ephemeral: true
-        });
-      }
-
-      return showBansFormModal(
-        interaction,
-        key,
-        extraBansOnly(eventRecord.bans)
-      );
-    }
-
-    await interaction.deferReply({ ephemeral: true });
-
-    if (subcommand === "post") {
-      const eventId = interaction.options.getString("event", true);
-      const resolved = await resolveRulesEvent(interaction, eventId);
-
-      if (resolved.error) {
-        return interaction.editReply({ content: resolved.error });
-      }
-
-      const presetInput = interaction.options.getString("preset");
-      const presetKey = sanitizeKey(presetInput || "");
-      let presetRecord = null;
-
-      if (presetInput) {
-        try {
-          presetRecord = presetKey ? await getPreset(guildId, presetKey) : null;
-        } catch (err) {
-          console.error("[RULES POST PRESET]", err);
-          return interaction.editReply({ content: sheetErrorMessage(err) });
-        }
-
-        if (!presetRecord) {
-          return interaction.editReply({
-            content: `No preset found for \`${presetKey}\` in the **Rules** sheet.`
-          });
-        }
-      }
-
-      const formConfig = resolveFormConfig(interaction, presetRecord);
-
-      if (!formConfig.mode) {
-        return interaction.editReply({
-          content:
-            "Pick a **mode**, or load a preset that includes one with `preset:`"
-        });
-      }
-
-      const mode = formConfig.mode;
-      const keyInput = interaction.options.getString("key");
-      const key =
-        sanitizeKey(keyInput) ||
-        deriveDefaultKey({
-          scheduledEventId: resolved.scheduledEventId,
-          eventName: resolved.eventName,
-          mode
-        });
-      const eventType = formConfig.eventType;
-      const tierRestrictionsUrl = formConfig.tierRestrictionsUrl;
-      const streamTitle =
-        interaction.options.getString("stream_title") ||
-        formConfig.streamTitle ||
-        resolved.eventName;
-      const perGameRules = parseRulesLines(
-        interaction.options.getString("per_game_rules") ||
-          formatListInput(formConfig.perGameRules)
-      );
-      const dropmapEnabled = formConfig.dropmapEnabled;
-      const separateDropmaps = formConfig.separateDropmaps;
-      const dropmapExtraLine = formConfig.dropmapExtraLine;
-      const firstPenalty = formConfig.firstPenalty;
-      const secondPenalty = formConfig.secondPenalty;
-      const thirdPenaltyText = formConfig.thirdPenaltyText;
-      const bans = normalizeBans(
-        parseItemList(
-          interaction.options.getString("bans") ||
-            formatListInput(formConfig.extraBans)
-        )
-      );
-
-      await postRulesPack(interaction, {
-        key,
-        scheduledEventId: resolved.scheduledEventId,
-        eventName: resolved.eventName,
-        eventDateTime: resolved.eventDateTime,
-        mode,
-        eventType,
-        tierRestrictionsUrl,
-        streamTitle,
-        perGameRules,
-        dropmapEnabled,
-        separateDropmaps,
-        dropmapExtraLine,
-        firstPenalty,
-        secondPenalty,
-        thirdPenaltyText,
-        bans
-      });
-
-      return interaction.editReply({
-        content:
-          `Posted rules for **${resolved.eventName}**.\n` +
-          `Use key: \`${key}\`\n` +
-          `Edit bans with \`/rules bans form key:${key}\``,
-        components: [buildAddBanLineRow(key)]
-      });
-    }
-
-    const key = sanitizeKey(interaction.options.getString("key", true));
-    const eventRecord = getEvent(guildId, key);
-
-    if (!eventRecord) {
-      return interaction.editReply({
-        content:
-          `No rules entry found for key \`${key}\`.\n` +
-          `Post one first with \`/rules form\` or \`/rules post\`.`
-      });
-    }
-
-    if (subcommand === "show") {
-      const effectiveBans = normalizeBans(eventRecord.bans);
-      const bansText = effectiveBans.map(item => `- ${item}`).join("\n");
-      const perGameText = eventRecord.perGameRules?.length
-        ? eventRecord.perGameRules.map(rule => `- ${rule}`).join("\n")
-        : "- None";
-
-      return interaction.editReply({
-        content:
-          `**Key:** \`${key}\`\n` +
-          `**Event:** ${eventRecord.eventName}\n` +
-          `**Event type:** ${eventRecord.eventType || "standard"}\n` +
-          `**Mode:** ${eventRecord.mode}\n` +
-          `**Stream title:** ${eventRecord.streamTitle || eventRecord.eventName}\n` +
-          `**Per-game rules:**\n${perGameText}\n` +
-          `**Banned items:**\n${bansText}`
-      });
-    }
-
-    let nextBans = normalizeBans(eventRecord.bans);
-
-    if (subcommand === "add") {
-      const item = interaction.options.getString("item", true).trim();
-      if (!item) {
-        return interaction.editReply({ content: "Item cannot be empty." });
-      }
-
-      const exists = nextBans.some(
-        existing => existing.toLowerCase() === item.toLowerCase()
-      );
-
-      if (!exists) {
-        nextBans.push(item);
-      }
-    }
-
-    if (subcommand === "remove") {
-      const item = interaction.options.getString("item", true);
-
-      if (isDefaultBan(item)) {
-        return interaction.editReply({
-          content:
-            "That item is a permanent ban for all events and cannot be removed."
-        });
-      }
-
-      nextBans = removeItemCaseInsensitive(nextBans, item);
-    }
-
-    if (subcommand === "set") {
-      nextBans = normalizeBans(
-        parseItemList(interaction.options.getString("items", true))
-      );
-    }
-
-    if (subcommand === "clear") {
-      nextBans = normalizeBans([]);
-    }
-
-    try {
-      nextBans = await applyBansUpdate(interaction, guildId, key, nextBans);
-    } catch (err) {
-      if (err.message === "missing_message") {
-        return interaction.editReply({
-          content:
-            "I could not find the existing bans message to edit.\n" +
-            "Post a fresh one with `/rules form`."
-        });
-      }
-
-      throw err;
-    }
-
-    return interaction.editReply({
-      content: formatBansManageReply(key, nextBans),
-      components: [buildAddBanLineRow(key)]
-    });
   },
 
   async handleButton(interaction) {
+    if (interaction.customId.startsWith("rules_continue_bans:")) {
+      const token = interaction.customId.split(":")[1];
+      const context = pendingRuleForms.get(token);
+
+      if (!context) {
+        await interaction.reply({
+          content: "This rules form expired. Please run `/rules form` again.",
+          ephemeral: true
+        });
+        return true;
+      }
+
+      await interaction.showModal(
+        buildBanFormModal(
+          `rules_form_submit:${token}`,
+          "Banned Items",
+          context.extraBans || []
+        )
+      );
+
+      return true;
+    }
+
     if (!interaction.customId.startsWith("rules_add_ban:")) {
       return false;
     }
@@ -1197,6 +674,44 @@ module.exports = {
   },
 
   async handleModalSubmit(interaction) {
+    if (interaction.customId.startsWith("rules_details_submit:")) {
+      const token = interaction.customId.split(":")[1];
+      const context = pendingRuleForms.get(token);
+
+      if (!context) {
+        await interaction.reply({
+          content: "This rules form expired. Please run `/rules form` again.",
+          ephemeral: true
+        });
+        return true;
+      }
+
+      const streamTitle =
+        interaction.fields.getTextInputValue("stream_title")?.trim() ||
+        context.streamTitle ||
+        context.eventName;
+      const perGameRules = parseRulesLines(
+        interaction.fields.getTextInputValue("per_game_rules") || ""
+      );
+      const savePresetRaw =
+        interaction.fields.getTextInputValue("save_preset")?.trim() || "";
+
+      pendingRuleForms.set(token, {
+        ...context,
+        streamTitle,
+        perGameRules,
+        savePresetRaw
+      });
+
+      await interaction.reply({
+        content: "Continue to enter banned items.",
+        components: [buildContinueBansRow(token)],
+        ephemeral: true
+      });
+
+      return true;
+    }
+
     if (interaction.customId.startsWith("rules_add_ban:")) {
       const key = sanitizeKey(interaction.customId.split(":")[1]);
       const item = interaction.fields.getTextInputValue("new_ban")?.trim();
@@ -1383,7 +898,7 @@ module.exports = {
       content:
         `Posted rules for **${eventName}**.\n` +
         `Use key: \`${key}\`\n` +
-        `Edit bans with \`/rules bans form key:${key}\`` +
+        `Edit bans with \`/rules bans key:${key}\`` +
         presetSavedLine,
       components: [buildAddBanLineRow(key)]
     });
