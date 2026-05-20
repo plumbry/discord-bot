@@ -645,6 +645,57 @@ client.on(
 
     }
 
+    // ================= SELECT MENUS =================
+
+    if (interaction.isStringSelectMenu()) {
+
+      try {
+
+        for (const command of client.commands.values()) {
+          if (typeof command.handleSelectMenu !== "function") {
+            continue;
+          }
+
+          const handled = await command.handleSelectMenu(
+            interaction
+          );
+
+          if (handled) {
+            return;
+          }
+        }
+
+      } catch (err) {
+
+        console.error(
+          "❌ Select menu interaction error:"
+        );
+
+        console.error(err);
+
+        try {
+
+          if (
+            !interaction.replied &&
+            !interaction.deferred
+          ) {
+
+            await interaction.reply({
+              content:
+                "❌ Select menu interaction failed.",
+              ephemeral: true
+            });
+
+          }
+
+        } catch {}
+
+      }
+
+      return;
+
+    }
+
     // ================= MODALS =================
 
     if (interaction.isModalSubmit()) {
