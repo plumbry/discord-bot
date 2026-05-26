@@ -9,10 +9,25 @@ const BAN_CHANNEL_ID = "1472795189515915466";
 
 // ================= MESSAGE FORMATTERS =================
 
-const formatEventBan = r =>
-`${r[1]} — ${r[3]}-Event ${r[2]} Ban Started ${r[5]}
-${r[4]} Events Remaining
-Reason: ${r[7] || "No reason provided"}`;
+const { isOffenseRow, isProbationRow } = require("../lib/eventBanRoles");
+
+function formatEventBan(r) {
+  if (isOffenseRow(r)) {
+    return (
+      `${r[1]} — ${r[2]}\n` +
+      `Logged ${r[5]}\n` +
+      "_No event ban — offense log._\n" +
+      `Reason: ${r[7] || "No reason provided"}`
+    );
+  }
+
+  return (
+    `${r[1]} — ${r[2]}\n` +
+    `Started ${r[5]}\n` +
+    `${r[4]} event(s) remaining\n` +
+    `Reason: ${r[7] || "No reason provided"}`
+  );
+}
 
 const formatProbation = r =>
 `${r[1]} — Probation Started ${r[5]}
@@ -92,10 +107,9 @@ async function execute(interaction) {
 
       const msg = await channel.messages.fetch(messageId);
 
-      const text =
-        r[2] === "Probation"
-          ? formatProbation(r)
-          : formatEventBan(r);
+      const text = isProbationRow(r)
+        ? formatProbation(r)
+        : formatEventBan(r);
 
       await msg.edit(text);
 

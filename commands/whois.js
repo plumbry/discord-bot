@@ -4,10 +4,8 @@ const {
   EmbedBuilder
 } = require('discord.js');
 
-const { getSheets } = require('../lib/sheets');
-
-// ================= CONSTANT =================
-const EVENT_BANS_SHEET_ID = process.env.MAIN_SHEET_ID;
+const { getEventBanRows } = require('../lib/eventBanSheet');
+const { describeUserStatus } = require('../lib/eventBanRoles');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -48,34 +46,28 @@ module.exports = {
       .join(', ') || 'None';
 
     let eventBanStatus = 'None';
+    let probationStatus = 'None';
 
     try {
-      const res = await getSheets().spreadsheets.values.get({
-        spreadsheetId: EVENT_BANS_SHEET_ID,
-        range: 'Event Bans!A2:K'
-      });
+      const rows = await getEventBanRows();
+      const status = describeUserStatus(targetUser.id, rows);
 
-      const rows = res.data.values || [];
+      if (status.eventBan) {
+        eventBanStatus =
+          `${status.eventBan.type} (${status.eventBan.remaining} events remaining)`;
+      } else if (status.offenses.length) {
+        eventBanStatus =
+          `No active ban (${status.offenses.length} offense log(s) on record)`;
+      }
 
-      const activeBan = rows.find(row => {
-        const discordId = row[0];
-        const remainingEvents = Number(row[4]);
-        const type = row[2];
-        return (
-          discordId === targetUser.id &&
-          type !== 'Probation' &&
-          remainingEvents > 0
-        );
-      });
-
-      if (activeBan) {
-        const banType = activeBan[2] || 'Unknown';
-        const remaining = activeBan[4] || '0';
-        eventBanStatus = `${banType} (${remaining} events remaining)`;
+      if (status.probation) {
+        probationStatus =
+          `${status.probation.type} (${status.probation.remaining} days remaining)`;
       }
     } catch (err) {
       console.error('[WHOIS EVENT BAN ERROR]', err);
       eventBanStatus = 'Error reading sheet';
+      probationStatus = 'Error reading sheet';
     }
 
     const embed = new EmbedBuilder()
@@ -94,7 +86,8 @@ module.exports = {
           value: `<t:${Math.floor(member.joinedTimestamp / 1000)}:F>`
         },
         { name: 'Roles', value: roles },
-        { name: 'Event Ban Status', value: eventBanStatus }
+        { name: 'Event Ban Status', value: eventBanStatus },
+        { name: 'Probation Status', value: probationStatus }
       );
 
     await interaction.editReply({ embeds: [embed] });

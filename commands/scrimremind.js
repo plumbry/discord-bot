@@ -23,9 +23,7 @@ const {
 const { appendScheduledReminder } = require("../lib/scrimEventSheet");
 
 const {
-  fetchGuildScheduledEvents,
-  getEventsForAutocomplete,
-  buildAutocompleteChoices,
+  respondScheduledEventAutocomplete,
   resolveGuildForEvents,
   resolveScheduledEvent,
   cacheScheduledEvent
@@ -570,28 +568,7 @@ module.exports = {
     const focused = interaction.options.getFocused() ?? "";
 
     try {
-
-      const guild = await resolveGuildForEvents(
-        interaction.client,
-        interaction
-      );
-
-      if (!guild) {
-        console.warn("[SCRIMREMIND AUTOCOMPLETE] No guild on interaction");
-        return await interaction.respond([]);
-      }
-
-      const allEvents = await fetchGuildScheduledEvents(guild, { force: true });
-      const forAutocomplete = getEventsForAutocomplete(allEvents);
-      const choices = buildAutocompleteChoices(forAutocomplete, focused);
-
-      console.log(
-        `[SCRIMREMIND AUTOCOMPLETE] guild ${guild.id}: ` +
-          `fetched=${allEvents.length} choices=${choices.length}`
-      );
-
-      return await interaction.respond(choices);
-
+      return await respondScheduledEventAutocomplete(interaction, focused);
     } catch (err) {
 
       console.error("[SCRIMREMIND AUTOCOMPLETE]", err);

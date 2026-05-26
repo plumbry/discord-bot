@@ -104,13 +104,16 @@ try {
 // ================= BAN CHECKER =================
 
 let startBanExpiryChecker = null;
+let syncRolesFromSheet = null;
 
 try {
 
-  ({ startBanExpiryChecker } =
-    require("./banExpiryChecker"));
+  ({
+    startBanExpiryChecker,
+    syncRolesFromSheet
+  } = require("./banExpiryChecker"));
 
-  console.log("✅ banExpiryChecker loaded");
+  console.log("✅ event ban role sync loaded");
 
 } catch (err) {
 
@@ -265,8 +268,14 @@ client.once("ready", async () => {
       startBanExpiryChecker(client);
 
       console.log(
-        "✅ Ban expiry checker started"
+        "✅ Event ban / probation API role sync started (every 30s)"
       );
+
+      if (syncRolesFromSheet) {
+        syncRolesFromSheet(client).catch(err => {
+          console.error("[EVENT BAN SYNC] initial:", err);
+        });
+      }
 
     } catch (err) {
 
@@ -373,6 +382,13 @@ client.once("ready", async () => {
 
   try {
 
+    // Remove stale global commands (e.g. old /submit with no options).
+    await rest.put(Routes.applicationCommands(client.user.id), {
+      body: []
+    });
+
+    console.log("✅ Cleared global slash commands");
+
     await rest.put(
       Routes.applicationGuildCommands(
         client.user.id,
@@ -386,6 +402,16 @@ client.once("ready", async () => {
     console.log(
       `✅ Registered ${commandJSON.length} slash commands`
     );
+
+    const submitCmd = commandJSON.find((c) => c.name === "submit");
+    if (submitCmd) {
+      const submitOpts = (submitCmd.options || [])
+        .map((o) => o.name)
+        .join(", ") || "(none)";
+      console.log(
+        `📋 /submit options: ${submitOpts} — ${submitCmd.description}`
+      );
+    }
 
   } catch (err) {
 
@@ -473,7 +499,10 @@ client.once("ready", async () => {
   // ================= SCHEDULED EVENTS HEALTH CHECK =================
 
   try {
-    const { fetchGuildScheduledEvents } = require("./lib/guildScheduledEvents");
+    const {
+      fetchGuildScheduledEvents,
+      scheduleEventCacheRefresh
+    } = require("./lib/guildScheduledEvents");
     const guild = await client.guilds.fetch(GUILD_ID);
     const events = await fetchGuildScheduledEvents(guild, { force: true });
 
@@ -486,6 +515,14 @@ client.once("ready", async () => {
         `[STARTUP]   - ${event.name} | id=${event.id} | status=${event.status}`
       );
     }
+
+    setInterval(() => {
+      const cachedGuild = client.guilds.cache.get(GUILD_ID);
+
+      if (cachedGuild) {
+        scheduleEventCacheRefresh(cachedGuild);
+      }
+    }, 3 * 60 * 1000);
   } catch (err) {
     console.error("[STARTUP] Scheduled events check failed:", err?.message || err);
   }
@@ -975,6 +1012,18 @@ WHO IS NOT IN <@&${call.roleId}>`
   }
 );
 
+// ================= MESSAGE DELETE (rules/bans tracking) =================
+
+const { handleBansMessageDeleted } = require("./lib/eventBansShared");
+
+client.on("messageDelete", async message => {
+  try {
+    await handleBansMessageDeleted(message);
+  } catch (err) {
+    console.error("[BANS MESSAGE DELETE]", err?.message || err);
+  }
+});
+
 // ================= MEMBER JOIN =================
 
 client.on("guildMemberAdd", async member => {
@@ -1013,25 +1062,44 @@ client.on("guildMemberAdd", async member => {
 
 });
 
-// ================= HEALTH SERVER =================
+// ================= HTTP (health + event-ban webhook) =================
 
 const PORT =
   process.env.PORT || 8080;
 
+const {
+  createWebhookRequestHandler,
+  WEBHOOK_PATH
+} = require("./lib/eventBanWebhook");
+
+const webhookHandler = createWebhookRequestHandler(
+  client,
+  syncRolesFromSheet || (() => Promise.resolve())
+);
+
 http
   .createServer((req, res) => {
+    webhookHandler(req, res).catch(err => {
+      console.error("[HTTP]", err);
 
-    res.writeHead(200);
-
-    res.end("OK");
-
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "text/plain" });
+        res.end("Internal Server Error");
+      }
+    });
   })
   .listen(PORT, () => {
+    console.log(`🌐 HTTP server on ${PORT}`);
 
-    console.log(
-      `🌐 Health server running on ${PORT}`
-    );
-
+    if (process.env.EVENT_BAN_WEBHOOK_SECRET) {
+      console.log(
+        `🔗 Event ban webhook: POST ${WEBHOOK_PATH} (Authorization: Bearer <secret>)`
+      );
+    } else {
+      console.warn(
+        "⚠️ EVENT_BAN_WEBHOOK_SECRET not set — sheet webhooks disabled (polling only)"
+      );
+    }
   });
 
 // ================= LOGIN =================

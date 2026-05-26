@@ -11,39 +11,169 @@ const {
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder
 } = require("discord.js");
-
 const {
   DEFAULT_TIER_RESTRICTIONS_URL,
   buildRulesMessage,
   buildBansMessage,
   normalizeBans,
   extraBansOnly,
+  titleCaseMode,
+  MODE_LABELS,
   formatListInput
 } = require("../lib/rulesTemplate");
+const { getRulesModules } = require("../lib/rulesModulesSheet");
 const { getEvent, setEvent } = require("../lib/rulesStore");
 const {
-  listPresets,
-  getPreset,
-  setPreset
-} = require("../lib/rulesSheet");
+  sanitizeKey,
+  appendUniqueStrings,
+  saveTypedSuggestionsToLibrary,
+  resolveBansTargetInChannel,
+  applyBansUpdate,
+  parseBansModalInput,
+  buildBansFromExtraLines,
+  formatBansEmbedValue,
+  buildBanFormModal,
+  showPendingAddBanModal,
+  buildBanEditEmbed,
+  buildEphemeralBanEditRow,
+  getPendingExtraBans,
+  recordPostedPackToSheet,
+  PACK_TYPES,
+  acknowledgeModalSilently,
+  replyModalError,
+  buildBansEditorFooterNotes,
+  bansMessageDeletedUserMessage,
+  formatBansPanelDescription
+} = require("../lib/eventBansShared");
 const {
-  fetchGuildScheduledEvents,
-  getEventsForAutocomplete,
-  buildAutocompleteChoices,
+  resolveGamePreset,
+  formatGamePresetNotFoundMessage,
+  isGameType
+} = require("../lib/rulesGamePresets");
+const {
+  respondScheduledEventAutocomplete,
   resolveGuildForEvents,
   formatRulesEventTime,
   resolveScheduledEvent
 } = require("../lib/guildScheduledEvents");
-const pendingRuleForms = new Map();
-const BAN_FORM_LINE_COUNT = 5;
 
-function sanitizeKey(raw) {
-  return (raw || "")
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9-_ ]+/g, "")
-    .replace(/\s+/g, "-")
-    .slice(0, 64);
+const RULES_PREFIX = "rules";
+const pendingRuleForms = new Map();
+const ephemeralBanEditCache = new Map();
+
+function parseKillCapInput(raw) {
+  const value = Number(String(raw ?? "").trim());
+
+  if (!Number.isFinite(value) || value < 1 || value > 999) {
+    return null;
+  }
+
+  return Math.floor(value);
+}
+
+function parseRulesListText(input) {
+  if (!input?.trim()) {
+    return [];
+  }
+
+  const seen = new Set();
+  const out = [];
+
+  for (const rawPart of input.split(/\n|,/g)) {
+    const item = rawPart.trim();
+    const lower = item.toLowerCase();
+
+    if (!item || seen.has(lower)) {
+      continue;
+    }
+
+    seen.add(lower);
+    out.push(item);
+  }
+
+  return out;
+}
+
+function formatSpecialRulesEmbedValue(enabled, lines) {
+  if (!enabled) {
+    return "Off";
+  }
+
+  if (!lines?.length) {
+    return "_On — tap **4b** or **Edit special** to add rules_";
+  }
+
+  return lines.map(item => `• ${item}`).join("\n").slice(0, 1024);
+}
+
+function buildSpecialRulesModal(token, lines = []) {
+  const input = new TextInputBuilder()
+    .setCustomId("special_rules_list")
+    .setLabel("Special game rules")
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(false)
+    .setMaxLength(4000)
+    .setPlaceholder("One rule per line (only posted when enabled)");
+
+  const value = formatListInput(lines);
+
+  if (value) {
+    input.setValue(value.slice(0, 4000));
+  }
+
+  return new ModalBuilder()
+    .setCustomId(`${RULES_PREFIX}_special_modal:${token}`)
+    .setTitle("Special game rules")
+    .addComponents(new ActionRowBuilder().addComponents(input));
+}
+
+function streamTitleButtonLabel(streamTitle) {
+  if (!streamTitle?.trim()) {
+    return "3b — Stream title";
+  }
+
+  const label = `3b — Stream: ${streamTitle.trim()}`;
+
+  return label.length <= 80 ? label : `${label.slice(0, 77)}...`;
+}
+
+function buildStreamTitleModal(token, streamTitle = "") {
+  const input = new TextInputBuilder()
+    .setCustomId("stream_title")
+    .setLabel("Twitch stream title")
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(140)
+    .setPlaceholder("Exact title streamers must use");
+
+  const value = streamTitle?.trim();
+
+  if (value) {
+    input.setValue(value.slice(0, 140));
+  }
+
+  return new ModalBuilder()
+    .setCustomId(`${RULES_PREFIX}_stream_title_modal:${token}`)
+    .setTitle("Stream title")
+    .addComponents(new ActionRowBuilder().addComponents(input));
+}
+
+function buildKillCapModal(token, currentCap) {
+  return new ModalBuilder()
+    .setCustomId(`${RULES_PREFIX}_killcap_modal:${token}`)
+    .setTitle("Kill cap")
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("kill_cap")
+          .setLabel("Max kills (number)")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("e.g. 12")
+          .setRequired(true)
+          .setMaxLength(4)
+          .setValue(currentCap != null ? String(currentCap) : "12")
+      )
+    );
 }
 
 function deriveDefaultKey({ scheduledEventId, eventName, mode }) {
@@ -77,355 +207,6 @@ async function resolveRulesEvent(interaction, eventId) {
   };
 }
 
-function parseItemList(input) {
-  if (!input?.trim()) {
-    return [];
-  }
-
-  const seen = new Set();
-  const out = [];
-
-  for (const rawPart of input.split(/\n|,/g)) {
-    const item = rawPart.trim();
-    const lower = item.toLowerCase();
-
-    if (!item || seen.has(lower)) {
-      continue;
-    }
-
-    seen.add(lower);
-    out.push(item);
-  }
-
-  return out;
-}
-
-function parseRulesLines(input) {
-  return parseItemList(input);
-}
-
-function parseBanLineFields(fields, { requireFirst = false } = {}) {
-  const lines = [];
-
-  for (let i = 1; i <= BAN_FORM_LINE_COUNT; i++) {
-    lines.push(fields.getTextInputValue(`ban_${i}`)?.trim() || "");
-  }
-
-  if (requireFirst && !lines[0]) {
-    return { error: "Banned item 1 is required." };
-  }
-
-  return { lines: lines.filter(Boolean) };
-}
-
-function buildBanLineInput(index, value = "") {
-  const input = new TextInputBuilder()
-    .setCustomId(`ban_${index}`)
-    .setLabel(`Banned item ${index}${index === 1 ? "" : " (optional)"}`)
-    .setStyle(TextInputStyle.Short)
-    .setRequired(false)
-    .setMaxLength(200)
-    .setPlaceholder("Optional");
-
-  if (value) {
-    input.setValue(value.slice(0, 200));
-  }
-
-  return input;
-}
-
-function buildAddBanLineRow(key) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`rules_add_ban:${key}`)
-      .setLabel("Add ban line")
-      .setStyle(ButtonStyle.Primary)
-  );
-}
-
-function titleCaseMode(mode) {
-  if (!mode) {
-    return "Not set";
-  }
-
-  return mode.charAt(0).toUpperCase() + mode.slice(1);
-}
-
-function getPendingExtraBans(context) {
-  const source = context.pendingBans ?? context.extraBans ?? [];
-  return extraBansOnly(normalizeBans(source));
-}
-
-function buildSetupEmbed(context) {
-  const extraBans = getPendingExtraBans(context);
-  const perGameCount = (context.perGameRules || []).length;
-  const presetLine = context.savePresetRaw
-    ? `**Save as preset:** ${context.savePresetRaw}`
-    : "**Save as preset:** —";
-
-  return new EmbedBuilder()
-    .setTitle(`Rules setup — ${context.eventName}`)
-    .setDescription(
-      "Fill in the sections below, then click **Post rules**.\n" +
-        "Text fields open in a popup when you press a button (same as Application Forms)."
-    )
-    .setColor(0x5865f2)
-    .addFields(
-      { name: "When", value: context.eventDateTime, inline: true },
-      {
-        name: "Mode",
-        value: context.mode ? titleCaseMode(context.mode) : "_Pick mode below_",
-        inline: true
-      },
-      {
-        name: "Stream title",
-        value: context.streamTitle || context.eventName,
-        inline: false
-      },
-      {
-        name: "Per-game rules",
-        value: perGameCount ? `${perGameCount} line(s) set` : "—",
-        inline: true
-      },
-      {
-        name: "Extra bans",
-        value: extraBans.length
-          ? extraBans.map(item => `• ${item}`).join("\n").slice(0, 1024)
-          : "—",
-        inline: false
-      },
-      { name: "Preset", value: presetLine, inline: false }
-    );
-}
-
-function buildSetupComponents(token, context) {
-  const rows = [];
-
-  if (!context.mode) {
-    rows.push(
-      new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId(`rules_mode:${token}`)
-          .setPlaceholder("Select game mode")
-          .addOptions(
-            new StringSelectMenuOptionBuilder()
-              .setLabel("Solo")
-              .setValue("solo"),
-            new StringSelectMenuOptionBuilder()
-              .setLabel("Duo")
-              .setValue("duo"),
-            new StringSelectMenuOptionBuilder()
-              .setLabel("Trio")
-              .setValue("trio"),
-            new StringSelectMenuOptionBuilder()
-              .setLabel("Squad")
-              .setValue("squad")
-          )
-      )
-    );
-  }
-
-  rows.push(
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`rules_setup_details:${token}`)
-        .setLabel("Event details")
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`rules_setup_bans:${token}`)
-        .setLabel("Banned items")
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`rules_post:${token}`)
-        .setLabel("Post rules")
-        .setStyle(ButtonStyle.Success)
-    )
-  );
-
-  return rows;
-}
-
-async function refreshSetupMessage(client, context) {
-  if (!context.setupMessageId || !context.channelId) {
-    return;
-  }
-
-  const channel = await client.channels.fetch(context.channelId).catch(() => null);
-
-  if (!channel?.isTextBased?.()) {
-    return;
-  }
-
-  const message = await channel.messages
-    .fetch(context.setupMessageId)
-    .catch(() => null);
-
-  if (!message) {
-    return;
-  }
-
-  const token = context.token;
-
-  await message.edit({
-    embeds: [buildSetupEmbed(context)],
-    components: buildSetupComponents(token, context)
-  });
-}
-
-function buildBanEditEmbed(key, eventRecord) {
-  const extraBans = extraBansOnly(eventRecord.bans);
-
-  return new EmbedBuilder()
-    .setTitle(`Edit bans — ${eventRecord.eventName}`)
-    .setDescription(`Key: \`${key}\``)
-    .setColor(0xed4245)
-    .addFields({
-      name: "Current extra bans",
-      value: extraBans.length
-        ? extraBans.map(item => `• ${item}`).join("\n").slice(0, 1024)
-        : "—"
-    });
-}
-
-function buildBanEditComponents(key) {
-  return [
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`rules_edit_bans:${key}`)
-        .setLabel("Edit banned items")
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(`rules_add_ban:${key}`)
-        .setLabel("Add ban line")
-        .setStyle(ButtonStyle.Secondary)
-    )
-  ];
-}
-
-function formatBansManageReply(key, bans, extra = "") {
-  const effective = normalizeBans(bans);
-  const lines = effective.map(item => `- ${item}`).join("\n");
-
-  return (
-    `**Key:** \`${key}\`\n` +
-    `**Banned items (${effective.length}):**\n${lines}\n` +
-    `Use **Add ban line** for more, or \`/rules bans key:${key}\` to edit the first ${BAN_FORM_LINE_COUNT}.` +
-    extra
-  );
-}
-
-async function applyBansUpdate(interaction, guildId, key, nextBans) {
-  const eventRecord = getEvent(guildId, key);
-
-  if (!eventRecord) {
-    throw new Error("missing_event");
-  }
-
-  const normalized = normalizeBans(nextBans);
-  const { channel, bansMessage } = await fetchTargetMessages(
-    interaction,
-    eventRecord
-  );
-
-  if (!channel || !bansMessage) {
-    throw new Error("missing_message");
-  }
-
-  await bansMessage.edit({
-    content: buildBansMessage({ bans: normalized }),
-    allowedMentions: { parse: [] }
-  });
-
-  setEvent(guildId, key, { bans: normalized });
-  return normalized;
-}
-
-function mergeBanFormLines(headLines, existingBans) {
-  const tail = extraBansOnly(existingBans).slice(BAN_FORM_LINE_COUNT);
-  return normalizeBans([...headLines, ...tail]);
-}
-
-function buildBanFormModal(customId, title, extraBans = []) {
-  const modal = new ModalBuilder()
-    .setCustomId(customId)
-    .setTitle(title);
-
-  for (let i = 1; i <= BAN_FORM_LINE_COUNT; i++) {
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        buildBanLineInput(i, extraBans[i - 1] || "")
-      )
-    );
-  }
-
-  return modal;
-}
-
-function showBansFormModal(interaction, key, extraBans = []) {
-  return interaction.showModal(
-    buildBanFormModal(`rules_bans_form:${key}`, "Edit Banned Items", extraBans)
-  );
-}
-
-function buildDetailsFormModal(customId, defaults = {}) {
-  const modal = new ModalBuilder()
-    .setCustomId(customId)
-    .setTitle("Event details");
-
-  const streamInput = new TextInputBuilder()
-    .setCustomId("stream_title")
-    .setLabel("Stream title (optional)")
-    .setStyle(TextInputStyle.Short)
-    .setRequired(false)
-    .setMaxLength(150);
-
-  if (defaults.streamTitle) {
-    streamInput.setValue(defaults.streamTitle.slice(0, 150));
-  }
-
-  const perGameInput = new TextInputBuilder()
-    .setCustomId("per_game_rules")
-    .setLabel("Per-game rules (optional)")
-    .setStyle(TextInputStyle.Paragraph)
-    .setRequired(false)
-    .setMaxLength(1200);
-
-  if (defaults.perGameRules) {
-    perGameInput.setValue(defaults.perGameRules.slice(0, 1200));
-  }
-
-  const savePresetInput = new TextInputBuilder()
-    .setCustomId("save_preset")
-    .setLabel("Save as preset (optional)")
-    .setStyle(TextInputStyle.Short)
-    .setRequired(false)
-    .setMaxLength(64);
-
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(streamInput),
-    new ActionRowBuilder().addComponents(perGameInput),
-    new ActionRowBuilder().addComponents(savePresetInput)
-  );
-
-  return modal;
-}
-
-function showAddBanLineModal(interaction, key) {
-  const modal = new ModalBuilder()
-    .setCustomId(`rules_add_ban:${key}`)
-    .setTitle("Add Banned Item");
-
-  const input = new TextInputBuilder()
-    .setCustomId("new_ban")
-    .setLabel("Banned item")
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true)
-    .setMaxLength(200);
-
-  modal.addComponents(new ActionRowBuilder().addComponents(input));
-  return interaction.showModal(modal);
-}
-
 function sheetErrorMessage(err) {
   if (err?.message?.includes("MAIN_SHEET_ID")) {
     return "MAIN_SHEET_ID is not configured — cannot use the **Rules** sheet.";
@@ -437,91 +218,435 @@ function sheetErrorMessage(err) {
   );
 }
 
-function buildPresetChoices(presets, focused) {
-  const query = focused.trim().toLowerCase();
+function applyGamePresetToContext(context, gamePreset, gameKey) {
+  context.gameKey = gameKey;
+  context.gameLabel = gamePreset.gameLabel;
+  context.pendingBans = extraBansOnly(gamePreset.extraBans || []);
+  context.eventType = gamePreset.eventType || "standard";
+  context.tierRestrictionsUrl =
+    gamePreset.tierRestrictionsUrl || DEFAULT_TIER_RESTRICTIONS_URL;
+  context.separateDropmaps = gamePreset.separateDropmaps ?? false;
+  context.dropmapExtraLine = gamePreset.dropmapExtraLine || "";
+  context.firstPenalty = gamePreset.firstPenalty;
+  context.secondPenalty = gamePreset.secondPenalty;
+  context.thirdPenaltyText = gamePreset.thirdPenaltyText;
+}
 
-  let filtered = presets;
+function formatLabel(value, labels = {}) {
+  if (!value) {
+    return "_Not set_";
+  }
 
-  if (query) {
-    filtered = presets.filter(preset => {
-      const name = (preset.name || preset.key || "").toLowerCase();
-      const key = (preset.key || "").toLowerCase();
-      return name.includes(query) || key.includes(query);
+  return labels[value] || titleCaseMode(value);
+}
+
+function buildRulesSetupEmbed(context) {
+  const extraBans = getPendingExtraBans(context);
+  return new EmbedBuilder()
+    .setTitle(`Rules setup — ${context.eventName}`)
+    .setDescription(
+      formatBansPanelDescription(
+        "Use the rows below, then **Preview rules** or **Post rules**.\n" +
+          "Section text is edited on the **Rules Modules** sheet (one row per module).\n" +
+          "**1** Game · **2** Format · **3** Kill cap & stream title · **4** Dropmap & special rules"
+      )
+    )
+    .setColor(0x5865f2)
+    .addFields(
+      {
+        name: "Always banned",
+        value:
+          "Any weapon that uses **SNIPER** or **EXPLOSIVE** ammo — always in the posted ban list.",
+        inline: false
+      },
+      { name: "When", value: context.eventDateTime, inline: true },
+      {
+        name: "Game",
+        value: context.gameLabel || "_Pick game_",
+        inline: true
+      },
+      {
+        name: "Format",
+        value: formatLabel(context.formatMode, MODE_LABELS),
+        inline: true
+      },
+      {
+        name: "Kill cap",
+        value: context.killCap ? String(context.killCap) : "_Tap **3a — Kill cap** below_",
+        inline: true
+      },
+      {
+        name: "Stream title",
+        value: context.streamTitle?.trim()
+          ? context.streamTitle.trim()
+          : "_Tap **3b — Stream title** below_",
+        inline: true
+      },
+      {
+        name: "Dropmap",
+        value: context.dropmapEnabled == null ? "_Pick_" : context.dropmapEnabled ? "On" : "Off",
+        inline: true
+      },
+      {
+        name: "Special game rules",
+        value: formatSpecialRulesEmbedValue(
+          context.specialGameRulesEnabled,
+          context.specialGameRules
+        ),
+        inline: false
+      },
+      {
+        name: "Penalties",
+        value: context.gameKey
+          ? `**-${context.firstPenalty}** / **-${context.secondPenalty}** / ${context.thirdPenaltyText}`
+          : "_Pick game_",
+        inline: false
+      },
+      {
+        name: "Extra bans",
+        value: formatBansEmbedValue(extraBans),
+        inline: false
+      }
+    );
+}
+
+async function buildRulesSetupComponents(token, context, guildId) {
+  const rows = [];
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(`${RULES_PREFIX}_game:${token}`)
+        .setPlaceholder("1 — Game type (Main BR or Reload)")
+        .addOptions(
+          new StringSelectMenuOptionBuilder()
+            .setLabel("Main BR")
+            .setValue("br")
+            .setDefault(context.gameKey === "br"),
+          new StringSelectMenuOptionBuilder()
+            .setLabel("Reload")
+            .setValue("reload")
+            .setDefault(context.gameKey === "reload")
+        )
+    )
+  );
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(`${RULES_PREFIX}_format:${token}`)
+        .setPlaceholder("2 — Format (Duos, Trios, or Squads)")
+        .addOptions(
+          new StringSelectMenuOptionBuilder()
+            .setLabel("Duos")
+            .setValue("duo")
+            .setDefault(context.formatMode === "duo"),
+          new StringSelectMenuOptionBuilder()
+            .setLabel("Trios")
+            .setValue("trio")
+            .setDefault(context.formatMode === "trio"),
+          new StringSelectMenuOptionBuilder()
+            .setLabel("Squads")
+            .setValue("squad")
+            .setDefault(context.formatMode === "squad")
+        )
+    )
+  );
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`${RULES_PREFIX}_killcap_set:${token}`)
+        .setLabel(
+          context.killCap != null
+            ? `3a — Kill cap: ${context.killCap}`
+            : "3a — Kill cap"
+        )
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`${RULES_PREFIX}_stream_title_set:${token}`)
+        .setLabel(streamTitleButtonLabel(context.streamTitle))
+        .setStyle(
+          context.streamTitle?.trim()
+            ? ButtonStyle.Success
+            : ButtonStyle.Secondary
+        )
+    )
+  );
+
+  const toggleRow = [
+    new ButtonBuilder()
+      .setCustomId(`${RULES_PREFIX}_toggle_dropmap:${token}`)
+      .setLabel(
+        context.dropmapEnabled == null
+          ? "4a — Dropmap"
+          : context.dropmapEnabled
+            ? "4a — Dropmap: On"
+            : "4a — Dropmap: Off"
+      )
+      .setStyle(
+        context.dropmapEnabled ? ButtonStyle.Success : ButtonStyle.Secondary
+      ),
+    new ButtonBuilder()
+      .setCustomId(`${RULES_PREFIX}_toggle_special_rules:${token}`)
+      .setLabel(
+        context.specialGameRulesEnabled
+          ? "4b — Special rules: On"
+          : "4b — Special rules: Off"
+      )
+      .setStyle(
+        context.specialGameRulesEnabled
+          ? ButtonStyle.Success
+          : ButtonStyle.Secondary
+      )
+  ];
+
+  if (context.specialGameRulesEnabled) {
+    toggleRow.push(
+      new ButtonBuilder()
+        .setCustomId(`${RULES_PREFIX}_special_edit:${token}`)
+        .setLabel("Edit special")
+        .setStyle(ButtonStyle.Primary)
+    );
+  }
+
+  rows.push(new ActionRowBuilder().addComponents(...toggleRow));
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`${RULES_PREFIX}_setup_bans:${token}`)
+        .setLabel("Edit ban list")
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(!context.gameKey),
+      new ButtonBuilder()
+        .setCustomId(`${RULES_PREFIX}_setup_add_ban:${token}`)
+        .setLabel("+ Add one")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(!context.gameKey),
+      new ButtonBuilder()
+        .setCustomId(`${RULES_PREFIX}_preview:${token}`)
+        .setLabel("Preview rules")
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`${RULES_PREFIX}_post:${token}`)
+        .setLabel("Post rules")
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`${RULES_PREFIX}_cancel:${token}`)
+        .setLabel("Cancel")
+        .setStyle(ButtonStyle.Secondary)
+    )
+  );
+
+  return rows.slice(0, 5);
+}
+
+async function refreshRulesSetupEphemeral(interaction, context) {
+  await interaction.update({
+    embeds: [buildRulesSetupEmbed(context)],
+    components: await buildRulesSetupComponents(
+      context.token,
+      context,
+      context.guildId
+    )
+  });
+}
+
+function buildRulesPostedEmbed(eventName) {
+  return new EmbedBuilder()
+    .setTitle(`Posted — ${eventName}`)
+    .setDescription(
+      "Rules and bans are in this channel.\n" +
+        "Use `/rules bans` here to edit the ban list."
+    )
+    .setColor(0x57f287);
+}
+
+function validateContextForPost(context) {
+  if (!context.gameKey) {
+    return "Pick a **game type** (Main BR or Reload).";
+  }
+
+  if (!context.formatMode) {
+    return "Pick a **format** (Duos, Trios, or Squads).";
+  }
+
+  if (context.killCap == null || !parseKillCapInput(context.killCap)) {
+    return "Set a **kill cap** (tap **3a — Kill cap** and enter a number).";
+  }
+
+  if (!context.streamTitle?.trim()) {
+    return "Set a **stream title** (tap **3b — Stream title**).";
+  }
+
+  if (context.dropmapEnabled == null) {
+    return "Pick **dropmap** on or off.";
+  }
+
+  if (
+    context.specialGameRulesEnabled &&
+    !(context.specialGameRules || []).length
+  ) {
+    return (
+      "Add at least one line in **Special game rules** (tap **4b** or **Edit special**), " +
+        "or turn **4b** off."
+    );
+  }
+
+  return null;
+}
+
+function buildPreviewPayloadFromContext(context) {
+  return {
+    eventName: context.eventName,
+    eventDateTime: context.eventDateTime,
+    mode: context.formatMode || "duo",
+    eventType: context.eventType,
+    tierRestrictionsUrl: context.tierRestrictionsUrl,
+    streamTitle: context.streamTitle?.trim() || "_(not set)_",
+    perGameRules: context.specialGameRulesEnabled
+      ? context.specialGameRules || []
+      : [],
+    dropmapEnabled: context.dropmapEnabled ?? true,
+    separateDropmaps: context.separateDropmaps,
+    dropmapExtraLine: context.dropmapExtraLine,
+    firstPenalty: context.firstPenalty,
+    secondPenalty: context.secondPenalty,
+    thirdPenaltyText: context.thirdPenaltyText,
+    killCap: parseKillCapInput(context.killCap),
+    gameLabel: context.gameLabel || "_(not set)_"
+  };
+}
+
+async function loadSheetModulesForContext(context) {
+  try {
+    return await getRulesModules(context.guildId, context.gameKey || "");
+  } catch (err) {
+    console.error("[RULES MODULES]", err?.message || err);
+    return null;
+  }
+}
+
+async function replyRulesPreview(interaction, context) {
+  const validationError = validateContextForPost(context);
+  const sheetModules = await loadSheetModulesForContext(context);
+  const previewText = buildRulesMessage({
+    ...buildPreviewPayloadFromContext(context),
+    sheetModules
+  });
+  const chunks = splitDiscordContent(
+    previewText,
+    DISCORD_CONTENT_LIMIT,
+    "Rules preview"
+  );
+  const prefix = validationError
+    ? `**Rules preview** — not ready to post yet: ${validationError}\n\n`
+    : "**Rules preview** — this is what will be posted:\n\n";
+
+  await interaction.reply({
+    content: `${prefix}${chunks[0]}`.slice(0, DISCORD_CONTENT_LIMIT),
+    ephemeral: true
+  });
+
+  for (let i = 1; i < chunks.length; i++) {
+    await interaction.followUp({
+      content: chunks[i].slice(0, DISCORD_CONTENT_LIMIT),
+      ephemeral: true
     });
   }
-
-  return filtered.slice(0, 25).map(preset => ({
-    name: (preset.name || preset.key).slice(0, 100),
-    value: preset.key
-  }));
 }
 
-function buildPresetPayload({
-  name,
-  mode,
-  eventType,
-  tierRestrictionsUrl,
-  streamTitle,
-  perGameRules,
-  bans,
-  dropmapEnabled,
-  separateDropmaps,
-  dropmapExtraLine,
-  firstPenalty,
-  secondPenalty,
-  thirdPenaltyText
-}) {
+function buildPostPayloadFromContext(context) {
   return {
-    name,
-    mode,
-    eventType,
-    tierRestrictionsUrl,
-    streamTitle,
-    perGameRules: Array.isArray(perGameRules) ? perGameRules : [],
-    extraBans: extraBansOnly(bans),
-    dropmapEnabled,
-    separateDropmaps,
-    dropmapExtraLine,
-    firstPenalty,
-    secondPenalty,
-    thirdPenaltyText
+    key: deriveDefaultKey({
+      scheduledEventId: context.scheduledEventId,
+      eventName: context.eventName,
+      mode: context.formatMode
+    }),
+    scheduledEventId: context.scheduledEventId,
+    eventName: context.eventName,
+    eventDateTime: context.eventDateTime,
+    mode: context.formatMode,
+    eventType: context.eventType,
+    tierRestrictionsUrl: context.tierRestrictionsUrl,
+    streamTitle: context.streamTitle.trim(),
+    perGameRules: context.specialGameRulesEnabled
+      ? context.specialGameRules || []
+      : [],
+    dropmapEnabled: context.dropmapEnabled,
+    separateDropmaps: context.separateDropmaps,
+    dropmapExtraLine: context.dropmapExtraLine,
+    firstPenalty: context.firstPenalty,
+    secondPenalty: context.secondPenalty,
+    thirdPenaltyText: context.thirdPenaltyText,
+    killCap: context.killCap,
+    gameLabel: context.gameLabel,
+    gameKey: context.gameKey,
+    bans: normalizeBans(getPendingExtraBans(context))
   };
 }
 
-function resolveFormConfig(interaction, presetRecord = null) {
-  const mode = interaction.options.getString("mode") || presetRecord?.mode;
+const DISCORD_CONTENT_LIMIT = 2000;
 
-  return {
-    mode,
-    eventType: presetRecord?.eventType || "standard",
-    tierRestrictionsUrl:
-      presetRecord?.tierRestrictionsUrl || DEFAULT_TIER_RESTRICTIONS_URL,
-    dropmapEnabled: presetRecord?.dropmapEnabled ?? true,
-    separateDropmaps: presetRecord?.separateDropmaps ?? false,
-    dropmapExtraLine: presetRecord?.dropmapExtraLine || "",
-    firstPenalty: presetRecord?.firstPenalty ?? 20,
-    secondPenalty: presetRecord?.secondPenalty ?? 40,
-    thirdPenaltyText: presetRecord?.thirdPenaltyText || "Disqualification",
-    streamTitle: presetRecord?.streamTitle || "",
-    perGameRules: presetRecord?.perGameRules || [],
-    extraBans: presetRecord?.extraBans || []
-  };
-}
-
-async function fetchTargetMessages(interaction, eventRecord) {
-  const channel = await interaction.client.channels
-    .fetch(eventRecord.channelId)
-    .catch(() => null);
-
-  if (!channel?.isTextBased?.()) {
-    return { channel: null, bansMessage: null };
+function splitDiscordContent(content, limit = DISCORD_CONTENT_LIMIT, continuedTitle = "Rules") {
+  if (content.length <= limit) {
+    return [content];
   }
 
-  const bansMessage = await channel.messages
-    .fetch(eventRecord.bansMessageId)
-    .catch(() => null);
+  const chunks = [];
+  let current = "";
 
-  return { channel, bansMessage };
+  for (const line of content.split("\n")) {
+    const candidate = current ? `${current}\n${line}` : line;
+
+    if (candidate.length <= limit) {
+      current = candidate;
+      continue;
+    }
+
+    if (current) {
+      chunks.push(current);
+      current = "";
+    }
+
+    if (line.length <= limit) {
+      current = line;
+      continue;
+    }
+
+    for (let offset = 0; offset < line.length; offset += limit) {
+      chunks.push(line.slice(offset, offset + limit));
+    }
+  }
+
+  if (current) {
+    chunks.push(current);
+  }
+
+  return chunks.map((chunk, index) => {
+    if (index === 0) {
+      return chunk;
+    }
+
+    return `## ${continuedTitle} (continued ${index + 1})\n\n${chunk}`;
+  });
+}
+
+async function sendRulesMessages(channel, content, continuedTitle) {
+  const chunks = splitDiscordContent(content, DISCORD_CONTENT_LIMIT, continuedTitle);
+  const messages = [];
+
+  for (const chunk of chunks) {
+    messages.push(
+      await channel.send({
+        content: chunk,
+        allowedMentions: { parse: [] }
+      })
+    );
+  }
+
+  return messages;
 }
 
 async function postRulesPack(interaction, payload) {
@@ -541,14 +666,21 @@ async function postRulesPack(interaction, payload) {
     firstPenalty,
     secondPenalty,
     thirdPenaltyText,
+    killCap,
+    gameLabel,
+    gameKey,
     bans
   } = payload;
+
+  const sheetModules = await loadSheetModulesForContext({
+    guildId: interaction.guildId,
+    gameKey: gameKey || ""
+  });
 
   const rulesContent = buildRulesMessage({
     eventName,
     eventDateTime,
     mode,
-    eventType,
     tierRestrictionsUrl,
     streamTitle,
     perGameRules,
@@ -557,18 +689,25 @@ async function postRulesPack(interaction, payload) {
     dropmapExtraLine,
     firstPenalty,
     secondPenalty,
-    thirdPenaltyText
+    thirdPenaltyText,
+    killCap,
+    gameLabel,
+    sheetModules
   });
   const bansContent = buildBansMessage({ bans: normalizeBans(bans) });
 
-  const rulesMessage = await interaction.channel.send({
-    content: rulesContent,
-    allowedMentions: { parse: [] }
-  });
+  const rulesMessages = await sendRulesMessages(
+    interaction.channel,
+    rulesContent,
+    eventName
+  );
+  const rulesMessage = rulesMessages[0];
   const bansMessage = await interaction.channel.send({
     content: bansContent,
     allowedMentions: { parse: [] }
   });
+
+  const createdAt = new Date().toISOString();
 
   setEvent(interaction.guildId, key, {
     key,
@@ -586,11 +725,32 @@ async function postRulesPack(interaction, payload) {
     firstPenalty,
     secondPenalty,
     thirdPenaltyText,
+    killCap,
+    gameLabel,
     bans: normalizeBans(bans),
     channelId: interaction.channelId,
     rulesMessageId: rulesMessage.id,
     bansMessageId: bansMessage.id,
-    createdAt: new Date().toISOString()
+    packType: PACK_TYPES.RULES,
+    createdAt
+  });
+
+  await recordPostedPackToSheet({
+    guildId: interaction.guildId,
+    key,
+    scheduledEventId,
+    packType: PACK_TYPES.RULES,
+    mode,
+    eventName,
+    channelId: interaction.channelId,
+    rulesMessageId: rulesMessage.id,
+    bansMessageId: bansMessage.id,
+    postedAt: createdAt
+  });
+
+  saveTypedSuggestionsToLibrary(interaction.guildId, {
+    bans: extraBansOnly(bans),
+    rules: perGameRules
   });
 
   return key;
@@ -603,7 +763,7 @@ module.exports = {
     .addSubcommand(sub =>
       sub
         .setName("form")
-        .setDescription("Post rules for a scheduled event")
+        .setDescription("Post rules for a scheduled event (ephemeral setup)")
         .addStringOption(option =>
           option
             .setName("event")
@@ -611,82 +771,30 @@ module.exports = {
             .setRequired(true)
             .setAutocomplete(true)
         )
-        .addStringOption(option =>
-          option
-            .setName("mode")
-            .setDescription("Game mode (optional if using preset)")
-            .setRequired(false)
-            .addChoices(
-              { name: "Solo", value: "solo" },
-              { name: "Duo", value: "duo" },
-              { name: "Trio", value: "trio" },
-              { name: "Squad", value: "squad" }
-            )
-        )
-        .addStringOption(option =>
-          option
-            .setName("preset")
-            .setDescription("Load settings from the Rules sheet")
-            .setRequired(false)
-            .setAutocomplete(true)
-        )
     )
     .addSubcommand(sub =>
       sub
         .setName("bans")
-        .setDescription("Edit banned items for a posted event")
-        .addStringOption(option =>
-          option
-            .setName("key")
-            .setDescription("Rules key from when you posted")
-            .setRequired(true)
+        .setDescription(
+          "Edit the ban list where you posted rules (this channel)"
         )
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
   async autocomplete(interaction) {
-    let focusedName = "event";
     let focusedValue = "";
 
     try {
-      const focusedOption = interaction.options.getFocused(true);
-      focusedName = focusedOption.name;
-      focusedValue = focusedOption.value ?? "";
-    } catch {
       focusedValue = interaction.options.getFocused() ?? "";
+    } catch {
+      focusedValue = "";
     }
 
     try {
-      if (focusedName === "preset") {
-        const presets = await listPresets(interaction.guildId);
-        const choices = buildPresetChoices(presets, focusedValue);
-        return await interaction.respond(choices);
-      }
-
-      if (focusedName !== "event") {
-        return await interaction.respond([]);
-      }
-
-      const guild = await resolveGuildForEvents(
-        interaction.client,
-        interaction
+      return await respondScheduledEventAutocomplete(
+        interaction,
+        focusedValue
       );
-
-      if (!guild) {
-        console.warn("[RULES AUTOCOMPLETE] No guild on interaction");
-        return await interaction.respond([]);
-      }
-
-      const allEvents = await fetchGuildScheduledEvents(guild, { force: true });
-      const forAutocomplete = getEventsForAutocomplete(allEvents);
-      const choices = buildAutocompleteChoices(forAutocomplete, focusedValue);
-
-      console.log(
-        `[RULES AUTOCOMPLETE] guild ${guild.id}: ` +
-          `fetched=${allEvents.length} choices=${choices.length}`
-      );
-
-      return await interaction.respond(choices);
     } catch (err) {
       console.error("[RULES AUTOCOMPLETE]", err);
 
@@ -703,168 +811,188 @@ module.exports = {
     const guildId = interaction.guildId;
 
     if (subcommand === "bans") {
-      const key = sanitizeKey(interaction.options.getString("key", true));
-      const eventRecord = getEvent(guildId, key);
+      await interaction.deferReply({ ephemeral: true });
 
-      if (!eventRecord) {
-        return interaction.reply({
+      const resolved = await resolveBansTargetInChannel(interaction);
+
+      if (!resolved) {
+        return interaction.editReply({
           content:
-            `No rules entry found for key \`${key}\`.\n` +
-            "Post one first with `/rules form`.",
-          ephemeral: true
+            "No banned-items message found in this channel.\n\n" +
+            "Post with `/rules form` or `/bans post`, or run `/bans edit` or `/rules bans` where bans were posted."
         });
       }
 
-      await interaction.deferReply({ ephemeral: true });
+      if (resolved.bansMessageDeleted) {
+        return interaction.editReply({
+          content: bansMessageDeletedUserMessage(resolved.eventRecord.eventName)
+        });
+      }
 
-      const panel = await interaction.channel.send({
-        embeds: [buildBanEditEmbed(key, eventRecord)],
-        components: buildBanEditComponents(key)
+      const { key, eventRecord, multipleInChannel, recoveredFromMessage } =
+        resolved;
+
+      if (recoveredFromMessage) {
+        setEvent(guildId, key, eventRecord);
+      }
+
+      const token = `${interaction.user.id}-${Date.now()}`;
+
+      ephemeralBanEditCache.set(token, {
+        key,
+        guildId,
+        userId: interaction.user.id
+      });
+
+      const footerNote = buildBansEditorFooterNotes({
+        multipleInChannel,
+        recoveredFromMessage
       });
 
       return interaction.editReply({
-        content: `Ban editor posted above for key \`${key}\`.`
+        embeds: [buildBanEditEmbed(eventRecord, { footerNote })],
+        components: [buildEphemeralBanEditRow(RULES_PREFIX, token)]
       });
     }
 
     if (subcommand === "form") {
+      await interaction.deferReply({ ephemeral: true });
+
       const eventId = interaction.options.getString("event", true);
       const resolved = await resolveRulesEvent(interaction, eventId);
 
       if (resolved.error) {
-        return interaction.reply({
-          content: resolved.error,
-          ephemeral: true
+        return interaction.editReply({
+          content: resolved.error
         });
       }
 
-      const presetInput = interaction.options.getString("preset");
-      const presetKey = sanitizeKey(presetInput || "");
-      let presetRecord = null;
-
-      if (presetInput) {
-        try {
-          presetRecord = presetKey ? await getPreset(guildId, presetKey) : null;
-        } catch (err) {
-          console.error("[RULES FORM PRESET]", err);
-          return interaction.reply({
-            content: sheetErrorMessage(err),
-            ephemeral: true
-          });
-        }
-
-        if (!presetRecord) {
-          return interaction.reply({
-            content: `No preset found for \`${presetKey}\` in the **Rules** sheet.`,
-            ephemeral: true
-          });
-        }
-      }
-
-      const formConfig = resolveFormConfig(interaction, presetRecord);
-      const mode = formConfig.mode || null;
-      const eventType = formConfig.eventType;
-      const tierRestrictionsUrl = formConfig.tierRestrictionsUrl;
-      const dropmapEnabled = formConfig.dropmapEnabled;
-      const separateDropmaps = formConfig.separateDropmaps;
-      const dropmapExtraLine = formConfig.dropmapExtraLine;
-      const firstPenalty = formConfig.firstPenalty;
-      const secondPenalty = formConfig.secondPenalty;
-      const thirdPenaltyText = formConfig.thirdPenaltyText;
-      const defaultKey = mode
-        ? deriveDefaultKey({
-            scheduledEventId: resolved.scheduledEventId,
-            eventName: resolved.eventName,
-            mode
-          })
-        : "";
-
       const token = `${interaction.user.id}-${Date.now()}`;
-      const defaultStreamTitle = formConfig.streamTitle || resolved.eventName;
 
       const context = {
         token,
-        mode,
-        eventType,
-        tierRestrictionsUrl,
-        dropmapEnabled,
-        separateDropmaps,
-        dropmapExtraLine,
-        firstPenalty,
-        secondPenalty,
-        thirdPenaltyText,
-        requestedKey: defaultKey,
+        guildId,
+        channelId: interaction.channelId,
         scheduledEventId: resolved.scheduledEventId,
         eventName: resolved.eventName,
         eventDateTime: resolved.eventDateTime,
-        streamTitle: defaultStreamTitle,
-        perGameRules: formConfig.perGameRules,
-        savePresetRaw: "",
-        extraBans: formConfig.extraBans,
-        pendingBans: formConfig.extraBans,
-        guildId: interaction.guildId,
-        channelId: interaction.channelId,
-        setupMessageId: null
+        gameKey: null,
+        gameLabel: null,
+        formatMode: null,
+        killCap: 12,
+        streamTitle: "",
+        dropmapEnabled: true,
+        specialGameRulesEnabled: false,
+        specialGameRules: [],
+        pendingBans: [],
+        eventType: "standard",
+        tierRestrictionsUrl: DEFAULT_TIER_RESTRICTIONS_URL,
+        separateDropmaps: false,
+        dropmapExtraLine: "",
+        firstPenalty: 20,
+        secondPenalty: 40,
+        thirdPenaltyText: "Disqualification",
+        savedBanOptions: []
       };
 
       pendingRuleForms.set(token, context);
 
-      await interaction.deferReply({ ephemeral: true });
-
-      const setupMessage = await interaction.channel.send({
-        embeds: [buildSetupEmbed(context)],
-        components: buildSetupComponents(token, context)
-      });
-
-      context.setupMessageId = setupMessage.id;
-      pendingRuleForms.set(token, context);
-
       return interaction.editReply({
-        content: "Rules setup panel posted in this channel."
+        embeds: [buildRulesSetupEmbed(context)],
+        components: await buildRulesSetupComponents(
+          token,
+          context,
+          guildId
+        )
       });
     }
   },
 
   async handleSelectMenu(interaction) {
-    if (!interaction.customId.startsWith("rules_mode:")) {
-      return false;
-    }
+    if (interaction.customId.startsWith(`${RULES_PREFIX}_game:`)) {
+      const token = interaction.customId.split(":")[1];
+      const context = pendingRuleForms.get(token);
+      const gameKey = interaction.values[0];
 
-    const token = interaction.customId.split(":")[1];
-    const context = pendingRuleForms.get(token);
+      if (!context) {
+        await interaction.reply({
+          content: "This setup expired. Run `/rules form` again.",
+          ephemeral: true
+        });
+        return true;
+      }
 
-    if (!context) {
-      await interaction.reply({
-        content: "This setup expired. Run `/rules form` again.",
-        ephemeral: true
-      });
+      if (!isGameType(gameKey)) {
+        return true;
+      }
+
+      try {
+        const gamePreset = await resolveGamePreset(context.guildId, gameKey);
+
+        if (!gamePreset) {
+          await interaction.reply({
+            content: formatGamePresetNotFoundMessage(gameKey, context.guildId),
+            ephemeral: true
+          });
+          return true;
+        }
+
+        applyGamePresetToContext(context, gamePreset, gameKey);
+        saveTypedSuggestionsToLibrary(context.guildId, {
+          bans: extraBansOnly(context.pendingBans)
+        });
+        pendingRuleForms.set(token, context);
+        await refreshRulesSetupEphemeral(interaction, context);
+      } catch (err) {
+        console.error("[RULES GAME SELECT]", err);
+        await interaction.reply({
+          content: sheetErrorMessage(err),
+          ephemeral: true
+        });
+      }
+
       return true;
     }
 
-    const mode = interaction.values[0];
-    const nextContext = {
-      ...context,
-      mode,
-      requestedKey: deriveDefaultKey({
-        scheduledEventId: context.scheduledEventId,
-        eventName: context.eventName,
-        mode
-      })
-    };
+    if (interaction.customId.startsWith(`${RULES_PREFIX}_format:`)) {
+      const token = interaction.customId.split(":")[1];
+      const context = pendingRuleForms.get(token);
 
-    pendingRuleForms.set(token, nextContext);
-    await refreshSetupMessage(interaction.client, nextContext);
+      if (!context) {
+        await interaction.reply({
+          content: "This setup expired. Run `/rules form` again.",
+          ephemeral: true
+        });
+        return true;
+      }
 
-    await interaction.reply({
-      content: `Mode set to **${titleCaseMode(mode)}**.`,
-      ephemeral: true
-    });
+      context.formatMode = interaction.values[0];
+      pendingRuleForms.set(token, context);
+      await refreshRulesSetupEphemeral(interaction, context);
+      return true;
+    }
 
-    return true;
+    return false;
   },
 
   async handleButton(interaction) {
-    if (interaction.customId.startsWith("rules_setup_details:")) {
+    if (interaction.customId.startsWith(`${RULES_PREFIX}_killcap_set:`)) {
+      const token = interaction.customId.split(":")[1];
+      const context = pendingRuleForms.get(token);
+
+      if (!context) {
+        await interaction.reply({
+          content: "This setup expired. Run `/rules form` again.",
+          ephemeral: true
+        });
+        return true;
+      }
+
+      await interaction.showModal(buildKillCapModal(token, context.killCap));
+      return true;
+    }
+
+    if (interaction.customId.startsWith(`${RULES_PREFIX}_stream_title_set:`)) {
       const token = interaction.customId.split(":")[1];
       const context = pendingRuleForms.get(token);
 
@@ -877,16 +1005,144 @@ module.exports = {
       }
 
       await interaction.showModal(
-        buildDetailsFormModal(`rules_details_submit:${token}`, {
-          streamTitle: context.streamTitle || context.eventName,
-          perGameRules: formatListInput(context.perGameRules)
-        })
+        buildStreamTitleModal(token, context.streamTitle)
+      );
+      return true;
+    }
+
+    if (interaction.customId.startsWith(`${RULES_PREFIX}_toggle_dropmap:`)) {
+      const token = interaction.customId.split(":")[1];
+      const context = pendingRuleForms.get(token);
+
+      if (!context) {
+        await interaction.reply({
+          content: "This setup expired. Run `/rules form` again.",
+          ephemeral: true
+        });
+        return true;
+      }
+
+      context.dropmapEnabled = !context.dropmapEnabled;
+      pendingRuleForms.set(token, context);
+      await refreshRulesSetupEphemeral(interaction, context);
+      return true;
+    }
+
+    if (interaction.customId.startsWith(`${RULES_PREFIX}_toggle_special_rules:`)) {
+      const token = interaction.customId.split(":")[1];
+      const context = pendingRuleForms.get(token);
+
+      if (!context) {
+        await interaction.reply({
+          content: "This setup expired. Run `/rules form` again.",
+          ephemeral: true
+        });
+        return true;
+      }
+
+      if (!context.specialGameRulesEnabled) {
+        await interaction.showModal(
+          buildSpecialRulesModal(token, context.specialGameRules || [])
+        );
+        return true;
+      }
+
+      context.specialGameRulesEnabled = false;
+      pendingRuleForms.set(token, context);
+      await refreshRulesSetupEphemeral(interaction, context);
+      return true;
+    }
+
+    if (interaction.customId.startsWith(`${RULES_PREFIX}_special_edit:`)) {
+      const token = interaction.customId.split(":")[1];
+      const context = pendingRuleForms.get(token);
+
+      if (!context) {
+        await interaction.reply({
+          content: "This setup expired. Run `/rules form` again.",
+          ephemeral: true
+        });
+        return true;
+      }
+
+      await interaction.showModal(
+        buildSpecialRulesModal(token, context.specialGameRules || [])
+      );
+      return true;
+    }
+
+    if (interaction.customId.startsWith(`${RULES_PREFIX}_preview:`)) {
+      const token = interaction.customId.split(":")[1];
+      const context = pendingRuleForms.get(token);
+
+      if (!context) {
+        await interaction.reply({
+          content: "This setup expired. Run `/rules form` again.",
+          ephemeral: true
+        });
+        return true;
+      }
+
+      await replyRulesPreview(interaction, context);
+      return true;
+    }
+
+    if (interaction.customId.startsWith(`${RULES_PREFIX}_cancel:`)) {
+      const token = interaction.customId.split(":")[1];
+      pendingRuleForms.delete(token);
+
+      await interaction.update({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("Cancelled")
+            .setDescription("Nothing was posted.")
+            .setColor(0x99aab5)
+        ],
+        components: []
+      });
+
+      return true;
+    }
+
+    if (interaction.customId.startsWith(`${RULES_PREFIX}_edit_ephemeral:`)) {
+      const token = interaction.customId.split(":")[1];
+      const cached = ephemeralBanEditCache.get(token);
+
+      if (
+        !cached ||
+        cached.userId !== interaction.user.id ||
+        cached.guildId !== interaction.guildId
+      ) {
+        await interaction.reply({
+          content: "This edit session expired. Run `/rules bans` again.",
+          ephemeral: true
+        });
+        return true;
+      }
+
+      const eventRecord = getEvent(cached.guildId, cached.key);
+
+      if (!eventRecord) {
+        ephemeralBanEditCache.delete(token);
+        await interaction.reply({
+          content: "No ban pack found. Run `/rules bans` again.",
+          ephemeral: true
+        });
+        return true;
+      }
+
+      await interaction.showModal(
+        buildBanFormModal(
+          `${RULES_PREFIX}_bans_form:${cached.key}`,
+          "Edit ban list",
+          extraBansOnly(eventRecord.bans)
+        )
       );
 
       return true;
     }
 
-    if (interaction.customId.startsWith("rules_setup_bans:")) {
+    if (interaction.customId.startsWith(`${RULES_PREFIX}_setup_bans:`)) {
       const token = interaction.customId.split(":")[1];
       const context = pendingRuleForms.get(token);
 
@@ -900,8 +1156,8 @@ module.exports = {
 
       await interaction.showModal(
         buildBanFormModal(
-          `rules_form_submit:${token}`,
-          "Banned Items",
+          `${RULES_PREFIX}_form_submit:${token}`,
+          "Ban list",
           getPendingExtraBans(context)
         )
       );
@@ -909,28 +1165,7 @@ module.exports = {
       return true;
     }
 
-    if (interaction.customId.startsWith("rules_edit_bans:")) {
-      const key = sanitizeKey(interaction.customId.split(":")[1]);
-      const eventRecord = getEvent(interaction.guildId, key);
-
-      if (!eventRecord) {
-        await interaction.reply({
-          content: `No rules entry found for key \`${key}\`.`,
-          ephemeral: true
-        });
-        return true;
-      }
-
-      await showBansFormModal(
-        interaction,
-        key,
-        extraBansOnly(eventRecord.bans)
-      );
-
-      return true;
-    }
-
-    if (interaction.customId.startsWith("rules_post:")) {
+    if (interaction.customId.startsWith(`${RULES_PREFIX}_setup_add_ban:`)) {
       const token = interaction.customId.split(":")[1];
       const context = pendingRuleForms.get(token);
 
@@ -942,165 +1177,187 @@ module.exports = {
         return true;
       }
 
-      if (!context.mode) {
-        await interaction.reply({
-          content: "Pick a **mode** on the setup panel before posting.",
-          ephemeral: true
-        });
-        return true;
-      }
-
-      await interaction.deferReply({ ephemeral: true });
-
-      const key = context.requestedKey;
-      const bans = normalizeBans(getPendingExtraBans(context));
-      const streamTitle = context.streamTitle || context.eventName;
-      const savePresetRaw = context.savePresetRaw || "";
-
-      await postRulesPack(interaction, {
-        key,
-        scheduledEventId: context.scheduledEventId,
-        eventName: context.eventName,
-        eventDateTime: context.eventDateTime,
-        mode: context.mode,
-        eventType: context.eventType,
-        tierRestrictionsUrl: context.tierRestrictionsUrl,
-        streamTitle,
-        perGameRules: context.perGameRules || [],
-        dropmapEnabled: context.dropmapEnabled,
-        separateDropmaps: context.separateDropmaps,
-        dropmapExtraLine: context.dropmapExtraLine,
-        firstPenalty: context.firstPenalty,
-        secondPenalty: context.secondPenalty,
-        thirdPenaltyText: context.thirdPenaltyText,
-        bans
-      });
-
-      pendingRuleForms.delete(token);
-
-      const channel = await interaction.client.channels
-        .fetch(context.channelId)
-        .catch(() => null);
-
-      if (channel?.isTextBased?.() && context.setupMessageId) {
-        const setupMessage = await channel.messages
-          .fetch(context.setupMessageId)
-          .catch(() => null);
-
-        if (setupMessage) {
-          await setupMessage.edit({
-            embeds: [
-              new EmbedBuilder()
-                .setTitle(`Posted — ${context.eventName}`)
-                .setDescription(
-                  `Rules and bans were posted in this channel.\nKey: \`${key}\``
-                )
-                .setColor(0x57f287)
-            ],
-            components: [buildAddBanLineRow(key)]
-          });
-        }
-      }
-
-      const savePresetKey = sanitizeKey(savePresetRaw);
-      let presetSavedLine = "";
-
-      if (savePresetKey) {
-        try {
-          await setPreset(interaction.guildId, savePresetKey, buildPresetPayload({
-            name: savePresetRaw.trim(),
-            mode: context.mode,
-            eventType: context.eventType,
-            tierRestrictionsUrl: context.tierRestrictionsUrl,
-            streamTitle,
-            perGameRules: context.perGameRules || [],
-            bans,
-            dropmapEnabled: context.dropmapEnabled,
-            separateDropmaps: context.separateDropmaps,
-            dropmapExtraLine: context.dropmapExtraLine,
-            firstPenalty: context.firstPenalty,
-            secondPenalty: context.secondPenalty,
-            thirdPenaltyText: context.thirdPenaltyText
-          }));
-
-          presetSavedLine =
-            `\nSaved preset **${savePresetRaw.trim()}** (\`${savePresetKey}\`).`;
-        } catch (err) {
-          console.error("[RULES SAVE PRESET]", err);
-          presetSavedLine = `\n${sheetErrorMessage(err)}`;
-        }
-      }
-
-      return interaction.editReply({
-        content:
-          `Posted rules for **${context.eventName}**.\n` +
-          `Key: \`${key}\`${presetSavedLine}`,
-        components: [buildAddBanLineRow(key)]
-      });
-    }
-
-    if (!interaction.customId.startsWith("rules_add_ban:")) {
-      return false;
-    }
-
-    const key = sanitizeKey(interaction.customId.split(":")[1]);
-    const eventRecord = getEvent(interaction.guildId, key);
-
-    if (!eventRecord) {
-      await interaction.reply({
-        content: `No rules entry found for key \`${key}\`.`,
-        ephemeral: true
-      });
+      await showPendingAddBanModal(interaction, RULES_PREFIX, token);
       return true;
     }
 
-    await showAddBanLineModal(interaction, key);
-    return true;
-  },
-
-  async handleModalSubmit(interaction) {
-    if (interaction.customId.startsWith("rules_details_submit:")) {
+    if (interaction.customId.startsWith(`${RULES_PREFIX}_post:`)) {
       const token = interaction.customId.split(":")[1];
       const context = pendingRuleForms.get(token);
 
       if (!context) {
         await interaction.reply({
-          content: "This rules form expired. Please run `/rules form` again.",
+          content: "This setup expired. Run `/rules form` again.",
           ephemeral: true
         });
         return true;
       }
 
-      const streamTitle =
-        interaction.fields.getTextInputValue("stream_title")?.trim() ||
-        context.streamTitle ||
-        context.eventName;
-      const perGameRules = parseRulesLines(
-        interaction.fields.getTextInputValue("per_game_rules") || ""
-      );
-      const savePresetRaw =
-        interaction.fields.getTextInputValue("save_preset")?.trim() || "";
+      const validationError = validateContextForPost(context);
 
-      const nextContext = {
-        ...context,
-        streamTitle,
-        perGameRules,
-        savePresetRaw
-      };
+      if (validationError) {
+        await interaction.reply({
+          content: validationError,
+          ephemeral: true
+        });
+        return true;
+      }
 
-      pendingRuleForms.set(token, nextContext);
-      await refreshSetupMessage(interaction.client, nextContext);
+      try {
+        await postRulesPack(interaction, buildPostPayloadFromContext(context));
+      } catch (err) {
+        console.error("[RULES POST]", err?.message || err, err?.stack);
 
-      await interaction.reply({
-        content: "Event details saved on the setup panel.",
-        ephemeral: true
+        const hint =
+          err?.code === 50035 || /2000|length/i.test(String(err?.message))
+            ? "The rules text is too long for one Discord message; try again after deploy, or shorten special rules."
+            : "Failed to post rules. Try again.";
+
+        await interaction.update({
+          embeds: [
+            buildRulesSetupEmbed(context),
+            new EmbedBuilder()
+              .setTitle("Post failed")
+              .setDescription(hint)
+              .setColor(0xed4245)
+          ],
+          components: await buildRulesSetupComponents(
+            context.token,
+            context,
+            context.guildId
+          )
+        });
+        return true;
+      }
+
+      pendingRuleForms.delete(token);
+
+      await interaction.update({
+        embeds: [buildRulesPostedEmbed(context.eventName)],
+        components: []
       });
 
       return true;
     }
 
-    if (interaction.customId.startsWith("rules_add_ban:")) {
-      const key = sanitizeKey(interaction.customId.split(":")[1]);
+    return false;
+  },
+
+  async handleModalSubmit(interaction) {
+    if (interaction.customId.startsWith(`${RULES_PREFIX}_stream_title_modal:`)) {
+      const token = interaction.customId.split(":")[1];
+      const context = pendingRuleForms.get(token);
+
+      if (!context) {
+        await interaction.reply({
+          content: "This setup expired. Run `/rules form` again.",
+          ephemeral: true
+        });
+        return true;
+      }
+
+      const streamTitle = interaction.fields.getTextInputValue("stream_title")?.trim();
+
+      if (!streamTitle) {
+        return replyModalError(interaction, "Stream title cannot be empty.");
+      }
+
+      context.streamTitle = streamTitle.slice(0, 140);
+      pendingRuleForms.set(token, context);
+      await refreshRulesSetupEphemeral(interaction, context);
+      return true;
+    }
+
+    if (interaction.customId.startsWith(`${RULES_PREFIX}_special_modal:`)) {
+      const token = interaction.customId.split(":")[1];
+      const context = pendingRuleForms.get(token);
+
+      if (!context) {
+        await interaction.reply({
+          content: "This setup expired. Run `/rules form` again.",
+          ephemeral: true
+        });
+        return true;
+      }
+
+      const lines = parseRulesListText(
+        interaction.fields.getTextInputValue("special_rules_list")
+      );
+
+      if (!lines.length) {
+        context.specialGameRules = [];
+        context.specialGameRulesEnabled = false;
+      } else {
+        context.specialGameRules = lines;
+        context.specialGameRulesEnabled = true;
+      }
+
+      pendingRuleForms.set(token, context);
+      await refreshRulesSetupEphemeral(interaction, context);
+      return true;
+    }
+
+    if (interaction.customId.startsWith(`${RULES_PREFIX}_killcap_modal:`)) {
+      const token = interaction.customId.split(":")[1];
+      const context = pendingRuleForms.get(token);
+
+      if (!context) {
+        await interaction.reply({
+          content: "This setup expired. Run `/rules form` again.",
+          ephemeral: true
+        });
+        return true;
+      }
+
+      const killCap = parseKillCapInput(
+        interaction.fields.getTextInputValue("kill_cap")
+      );
+
+      if (killCap == null) {
+        return replyModalError(
+          interaction,
+          "Enter a whole number from **1** to **999** for the kill cap."
+        );
+      }
+
+      context.killCap = killCap;
+      pendingRuleForms.set(token, context);
+      await refreshRulesSetupEphemeral(interaction, context);
+      return true;
+    }
+
+    if (interaction.customId.startsWith(`${RULES_PREFIX}_form_submit:`)) {
+      const token = interaction.customId.split(":")[1];
+      const context = pendingRuleForms.get(token);
+
+      if (!context) {
+        await interaction.reply({
+          content: "This setup expired. Run `/rules form` again.",
+          ephemeral: true
+        });
+        return true;
+      }
+
+      const parsed = parseBansModalInput(interaction.fields);
+      context.pendingBans = parsed.lines;
+      saveTypedSuggestionsToLibrary(context.guildId, { bans: parsed.lines });
+      pendingRuleForms.set(token, context);
+      await refreshRulesSetupEphemeral(interaction, context);
+      return true;
+    }
+
+    if (interaction.customId.startsWith(`${RULES_PREFIX}_pending_add_ban:`)) {
+      const token = interaction.customId.split(":")[1];
+      const context = pendingRuleForms.get(token);
+
+      if (!context) {
+        await interaction.reply({
+          content: "This setup expired. Run `/rules form` again.",
+          ephemeral: true
+        });
+        return true;
+      }
+
       const item = interaction.fields.getTextInputValue("new_ban")?.trim();
 
       if (!item) {
@@ -1111,121 +1368,55 @@ module.exports = {
         return true;
       }
 
-      await interaction.deferReply({ ephemeral: true });
-
-      try {
-        const eventRecord = getEvent(interaction.guildId, key);
-
-        if (!eventRecord) {
-          return interaction.editReply({
-            content: `No rules entry found for key \`${key}\`.`
-          });
-        }
-
-        const nextBans = normalizeBans([
-          ...extraBansOnly(eventRecord.bans),
-          item
-        ]);
-        await applyBansUpdate(interaction, interaction.guildId, key, nextBans);
-
-        return interaction.editReply({
-          content: formatBansManageReply(key, nextBans),
-          components: [buildAddBanLineRow(key)]
-        });
-      } catch (err) {
-        console.error("[RULES ADD BAN]", err);
-
-        if (err.message === "missing_message") {
-          return interaction.editReply({
-            content: "Could not find the bans message to edit."
-          });
-        }
-
-        return interaction.editReply({
-          content: "Failed to add banned item."
-        });
-      }
+      context.pendingBans = appendUniqueStrings(
+        getPendingExtraBans(context),
+        [item]
+      );
+      saveTypedSuggestionsToLibrary(context.guildId, { bans: [item] });
+      pendingRuleForms.set(token, context);
+      await refreshRulesSetupEphemeral(interaction, context);
+      return true;
     }
 
-    if (interaction.customId.startsWith("rules_bans_form:")) {
-      const key = sanitizeKey(interaction.customId.split(":")[1]);
-      const parsed = parseBanLineFields(interaction.fields);
-
-      await interaction.deferReply({ ephemeral: true });
-
-      try {
-        const eventRecord = getEvent(interaction.guildId, key);
-
-        if (!eventRecord) {
-          return interaction.editReply({
-            content: `No rules entry found for key \`${key}\`.`
-          });
-        }
-
-        const nextBans = mergeBanFormLines(parsed.lines, eventRecord.bans);
-        await applyBansUpdate(
-          interaction,
-          interaction.guildId,
-          key,
-          nextBans
-        );
-
-        return interaction.editReply({
-          content: formatBansManageReply(key, nextBans),
-          components: [buildAddBanLineRow(key)]
-        });
-      } catch (err) {
-        console.error("[RULES BANS FORM]", err);
-
-        if (err.message === "missing_message") {
-          return interaction.editReply({
-            content: "Could not find the bans message to edit."
-          });
-        }
-
-        return interaction.editReply({
-          content: "Failed to update banned items."
-        });
-      }
-    }
-
-    if (!interaction.customId.startsWith("rules_form_submit:")) {
+    if (!interaction.customId.startsWith(`${RULES_PREFIX}_bans_form:`)) {
       return false;
     }
 
-    const token = interaction.customId.split(":")[1];
-    const context = pendingRuleForms.get(token);
+    const key = sanitizeKey(interaction.customId.split(":")[1]);
+    const parsed = parseBansModalInput(interaction.fields);
 
-    if (!context) {
-      await interaction.reply({
-        content: "This setup expired. Run `/rules form` again.",
-        ephemeral: true
+    await interaction.deferReply({ ephemeral: true });
+
+    let eventRecord;
+
+    try {
+      eventRecord = getEvent(interaction.guildId, key);
+
+      if (!eventRecord) {
+        return replyModalError(
+          interaction,
+          `No rules entry found for key \`${key}\`.`
+        );
+      }
+
+      const nextBans = buildBansFromExtraLines(parsed.lines);
+      await applyBansUpdate(interaction, interaction.guildId, key, nextBans);
+      saveTypedSuggestionsToLibrary(interaction.guildId, {
+        bans: extraBansOnly(nextBans)
       });
-      return true;
+      await acknowledgeModalSilently(interaction);
+    } catch (err) {
+      console.error("[RULES BANS FORM]", err);
+
+      if (err.message === "bans_message_deleted") {
+        return replyModalError(
+          interaction,
+          bansMessageDeletedUserMessage(eventRecord?.eventName)
+        );
+      }
+
+      return replyModalError(interaction, "Failed to update banned items.");
     }
-
-    const parsed = parseBanLineFields(interaction.fields, { requireFirst: false });
-
-    if (parsed.error) {
-      await interaction.reply({
-        content: parsed.error,
-        ephemeral: true
-      });
-      return true;
-    }
-
-    const nextContext = {
-      ...context,
-      pendingBans: parsed.lines
-    };
-
-    pendingRuleForms.set(token, nextContext);
-    await refreshSetupMessage(interaction.client, nextContext);
-
-    await interaction.reply({
-      content: "Banned items saved on the setup panel. Click **Post rules** when ready.",
-      ephemeral: true
-    });
 
     return true;
   }

@@ -1,3 +1,7 @@
 node_modules
 .env
+data/
 google-service-account.json
+
+# Sibling Documents\bots — never copy or link into this repo
+bots/
