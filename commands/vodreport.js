@@ -1,7 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 const { getSheets } = require("../lib/sheets");
 const { getAccessToken } = require("../twitchBatch");
-const { findEventChannels, scanVodEvent } = require("../lib/vodEventScan");
+const { findEventChannels, scanPostedChannelVods } = require("../lib/vodEventScan");
 
 const SPREADSHEET_ID = process.env.MAIN_SHEET_ID;
 const SHEET_NAME = "'VOD Report'";
@@ -38,22 +38,19 @@ module.exports = {
         });
       }
 
-      const { signupChannel, streamChannel } = findEventChannels(
+      const { streamChannel } = findEventChannels(
         interaction.guild,
         category
       );
 
-      console.log("Signup:", signupChannel?.name);
-      console.log("Stream:", streamChannel?.name);
-
-      if (!signupChannel || !streamChannel) {
+      if (!streamChannel) {
         return interaction.reply({
-          content: "Could not locate correct signup or twitch channel.",
+          content: "Could not locate twitch stream/links channel.",
           ephemeral: true
         });
       }
 
-      await interaction.reply("Scanning teams and Twitch streams...");
+      await interaction.reply("Scanning posted Twitch links...");
 
       const token = await getAccessToken();
       if (!token) throw new Error("Failed to get Twitch token");
@@ -66,8 +63,7 @@ module.exports = {
         throw new Error("Invalid date or time. Use YYYY-MM-DD and HH:MM UTC.");
       }
 
-      const results = await scanVodEvent({
-        signupChannel,
+      const results = await scanPostedChannelVods({
         streamChannel,
         token,
         start,
@@ -78,18 +74,11 @@ module.exports = {
       const missing = [];
 
       for (const r of results) {
-        if (!r.streamer) {
-          missing.push(
-            `Team missing stream: ${r.members.map(m => `<@${m}>`).join(" ")}`
-          );
-          continue;
-        }
-
         if (!r.valid) missing.push(r.twitch);
 
         rows.push([
           category.name,
-          `<@${r.streamer}>`,
+          "",
           r.twitch,
           r.lastStream,
           r.vodStart,
@@ -105,10 +94,12 @@ module.exports = {
 
       let summary = `VOD Report Complete\n\n`;
 
-      if (missing.length) {
+      if (!results.length) {
+        summary += "No Twitch channel links posted.";
+      } else if (missing.length) {
         summary += `Issues Found (${missing.length})\n${missing.join("\n")}`;
       } else {
-        summary += "All teams submitted valid VODs.";
+        summary += "All posted channels have valid VODs.";
       }
 
       await interaction.followUp(summary);

@@ -1,10 +1,10 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 const { getAccessToken } = require("../twitchBatch");
-const { findEventChannels, scanVodEvent } = require("../lib/vodEventScan");
 const {
-  postVodPublishReport,
-  scanResultsToPublishEntries
-} = require("../lib/vodPublishReport");
+  findEventChannels,
+  scanPostedChannelVods
+} = require("../lib/vodEventScan");
+const { postVodPublishReport } = require("../lib/vodPublishReport");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -29,20 +29,20 @@ module.exports = {
         });
       }
 
-      const { signupChannel, streamChannel } = findEventChannels(
+      const { streamChannel } = findEventChannels(
         interaction.guild,
         category
       );
 
-      if (!signupChannel || !streamChannel) {
+      if (!streamChannel) {
         return interaction.reply({
-          content: "Could not locate correct signup or twitch channel.",
+          content: "Could not locate twitch stream/links channel.",
           ephemeral: true
         });
       }
 
       await interaction.reply({
-        content: "Scanning teams and posting VOD publish report...",
+        content: "Scanning posted Twitch links...",
         ephemeral: true
       });
 
@@ -59,8 +59,7 @@ module.exports = {
         throw new Error("Invalid date or time. Use YYYY-MM-DD and HH:MM UTC.");
       }
 
-      const results = await scanVodEvent({
-        signupChannel,
+      const entries = await scanPostedChannelVods({
         streamChannel,
         token,
         start,
@@ -72,7 +71,7 @@ module.exports = {
         date,
         startTime,
         endTime,
-        entries: scanResultsToPublishEntries(results)
+        entries
       });
 
       await interaction.followUp({
