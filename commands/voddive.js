@@ -1,24 +1,15 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
-const { getSheets } = require("../lib/sheets");
 const { getAccessToken } = require("../twitchBatch");
 const { findEventChannels, scanVodEvent } = require("../lib/vodEventScan");
-
-const SPREADSHEET_ID = process.env.MAIN_SHEET_ID;
-const SHEET_NAME = "'VOD Report'";
-
-async function appendRows(rows) {
-  await getSheets().spreadsheets.values.append({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A1`,
-    valueInputOption: "RAW",
-    requestBody: { values: rows }
-  });
-}
+const {
+  postVodPublishReport,
+  scanResultsToPublishEntries
+} = require("../lib/vodPublishReport");
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName("vodreport")
-    .setDescription("Check Twitch VOD compliance for event")
+    .setName("voddive")
+    .setDescription("Post VOD publish times for event window to mod log")
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
     .addStringOption(o =>
       o.setName("date").setDescription("YYYY-MM-DD").setRequired(true))
@@ -43,9 +34,6 @@ module.exports = {
         category
       );
 
-      console.log("Signup:", signupChannel?.name);
-      console.log("Stream:", streamChannel?.name);
-
       if (!signupChannel || !streamChannel) {
         return interaction.reply({
           content: "Could not locate correct signup or twitch channel.",
@@ -53,14 +41,19 @@ module.exports = {
         });
       }
 
-      await interaction.reply("Scanning teams and Twitch streams...");
+      await interaction.reply({
+        content: "Scanning teams and posting VOD publish report...",
+        ephemeral: true
+      });
 
       const token = await getAccessToken();
       if (!token) throw new Error("Failed to get Twitch token");
 
       const date = interaction.options.getString("date");
-      const start = new Date(`${date}T${interaction.options.getString("start")}:00Z`);
-      const end = new Date(`${date}T${interaction.options.getString("end")}:00Z`);
+      const startTime = interaction.options.getString("start");
+      const endTime = interaction.options.getString("end");
+      const start = new Date(`${date}T${startTime}:00Z`);
+      const end = new Date(`${date}T${endTime}:00Z`);
 
       if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
         throw new Error("Invalid date or time. Use YYYY-MM-DD and HH:MM UTC.");
@@ -74,46 +67,20 @@ module.exports = {
         end
       });
 
-      const rows = [];
-      const missing = [];
+      await postVodPublishReport(interaction.client, {
+        categoryName: category.name,
+        date,
+        startTime,
+        endTime,
+        entries: scanResultsToPublishEntries(results)
+      });
 
-      for (const r of results) {
-        if (!r.streamer) {
-          missing.push(
-            `Team missing stream: ${r.members.map(m => `<@${m}>`).join(" ")}`
-          );
-          continue;
-        }
-
-        if (!r.valid) missing.push(r.twitch);
-
-        rows.push([
-          category.name,
-          `<@${r.streamer}>`,
-          r.twitch,
-          r.lastStream,
-          r.vodStart,
-          r.vodEnd,
-          r.valid ? "YES" : "NO",
-          r.note,
-          new Date().toISOString(),
-          `<@${interaction.user.id}>`
-        ]);
-      }
-
-      await appendRows(rows);
-
-      let summary = `VOD Report Complete\n\n`;
-
-      if (missing.length) {
-        summary += `Issues Found (${missing.length})\n${missing.join("\n")}`;
-      } else {
-        summary += "All teams submitted valid VODs.";
-      }
-
-      await interaction.followUp(summary);
+      await interaction.followUp({
+        content: "VOD publish report posted to mod log.",
+        ephemeral: true
+      });
     } catch (err) {
-      console.error("VODREPORT ERROR:", err);
+      console.error("VODDIVE ERROR:", err);
 
       const msg = err?.message || "Unknown error";
 
