@@ -75,30 +75,21 @@ module.exports = {
       });
     }
 
-    await guild.roles.fetch(role.id);
+    await interaction.deferReply({ ephemeral: true });
 
-    let members = Array.from(
-      role.members.values()
-    ).filter(m => !m.user.bot);
+    await interaction.editReply("Fetching members with this role...");
 
-    if (members.length === 0) {
+    const allMembers = await guild.members.fetch();
 
-      await guild.members.fetch();
-
-      members = Array.from(
-        role.members.values()
-      ).filter(m => !m.user.bot);
-
-    }
+    const members = allMembers
+      .filter(m => m.roles.cache.has(role.id) && !m.user.bot)
+      .map(m => m);
 
     if (members.length === 0) {
-      return interaction.reply({
-        content: "No members currently have this role.",
-        ephemeral: true
+      return interaction.editReply({
+        content: "No members currently have this role."
       });
     }
-
-    await interaction.deferReply({ ephemeral: true });
 
     await interaction.editReply(
       "Removing role from " + members.length + " members..."
