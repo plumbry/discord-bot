@@ -3,13 +3,10 @@ const {
   PermissionFlagsBits
 } = require('discord.js');
 
-const fetch = require('node-fetch');
-
-const API_URL =
-  'https://healthy-husky-184.convex.site/api/discord/sync-member';
-
-const API_KEY =
-  process.env.DISCORD_SYNC_API_KEY;
+const {
+  hasMemberSyncApiKey,
+  syncAllGuildMembers
+} = require('../lib/memberSyncApi');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -20,6 +17,14 @@ module.exports = {
     ),
 
   async execute(interaction) {
+    if (!hasMemberSyncApiKey()) {
+      return interaction.reply({
+        content:
+          '❌ Member sync API key is missing. Set DISCORD_SYNC_API_KEY.',
+        ephemeral: true
+      });
+    }
+
     await interaction.reply({
       content: 'Starting member sync...',
       ephemeral: true
@@ -27,78 +32,14 @@ module.exports = {
 
     try {
       const guild = interaction.guild;
-
-      await guild.members.fetch();
-
-      let successCount = 0;
-      let errorCount = 0;
-
-      for (const [memberId, member] of guild.members.cache) {
-        if (member.user.bot) continue;
-
-        const roles = member.roles.cache
-          .filter(role => role.name !== '@everyone')
-          .map(role => ({
-            id: role.id,
-            name: role.name
-          }));
-
-        const payload = {
-          id: member.user.id,
-          username: member.user.username,
-          nickname: member.nickname || null,
-          joined_at: member.joinedAt
-            ? member.joinedAt.toISOString()
-            : new Date().toISOString(),
-          roles: roles.length > 0 ? roles : null
-        };
-
-        try {
-          const res = await fetch(API_URL, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${API_KEY}`
-            },
-            body: JSON.stringify(payload)
-          });
-
-          const text = await res.text();
-
-          if (res.ok) {
-            successCount++;
-
-            console.log(
-              `✓ Synced ${member.user.username}`
-            );
-          } else {
-            errorCount++;
-
-            console.error(
-              `✗ Failed ${member.user.username}:`,
-              res.status,
-              text
-            );
-          }
-
-        } catch (err) {
-          errorCount++;
-
-          console.error(
-            `✗ Error syncing ${member.user.username}:`,
-            err
-          );
-        }
-
-        await new Promise(resolve =>
-          setTimeout(resolve, 100)
-        );
-      }
+      const { successCount, errorCount, skippedCount } =
+        await syncAllGuildMembers(guild);
 
       await interaction.editReply({
         content:
           `✅ Sync complete\n\n` +
           `✓ Success: ${successCount}\n` +
+          `⊘ Skipped: ${skippedCount}\n` +
           `✗ Errors: ${errorCount}`
       });
 
