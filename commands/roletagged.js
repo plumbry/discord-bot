@@ -678,9 +678,7 @@ module.exports = {
     const channel = interaction.channel;
     const guild = interaction.guild;
 
-    await interaction.reply(
-      "Scanning signups..."
-    );
+    await interaction.deferReply();
 
     let eventBanRows = [];
 
