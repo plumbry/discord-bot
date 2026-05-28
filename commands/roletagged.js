@@ -654,10 +654,13 @@ module.exports = {
 
   async execute(interaction) {
 
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply();
+    }
+
     if (!process.env.MAIN_SHEET_ID) {
-      return interaction.reply({
-        content: "MAIN_SHEET_ID not configured.",
-        ephemeral: true
+      return interaction.editReply({
+        content: "MAIN_SHEET_ID not configured."
       });
     }
 
@@ -677,8 +680,6 @@ module.exports = {
 
     const channel = interaction.channel;
     const guild = interaction.guild;
-
-    await interaction.deferReply();
 
     let eventBanRows = [];
 

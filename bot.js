@@ -21,6 +21,11 @@ const {
 const fs = require("fs");
 const path = require("path");
 const http = require("http");
+const {
+  hasMemberSyncApiKey,
+  syncMemberToWebsite,
+  syncAllGuildMembers
+} = require("./lib/memberSyncApi");
 
 // ================= ERROR HANDLING =================
 
@@ -187,6 +192,121 @@ const client = new Client({
 });
 
 client.commands = new Map();
+
+const MEMBER_SYNC_UPDATE_DEBOUNCE_MS = Number(
+  process.env.MEMBER_SYNC_UPDATE_DEBOUNCE_MS || 2000
+);
+const MEMBER_SYNC_BACKFILL_INTERVAL_MS = Number(
+  process.env.MEMBER_SYNC_BACKFILL_INTERVAL_MS || 0
+);
+const MEMBER_SYNC_BACKFILL_INITIAL_DELAY_MS = Number(
+  process.env.MEMBER_SYNC_BACKFILL_INITIAL_DELAY_MS || 30_000
+);
+
+const memberSyncDebounceTimers = new Map();
+const memberSyncSignatures = new Map();
+let backfillRunning = false;
+
+function buildMemberSignature(member) {
+  const roles = member.roles.cache
+    .filter(role => role.name !== "@everyone")
+    .map(role => `${role.id}:${role.name}`)
+    .sort();
+
+  return JSON.stringify({
+    id: member.id,
+    username: member.user?.username || "",
+    nickname: member.nickname || null,
+    joined_at: member.joinedAt ? member.joinedAt.toISOString() : null,
+    roles
+  });
+}
+
+async function syncMemberWithGuards(member, source) {
+  if (!member || member.user?.bot) {
+    return;
+  }
+
+  if (!hasMemberSyncApiKey()) {
+    return;
+  }
+
+  const signature = buildMemberSignature(member);
+  const previous = memberSyncSignatures.get(member.id);
+  if (previous === signature) {
+    return;
+  }
+
+  const result = await syncMemberToWebsite(member);
+
+  if (result.ok) {
+    memberSyncSignatures.set(member.id, signature);
+    console.log(`[MEMBER SYNC] synced ${member.user.tag} (${source})`);
+    return;
+  }
+
+  if (!result.skipped) {
+    console.error(
+      `[MEMBER SYNC] failed ${member.user?.tag || member.id} (${source}):`,
+      result.status || "no_status",
+      result.body || result.error
+    );
+  }
+}
+
+function scheduleMemberSync(member, source) {
+  if (!member || member.user?.bot || !hasMemberSyncApiKey()) {
+    return;
+  }
+
+  const key = member.id;
+  const existing = memberSyncDebounceTimers.get(key);
+
+  if (existing) {
+    clearTimeout(existing);
+  }
+
+  const timer = setTimeout(() => {
+    memberSyncDebounceTimers.delete(key);
+    syncMemberWithGuards(member, source).catch(err => {
+      console.error("[MEMBER SYNC] schedule failure:", err?.message || err);
+    });
+  }, MEMBER_SYNC_UPDATE_DEBOUNCE_MS);
+
+  memberSyncDebounceTimers.set(key, timer);
+}
+
+async function runFullMemberBackfill(client, reason) {
+  if (!hasMemberSyncApiKey()) {
+    return;
+  }
+
+  if (backfillRunning) {
+    console.log(`[MEMBER SYNC] skipping backfill (${reason}) - already running`);
+    return;
+  }
+
+  backfillRunning = true;
+
+  try {
+    const guild = await client.guilds.fetch(GUILD_ID).catch(() => null);
+
+    if (!guild) {
+      console.error("[MEMBER SYNC] backfill guild not found:", GUILD_ID);
+      return;
+    }
+
+    const stats = await syncAllGuildMembers(guild);
+    console.log(
+      `[MEMBER SYNC] backfill (${reason}) complete: ` +
+        `${stats.successCount} success, ${stats.skippedCount} skipped, ${stats.errorCount} errors`
+    );
+  } catch (err) {
+    console.error("[MEMBER SYNC] backfill failed:", err?.message || err);
+  } finally {
+    backfillRunning = false;
+  }
+}
 
 console.log("=== CLIENT CREATED ===");
 
@@ -378,49 +498,72 @@ client.once("ready", async () => {
 
   }
 
-  // ================= REGISTER ALL COMMANDS =================
+  // Register slash commands in the background so interactions are not blocked.
+  void (async () => {
+    try {
 
-  try {
+      await rest.put(Routes.applicationCommands(client.user.id), {
+        body: []
+      });
 
-    // Remove stale global commands (e.g. old /submit with no options).
-    await rest.put(Routes.applicationCommands(client.user.id), {
-      body: []
-    });
+      console.log("✅ Cleared global slash commands");
 
-    console.log("✅ Cleared global slash commands");
-
-    await rest.put(
-      Routes.applicationGuildCommands(
-        client.user.id,
-        GUILD_ID
-      ),
-      {
-        body: commandJSON
-      }
-    );
-
-    console.log(
-      `✅ Registered ${commandJSON.length} slash commands`
-    );
-
-    const submitCmd = commandJSON.find((c) => c.name === "submit");
-    if (submitCmd) {
-      const submitOpts = (submitCmd.options || [])
-        .map((o) => o.name)
-        .join(", ") || "(none)";
-      console.log(
-        `📋 /submit options: ${submitOpts} — ${submitCmd.description}`
+      await rest.put(
+        Routes.applicationGuildCommands(
+          client.user.id,
+          GUILD_ID
+        ),
+        {
+          body: commandJSON
+        }
       );
+
+      console.log(
+        `✅ Registered ${commandJSON.length} slash commands`
+      );
+
+      const submitCmd = commandJSON.find((c) => c.name === "submit");
+      if (submitCmd) {
+        const submitOpts = (submitCmd.options || [])
+          .map((o) => o.name)
+          .join(", ") || "(none)";
+        console.log(
+          `📋 /submit options: ${submitOpts} — ${submitCmd.description}`
+        );
+      }
+
+    } catch (err) {
+
+      console.error(
+        "❌ Command registration failed:"
+      );
+
+      console.error(err);
+
     }
+  })();
 
-  } catch (err) {
+  // ================= MEMBER SYNC BACKFILL =================
+  if (hasMemberSyncApiKey()) {
+    setTimeout(() => {
+      runFullMemberBackfill(client, "startup").catch(console.error);
+    }, MEMBER_SYNC_BACKFILL_INITIAL_DELAY_MS);
 
-    console.error(
-      "❌ Command registration failed:"
-    );
+    if (MEMBER_SYNC_BACKFILL_INTERVAL_MS > 0) {
+      setInterval(() => {
+        runFullMemberBackfill(client, "scheduled").catch(console.error);
+      }, MEMBER_SYNC_BACKFILL_INTERVAL_MS);
 
-    console.error(err);
-
+      console.log(
+        `[MEMBER SYNC] scheduled full backfill every ${Math.round(
+          MEMBER_SYNC_BACKFILL_INTERVAL_MS / 1000
+        )}s`
+      );
+    } else {
+      console.log("[MEMBER SYNC] scheduled full backfill disabled");
+    }
+  } else {
+    console.warn("[MEMBER SYNC] DISCORD_SYNC_API_KEY missing - auto sync disabled");
   }
 
   // ================= DM SCHEDULER (staggered start) =================
@@ -534,6 +677,16 @@ client.once("ready", async () => {
 client.on(
   "interactionCreate",
   async interaction => {
+
+    // Acknowledge long-running /roletagged before other handler work.
+    if (
+      interaction.isChatInputCommand() &&
+      interaction.commandName === "roletagged" &&
+      !interaction.deferred &&
+      !interaction.replied
+    ) {
+      await interaction.deferReply();
+    }
 
     // ================= BUTTONS =================
 
@@ -1050,6 +1203,8 @@ client.on("guildMemberAdd", async member => {
 
     }
 
+    scheduleMemberSync(member, "guildMemberAdd");
+
   } catch (err) {
 
     console.error(
@@ -1060,6 +1215,31 @@ client.on("guildMemberAdd", async member => {
 
   }
 
+});
+
+client.on("guildMemberUpdate", async (oldMember, newMember) => {
+  try {
+    if (!newMember || newMember.user?.bot) {
+      return;
+    }
+
+    const nicknameChanged =
+      (oldMember?.nickname || null) !== (newMember?.nickname || null);
+    const oldRoleIds = new Set(oldMember?.roles?.cache?.keys?.() || []);
+    const newRoleIds = new Set(newMember?.roles?.cache?.keys?.() || []);
+    const roleCountChanged = oldRoleIds.size !== newRoleIds.size;
+    const rolesChanged =
+      roleCountChanged ||
+      [...newRoleIds].some(roleId => !oldRoleIds.has(roleId));
+
+    if (!nicknameChanged && !rolesChanged) {
+      return;
+    }
+
+    scheduleMemberSync(newMember, "guildMemberUpdate");
+  } catch (err) {
+    console.error("[MEMBER SYNC] guildMemberUpdate error:", err?.message || err);
+  }
 });
 
 // ================= HTTP (health + event-ban webhook) =================
@@ -1079,6 +1259,12 @@ const webhookHandler = createWebhookRequestHandler(
 
 http
   .createServer((req, res) => {
+    if (req.method === "GET" && (req.url === "/" || req.url === "/health")) {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end(client.isReady() ? "ok" : "starting");
+      return;
+    }
+
     webhookHandler(req, res).catch(err => {
       console.error("[HTTP]", err);
 
