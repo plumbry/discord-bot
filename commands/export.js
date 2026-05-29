@@ -5,9 +5,26 @@ const {
 } = require("discord.js");
 
 const FETCH_LIMIT = 100;
-const FETCH_DELAY_MS = 750;
-const HARD_CAP = 50000;
-const MAX_FILE_BYTES = 8 * 1024 * 1024;
+const FETCH_DELAY_MS = 350;
+const HARD_CAP = 200000;
+const FILES_PER_MESSAGE = 10;
+
+// Discord per-file upload limits by server boost tier. We aim slightly under
+// the real ceiling to leave room for multipart/encoding overhead.
+const MB = 1024 * 1024;
+const UPLOAD_LIMIT_BY_TIER = {
+  0: 10 * MB,
+  1: 10 * MB,
+  2: 50 * MB,
+  3: 100 * MB
+};
+const SAFETY_MARGIN = 0.95;
+
+function maxFileBytesFor(guild) {
+  const tier = guild?.premiumTier ?? 0;
+  const limit = UPLOAD_LIMIT_BY_TIER[tier] ?? UPLOAD_LIMIT_BY_TIER[0];
+  return Math.floor(limit * SAFETY_MARGIN);
+}
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
@@ -39,7 +56,9 @@ function toCsvCell(value) {
   return `"${str.replace(/"/g, '""')}"`;
 }
 
-function buildOutput(messages, format, channel) {
+function buildOutput(messages, format, channel, part) {
+  const partLabel = part ? ` (part ${part.index}/${part.total})` : "";
+
   if (format === "csv") {
     const header = [
       "id",
@@ -74,18 +93,52 @@ function buildOutput(messages, format, channel) {
       return `[${stamp}] ${author}: ${m.content}${atts}`;
     });
 
-    const head = `# Export of #${channel.name} (${channel.id})\n# ${messages.length} message(s) — generated ${new Date().toISOString()}\n`;
+    const head = `# Export of #${channel.name} (${channel.id})${partLabel}\n# ${messages.length} message(s) — generated ${new Date().toISOString()}\n`;
     return { ext: "txt", body: `${head}\n${lines.join("\n")}` };
   }
 
   const payload = {
     channel: { id: channel.id, name: channel.name },
     exportedAt: new Date().toISOString(),
+    part: part ? { index: part.index, total: part.total } : undefined,
     count: messages.length,
     messages
   };
 
   return { ext: "json", body: JSON.stringify(payload, null, 2) };
+}
+
+// Split messages into contiguous groups, each of which renders to a file
+// under maxBytes. Uses binary search per chunk to stay efficient on big exports.
+function chunkMessages(messages, format, channel, maxBytes) {
+  const groups = [];
+  let start = 0;
+
+  while (start < messages.length) {
+    const remaining = messages.length - start;
+    let lo = 1;
+    let hi = remaining;
+    let best = 1;
+
+    while (lo <= hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      const slice = messages.slice(start, start + mid);
+      const { body } = buildOutput(slice, format, channel);
+      if (Buffer.byteLength(body, "utf8") <= maxBytes) {
+        best = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+
+    // best is at least 1 even if a single message exceeds maxBytes, so we
+    // never loop forever; an oversized lone message is emitted as-is.
+    groups.push(messages.slice(start, start + best));
+    start += best;
+  }
+
+  return groups;
 }
 
 module.exports = {
@@ -184,24 +237,44 @@ module.exports = {
 
     collected.reverse();
 
-    const { ext, body } = buildOutput(collected, format, channel);
-    const buffer = Buffer.from(body, "utf8");
+    const safeName = (channel.name || "channel").replace(/[^a-z0-9_-]/gi, "_");
+    const stamp = Date.now();
 
-    if (buffer.byteLength > MAX_FILE_BYTES) {
+    const maxFileBytes = maxFileBytesFor(interaction.guild);
+    const groups = chunkMessages(collected, format, channel, maxFileBytes);
+    const multi = groups.length > 1;
+
+    const files = groups.map((group, i) => {
+      const part = multi ? { index: i + 1, total: groups.length } : null;
+      const { ext, body } = buildOutput(group, format, channel, part);
+      const suffix = multi ? `-part${i + 1}of${groups.length}` : "";
+      return new AttachmentBuilder(Buffer.from(body, "utf8"), {
+        name: `export-${safeName}${suffix}-${stamp}.${ext}`
+      });
+    });
+
+    const summary = multi
+      ? `✅ Exported **${collected.length}** message(s) from <#${channel.id}> across **${groups.length}** files.`
+      : `✅ Exported **${collected.length}** message(s) from <#${channel.id}>.`;
+
+    try {
+      await interaction.editReply({
+        content: summary,
+        files: files.slice(0, FILES_PER_MESSAGE)
+      });
+
+      for (let i = FILES_PER_MESSAGE; i < files.length; i += FILES_PER_MESSAGE) {
+        await interaction.followUp({
+          ephemeral: true,
+          files: files.slice(i, i + FILES_PER_MESSAGE)
+        });
+      }
+    } catch (err) {
+      console.error("[EXPORT] upload error:", err?.message || err);
       return interaction.editReply(
-        `⚠️ Export is too large to upload (${(buffer.byteLength / 1024 / 1024).toFixed(1)} MB). ` +
-          `Re-run with a smaller \`limit\`.`
+        "❌ Failed while uploading the export. A single message may exceed the " +
+          "file-size limit, or there were too many files. Try a smaller `limit` or a different `format`."
       );
     }
-
-    const safeName = (channel.name || "channel").replace(/[^a-z0-9_-]/gi, "_");
-    const file = new AttachmentBuilder(buffer, {
-      name: `export-${safeName}-${Date.now()}.${ext}`
-    });
-
-    await interaction.editReply({
-      content: `✅ Exported **${collected.length}** message(s) from <#${channel.id}>.`,
-      files: [file]
-    });
   }
 };
