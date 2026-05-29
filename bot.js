@@ -5,6 +5,18 @@ console.log("=== BOT STARTING ===");
 const GUILD_ID =
   process.env.GUILD_ID || "1371615693392576580";
 
+// Import commands register to a separate guild instead of GUILD_ID.
+const IMPORT_GUILD_ID =
+  process.env.IMPORT_GUILD_ID || "1447993665623687302";
+
+const IMPORT_COMMAND_NAMES = new Set([
+  "rolesimport",
+  "emojiimport",
+  "memberrolesimport",
+  "serversettingsimport",
+  "templateimport"
+]);
+
 // ================= CORE =================
 
 const {
@@ -177,6 +189,28 @@ try {
 const {
   activeCalls
 } = require("./commands/gamecall");
+
+// ================= GUARDIAN TIER WIPE =================
+
+let handleGuardianRemoval = null;
+
+try {
+
+  ({
+    handleGuardianRemoval
+  } = require("./lib/guardianWatch"));
+
+  console.log("✅ guardian tier wipe loaded");
+
+} catch (err) {
+
+  console.error(
+    "⚠️ guardianWatch not loaded:"
+  );
+
+  console.error(err);
+
+}
 
 // ================= CLIENT =================
 
@@ -505,18 +539,39 @@ client.once("ready", async () => {
 
       console.log("✅ Cleared global slash commands");
 
+      const importCommandJSON = commandJSON.filter(c =>
+        IMPORT_COMMAND_NAMES.has(c.name)
+      );
+      const mainCommandJSON = commandJSON.filter(
+        c => !IMPORT_COMMAND_NAMES.has(c.name)
+      );
+
       await rest.put(
         Routes.applicationGuildCommands(
           client.user.id,
           GUILD_ID
         ),
         {
-          body: commandJSON
+          body: mainCommandJSON
         }
       );
 
       console.log(
-        `✅ Registered ${commandJSON.length} slash commands`
+        `✅ Registered ${mainCommandJSON.length} slash commands to ${GUILD_ID}`
+      );
+
+      await rest.put(
+        Routes.applicationGuildCommands(
+          client.user.id,
+          IMPORT_GUILD_ID
+        ),
+        {
+          body: importCommandJSON
+        }
+      );
+
+      console.log(
+        `✅ Registered ${importCommandJSON.length} import command(s) to ${IMPORT_GUILD_ID}`
       );
 
       const submitCmd = commandJSON.find((c) => c.name === "submit");
@@ -1235,6 +1290,20 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
   }
 });
 
+// ================= GUARDIAN TIER WIPE (kick/ban -> delete tier roles) =================
+
+client.on("guildMemberRemove", async member => {
+  if (!handleGuardianRemoval) {
+    return;
+  }
+
+  try {
+    await handleGuardianRemoval(client, member);
+  } catch (err) {
+    console.error("[GUARDIAN WIPE] guildMemberRemove error:", err?.message || err);
+  }
+});
+
 // ================= HTTP (health + event-ban webhook) =================
 
 const PORT =
@@ -1245,10 +1314,19 @@ const {
   WEBHOOK_PATH
 } = require("./lib/eventBanWebhook");
 
+const {
+  createTierClearHandler,
+  TIER_CLEAR_PATH
+} = require("./lib/tierClearApi");
+
 const webhookHandler = createWebhookRequestHandler(
   client,
   syncRolesFromSheet || (() => Promise.resolve())
 );
+
+const tierClearHandler = createTierClearHandler(client, {
+  guildId: GUILD_ID
+});
 
 http
   .createServer((req, res) => {
@@ -1258,7 +1336,13 @@ http
       return;
     }
 
-    webhookHandler(req, res).catch(err => {
+    (async () => {
+      if (await tierClearHandler(req, res)) {
+        return;
+      }
+
+      await webhookHandler(req, res);
+    })().catch(err => {
       console.error("[HTTP]", err);
 
       if (!res.headersSent) {
@@ -1277,6 +1361,16 @@ http
     } else {
       console.warn(
         "⚠️ EVENT_BAN_WEBHOOK_SECRET not set — sheet webhooks disabled (polling only)"
+      );
+    }
+
+    if (process.env.TIER_CLEAR_API_SECRET || process.env.EVENT_BAN_WEBHOOK_SECRET) {
+      console.log(
+        `🔗 Tier clear endpoint: POST ${TIER_CLEAR_PATH} (Authorization: Bearer <secret>)`
+      );
+    } else {
+      console.warn(
+        "⚠️ TIER_CLEAR_API_SECRET not set — tier clear endpoint disabled"
       );
     }
   });
