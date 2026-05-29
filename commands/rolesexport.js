@@ -5,67 +5,33 @@ const {
   AttachmentBuilder
 } = require("discord.js");
 
-// All permission flag names, used as one CSV column each (TRUE/FALSE per role).
 const PERMISSION_NAMES = Object.keys(PermissionsBitField.Flags).sort();
 
-const METADATA_HEADERS = [
-  "Role Name",
-  "Role ID",
-  "Position",
-  "Color",
-  "Hoisted",
-  "Mentionable",
-  "Managed",
-  "Member Count"
-];
+function serializeRole(role) {
+  // List only the permission flags this role actually grants; anything not
+  // present is implicitly false. The raw bitfield is kept for exact re-import.
+  const grantedPermissions = PERMISSION_NAMES.filter(name =>
+    role.permissions.has(PermissionsBitField.Flags[name])
+  );
 
-function csvEscape(value) {
-  const str = value === null || value === undefined ? "" : String(value);
-
-  if (/[",\n\r]/.test(str)) {
-    return `"${str.replace(/"/g, '""')}"`;
-  }
-
-  return str;
-}
-
-function buildCsv(roles) {
-  const header = [...METADATA_HEADERS, ...PERMISSION_NAMES]
-    .map(csvEscape)
-    .join(",");
-
-  const lines = [header];
-
-  for (const role of roles) {
-    const row = [
-      role.name,
-      role.id,
-      role.position,
-      role.hexColor,
-      role.hoist ? "TRUE" : "FALSE",
-      role.mentionable ? "TRUE" : "FALSE",
-      role.managed ? "TRUE" : "FALSE",
-      role.members.size
-    ];
-
-    for (const permName of PERMISSION_NAMES) {
-      row.push(
-        role.permissions.has(PermissionsBitField.Flags[permName])
-          ? "TRUE"
-          : "FALSE"
-      );
-    }
-
-    lines.push(row.map(csvEscape).join(","));
-  }
-
-  return lines.join("\r\n");
+  return {
+    name: role.name,
+    id: role.id,
+    position: role.position,
+    color: role.hexColor,
+    hoist: role.hoist,
+    mentionable: role.mentionable,
+    managed: role.managed,
+    memberCount: role.members.size,
+    permissionsBitfield: role.permissions.bitfield.toString(),
+    permissions: grantedPermissions
+  };
 }
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("rolesexport")
-    .setDescription("Export a CSV of all roles and their permissions")
+    .setDescription("Export a JSON file of all roles and their permissions")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
   async execute(interaction) {
@@ -99,11 +65,19 @@ module.exports = {
       );
     }
 
-    const roles = [...roleCollection.values()].sort(
-      (a, b) => b.position - a.position
-    );
+    const roles = [...roleCollection.values()]
+      .sort((a, b) => b.position - a.position)
+      .map(serializeRole);
 
-    const csv = buildCsv(roles);
+    const payload = {
+      guild: { id: guild.id, name: guild.name },
+      exportedAt: new Date().toISOString(),
+      version: 1,
+      count: roles.length,
+      roles
+    };
+
+    const body = JSON.stringify(payload, null, 2);
 
     const safeGuildName = guild.name
       .replace(/[^a-z0-9-_]+/gi, "_")
@@ -111,16 +85,14 @@ module.exports = {
 
     const fileName = `roles-permissions-${safeGuildName}-${
       new Date().toISOString().slice(0, 10)
-    }.csv`;
+    }.json`;
 
-    const attachment = new AttachmentBuilder(Buffer.from(csv, "utf8"), {
+    const attachment = new AttachmentBuilder(Buffer.from(body, "utf8"), {
       name: fileName
     });
 
     await interaction.editReply({
-      content:
-        `Exported **${roles.length}** role(s) with ` +
-        `**${PERMISSION_NAMES.length}** permission columns.`,
+      content: `Exported **${roles.length}** role(s) to JSON.`,
       files: [attachment]
     });
   }
