@@ -199,9 +199,6 @@ const MEMBER_SYNC_UPDATE_DEBOUNCE_MS = Number(
 const MEMBER_SYNC_BACKFILL_INTERVAL_MS = Number(
   process.env.MEMBER_SYNC_BACKFILL_INTERVAL_MS || 0
 );
-const MEMBER_SYNC_BACKFILL_INITIAL_DELAY_MS = Number(
-  process.env.MEMBER_SYNC_BACKFILL_INITIAL_DELAY_MS || 30_000
-);
 
 const memberSyncDebounceTimers = new Map();
 const memberSyncSignatures = new Map();
@@ -545,10 +542,6 @@ client.once("ready", async () => {
 
   // ================= MEMBER SYNC BACKFILL =================
   if (hasMemberSyncApiKey()) {
-    setTimeout(() => {
-      runFullMemberBackfill(client, "startup").catch(console.error);
-    }, MEMBER_SYNC_BACKFILL_INITIAL_DELAY_MS);
-
     if (MEMBER_SYNC_BACKFILL_INTERVAL_MS > 0) {
       setInterval(() => {
         runFullMemberBackfill(client, "scheduled").catch(console.error);
