@@ -377,7 +377,7 @@ function buildScheduleLogMessage({
 
     confirmSignupLines,
 
-    `**Ping @everyone:** ${pingEveryone ? "Yes" : "No"}`
+    `**Ping everyone:** ${pingEveryone ? "Yes" : "No"}`
 
   ];
 
@@ -431,7 +431,10 @@ async function postScheduleLog(client, logContent) {
 
 
 
-    await logChannel.send({ content: logContent });
+    await logChannel.send({
+      content: logContent,
+      allowedMentions: { parse: [] }
+    });
 
   } catch (err) {
 
