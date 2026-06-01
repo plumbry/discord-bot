@@ -3,7 +3,8 @@
  *
  * 1. Extensions → Apps Script → paste this file.
  * 2. Project Settings → Script properties:
- *      WEBHOOK_URL   = https://welcome-ping.fly.dev/webhooks/event-bans
+ *      WEBHOOK_URL   = https://welcome-ping.fly.dev/webhooks/role-sync
+ *                      (legacy: /webhooks/event-bans — empty body triggers poll)
  *      WEBHOOK_SECRET = (same value as bot env EVENT_BAN_WEBHOOK_SECRET)
  * 3. Triggers → Add trigger → onChange → onSpreadsheetChange (From spreadsheet).
  *

@@ -5,18 +5,6 @@ console.log("=== BOT STARTING ===");
 const GUILD_ID =
   process.env.GUILD_ID || "1371615693392576580";
 
-// Import commands register to a separate guild instead of GUILD_ID.
-const IMPORT_GUILD_ID =
-  process.env.IMPORT_GUILD_ID || "1447993665623687302";
-
-const IMPORT_COMMAND_NAMES = new Set([
-  "rolesimport",
-  "emojiimport",
-  "memberrolesimport",
-  "serversettingsimport",
-  "templateimport"
-]);
-
 // ================= CORE =================
 
 const {
@@ -122,12 +110,14 @@ try {
 
 let startBanExpiryChecker = null;
 let syncRolesFromSheet = null;
+let processRoleSyncPayload = null;
 
 try {
 
   ({
     startBanExpiryChecker,
-    syncRolesFromSheet
+    syncRolesFromSheet,
+    processRoleSyncPayload
   } = require("./banExpiryChecker"));
 
   console.log("✅ event ban role sync loaded");
@@ -419,14 +409,8 @@ client.once("ready", async () => {
       startBanExpiryChecker(client);
 
       console.log(
-        "✅ Event ban / probation API role sync started (every 30s)"
+        "✅ Event ban / probation role sync started (push-driven)"
       );
-
-      if (syncRolesFromSheet) {
-        syncRolesFromSheet(client).catch(err => {
-          console.error("[EVENT BAN SYNC] initial:", err);
-        });
-      }
 
     } catch (err) {
 
@@ -539,39 +523,18 @@ client.once("ready", async () => {
 
       console.log("✅ Cleared global slash commands");
 
-      const importCommandJSON = commandJSON.filter(c =>
-        IMPORT_COMMAND_NAMES.has(c.name)
-      );
-      const mainCommandJSON = commandJSON.filter(
-        c => !IMPORT_COMMAND_NAMES.has(c.name)
-      );
-
       await rest.put(
         Routes.applicationGuildCommands(
           client.user.id,
           GUILD_ID
         ),
         {
-          body: mainCommandJSON
+          body: commandJSON
         }
       );
 
       console.log(
-        `✅ Registered ${mainCommandJSON.length} slash commands to ${GUILD_ID}`
-      );
-
-      await rest.put(
-        Routes.applicationGuildCommands(
-          client.user.id,
-          IMPORT_GUILD_ID
-        ),
-        {
-          body: importCommandJSON
-        }
-      );
-
-      console.log(
-        `✅ Registered ${importCommandJSON.length} import command(s) to ${IMPORT_GUILD_ID}`
+        `Registered ${commandJSON.length} slash commands to ${GUILD_ID}`
       );
 
       const submitCmd = commandJSON.find((c) => c.name === "submit");
@@ -1311,7 +1274,8 @@ const PORT =
 
 const {
   createWebhookRequestHandler,
-  WEBHOOK_PATH
+  WEBHOOK_PATH,
+  ROLE_SYNC_WEBHOOK_PATH
 } = require("./lib/eventBanWebhook");
 
 const {
@@ -1321,7 +1285,9 @@ const {
 
 const webhookHandler = createWebhookRequestHandler(
   client,
-  syncRolesFromSheet || (() => Promise.resolve())
+  processRoleSyncPayload ||
+    syncRolesFromSheet ||
+    (() => Promise.resolve())
 );
 
 const tierClearHandler = createTierClearHandler(client, {
@@ -1356,11 +1322,12 @@ http
 
     if (process.env.EVENT_BAN_WEBHOOK_SECRET) {
       console.log(
-        `🔗 Event ban webhook: POST ${WEBHOOK_PATH} (Authorization: Bearer <secret>)`
+        `🔗 Role sync webhooks: POST ${WEBHOOK_PATH} or ${ROLE_SYNC_WEBHOOK_PATH} ` +
+          "(Authorization: Bearer <secret>)"
       );
     } else {
       console.warn(
-        "⚠️ EVENT_BAN_WEBHOOK_SECRET not set — sheet webhooks disabled (polling only)"
+        "⚠️ EVENT_BAN_WEBHOOK_SECRET not set — push webhooks disabled (startup poll + /eventban sync only)"
       );
     }
 

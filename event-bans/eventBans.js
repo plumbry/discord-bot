@@ -20,7 +20,7 @@ const getRows = getEventBanRows;
 const eventBanCommand = new SlashCommandBuilder()
   .setName("eventban")
   .setDescription(
-    "Event ban and probation roles (synced from Hercules API)"
+    "Event ban and probation roles (synced from coedzbd.com API)"
   )
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
   .addSubcommand(sub =>
@@ -60,8 +60,8 @@ async function handleEventBan(interaction) {
 
       return interaction.editReply({
         content:
-          "✅ Polled **pending-role-syncs** and **pending-role-removals**, " +
-          "then acknowledged processed entries. Check bot logs for details."
+          "✅ Processed pending role syncs (poll or push). " +
+          "Check bot logs for details."
       });
     }
 
@@ -127,7 +127,7 @@ async function handleEventBan(interaction) {
 
       text += `\n\n**Offense logs** (no ban role): ${offenseLogs.length}`;
       text +=
-        "\n\n_Roles are applied via API pending-role-syncs (every 30s)._";
+        "\n\n_Roles are applied via push from coedzbd.com API (startup drain + manual sync)._";
 
       return interaction.editReply({
         content: text.slice(0, 1900)

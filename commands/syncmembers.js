@@ -11,7 +11,7 @@ const {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('syncmembers')
-    .setDescription('Sync all Discord members to Hercules')
+    .setDescription('Sync all Discord members to coedzbd.com')
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ManageRoles
     ),

@@ -29,7 +29,7 @@ const {
   cacheScheduledEvent
 } = require("../lib/guildScheduledEvents");
 
-
+const { TIER_RESTRICTIONS_URL } = require("../lib/tierRestrictions");
 
 const LFG_CHANNEL_ID = "1371992858084773963";
 
@@ -267,7 +267,7 @@ function buildTeamReminderMessage({
 
     "",
 
-    "-# Want to check Tier Restrictions? [Click Here](https://coedzbd.onhercules.app/tier-restrictions)"
+    `-# Want to check Tier Restrictions? [Click Here](${TIER_RESTRICTIONS_URL})`
 
   ];
 

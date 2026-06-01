@@ -20,16 +20,6 @@ const { REST, Routes } = require('discord.js');
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const GUILD_ID = process.env.GUILD_ID || '1371615693392576580';
 
-// Import commands register to a separate guild instead of GUILD_ID.
-const IMPORT_GUILD_ID = process.env.IMPORT_GUILD_ID || '1447993665623687302';
-const IMPORT_COMMAND_NAMES = new Set([
-  'rolesimport',
-  'emojiimport',
-  'memberrolesimport',
-  'serversettingsimport',
-  'templateimport'
-]);
-
 if (!DISCORD_TOKEN) {
   console.error('Missing DISCORD_TOKEN in .env');
   process.exit(1);
@@ -103,26 +93,13 @@ async function main() {
 
   const body = [...loadCommandsFromFolder(), ...loadExtraCommands()];
 
-  const importBody = body.filter((c) => IMPORT_COMMAND_NAMES.has(c.name));
-  const mainBody = body.filter((c) => !IMPORT_COMMAND_NAMES.has(c.name));
-
-  console.log(`\nRegistering ${mainBody.length} guild commands to ${GUILD_ID}:\n`);
-  logCommandSummary(mainBody);
+  console.log(`\nRegistering ${body.length} guild commands to ${GUILD_ID}:\n`);
+  logCommandSummary(body);
 
   await rest.put(Routes.applicationCommands(clientId), { body: [] });
   console.log('Cleared global slash commands (removes stale /submit).');
 
-  await rest.put(Routes.applicationGuildCommands(clientId, GUILD_ID), { body: mainBody });
-
-  console.log(
-    `\nRegistering ${importBody.length} import command(s) to ${IMPORT_GUILD_ID}: ` +
-      `${importBody.map((c) => c.name).join(', ') || '(none)'}`
-  );
-
-  await rest.put(
-    Routes.applicationGuildCommands(clientId, IMPORT_GUILD_ID),
-    { body: importBody }
-  );
+  await rest.put(Routes.applicationGuildCommands(clientId, GUILD_ID), { body });
 
   console.log('\nDone. In Discord, /submit should show:');
   console.log('  - id (Yunite tournament ID)');

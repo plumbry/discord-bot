@@ -1,19 +1,10 @@
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require("discord.js");
 const axios = require("axios");
+const { getApiBaseUrl } = require("../lib/discordApi");
 
-const DEFAULT_SCRIM_EVENTS_API_BASE_URL =
-  "https://healthy-husky-184.convex.site";
 const ACCEPTED_REACTION_ID = "1405510864496361482";
 const ACCEPTED_REACTION_NAME = "ZBDACCEPTED";
 const FILL_REACTION_NAME = "\u270b";
-
-function getApiBaseUrl() {
-  return (
-    process.env.SCRIM_EVENTS_API_BASE_URL ||
-    process.env.CONVEX_API_BASE_URL ||
-    DEFAULT_SCRIM_EVENTS_API_BASE_URL
-  ).replace(/\/$/, "");
-}
 
 function getApiHeaders() {
   const apiKey = process.env.SCRIM_EVENTS_API_KEY || process.env.DISCORD_SYNC_API_KEY;
@@ -565,7 +556,7 @@ module.exports = {
 
       await interaction.editReply({
         content:
-          "I could not import signups for that event code. Check the event code, configured signup channels, bot channel access, and Hercules API logs."
+          "I could not import signups for that event code. Check the event code, configured signup channels, bot channel access, and coedzbd.com API logs."
       });
     }
   }
