@@ -7,6 +7,10 @@ const {
 const { getDiscordApiKey } = require("./lib/discordApi");
 const { reconcileAddAndRemoveLists } = require("./lib/roleSyncDedupe");
 const {
+  parseRoleSyncPayload,
+  payloadHasEntries
+} = require("./lib/roleSyncPayload");
+const {
   evaluateRoleAdd,
   evaluateRoleRemoval
 } = require("./lib/roleSyncEligibility");
@@ -16,13 +20,29 @@ const {
 } = require("./lib/roleSyncHistory");
 const {
   assignRolesForBanType,
-  removeRolesForBanType
+  removeRolesForBanType,
+  isEventBanBanType
 } = require("./lib/eventBanRoles");
+const { getEventBanRows } = require("./lib/eventBanSheet");
+const { userHasActiveEventBan } = require("./lib/eventBanDiscord");
 
 const GUILD_ID =
   process.env.GUILD_ID || "1371615693392576580";
 
-const POLL_MS = Number(process.env.ROLE_SYNC_POLL_MS || 30_000);
+function getFallbackPollMs() {
+  if (process.env.ROLE_SYNC_FALLBACK_POLL_MS !== undefined) {
+    return Number(process.env.ROLE_SYNC_FALLBACK_POLL_MS);
+  }
+
+  if (process.env.ROLE_SYNC_POLL_MS !== undefined) {
+    console.warn(
+      "[ROLE SYNC] ROLE_SYNC_POLL_MS is deprecated; use ROLE_SYNC_FALLBACK_POLL_MS"
+    );
+    return Number(process.env.ROLE_SYNC_POLL_MS);
+  }
+
+  return 0;
+}
 
 let syncRunning = false;
 let syncPending = false;
@@ -66,6 +86,15 @@ async function processPendingEntries(
     const banType = entry.banType;
 
     if (!banId || !discordId || !banType) {
+      console.warn(
+        `[ROLE SYNC] Skipped malformed ${logLabel} entry: ` +
+          JSON.stringify({
+            hasId: Boolean(banId),
+            hasDiscordId: Boolean(discordId),
+            hasBanType: Boolean(banType),
+            keys: entry && typeof entry === "object" ? Object.keys(entry) : []
+          })
+      );
       skipped++;
       continue;
     }
@@ -155,7 +184,113 @@ async function processPendingEntries(
   };
 }
 
-async function processPendingRoleSyncs(client) {
+function buildEventBanPreserveContext(adds, sheetRows) {
+  const eventBanAddUsers = new Set();
+
+  for (const entry of adds || []) {
+    if (isEventBanBanType(entry.banType) && entry.discordId) {
+      eventBanAddUsers.add(entry.discordId);
+    }
+  }
+
+  return { eventBanAddUsers, sheetRows: sheetRows || [] };
+}
+
+function createRemoveRolesFn(preserveContext) {
+  const { eventBanAddUsers, sheetRows } = preserveContext;
+
+  return async function removeRolesWithPreserve(guild, discordId, banType) {
+    const preserveEventBanRole =
+      isEventBanBanType(banType) &&
+      (eventBanAddUsers.has(discordId) ||
+        userHasActiveEventBan(sheetRows, discordId));
+
+    return removeRolesForBanType(guild, discordId, banType, {
+      preserveEventBanRole
+    });
+  };
+}
+
+async function applyRoleSyncLists(client, adds, removals, { source = "unknown" } = {}) {
+  const guild = await client.guilds.fetch(GUILD_ID).catch(() => null);
+
+  if (!guild) {
+    console.error("[ROLE SYNC] Guild not found:", GUILD_ID);
+    return;
+  }
+
+  if (!adds.length && !removals.length) {
+    return;
+  }
+
+  console.log(
+    `[ROLE SYNC] Applying ${adds.length} add(s), ${removals.length} removal(s) ` +
+      `(source: ${source})`
+  );
+
+  const sheetRows =
+    adds.length || removals.some(entry => isEventBanBanType(entry.banType))
+      ? await getEventBanRows().catch(() => [])
+      : [];
+
+  const preserveContext = buildEventBanPreserveContext(adds, sheetRows);
+
+  if (adds.length) {
+    const addition = await processPendingEntries(
+      guild,
+      adds,
+      assignRolesForBanType,
+      entry => acknowledgeRoleSyncs([entry._id]),
+      evaluateRoleAdd,
+      markProcessedAdd,
+      "added"
+    );
+
+    console.log(
+      `[ROLE SYNC] ${adds.length} assignment(s) — ` +
+        `${addition.applied} added, ${addition.noop} already on, ` +
+        `${addition.clearedOld} ack-only (old/already done), ` +
+        `${addition.skipped} skipped, ${addition.failed} failed, ` +
+        `${addition.acknowledged} acknowledged`
+    );
+  }
+
+  if (removals.length) {
+    const removalAck = createRemovalAckQueue();
+    const removeRolesFn = createRemoveRolesFn(preserveContext);
+
+    const removal = await processPendingEntries(
+      guild,
+      removals,
+      removeRolesFn,
+      entry => {
+        removalAck.push(entry);
+      },
+      evaluateRoleRemoval,
+      markProcessedRemoval,
+      "removed"
+    );
+
+    await removalAck.flush();
+
+    console.log(
+      `[ROLE SYNC] ${removals.length} removal(s) — ` +
+        `${removal.applied} removed, ${removal.noop} already off, ` +
+        `${removal.clearedOld} ack-only, ` +
+        `${removal.skipped} skipped, ${removal.failed} failed, ` +
+        `${removal.acknowledged} acknowledged`
+    );
+  }
+}
+
+async function runRoleSyncCycle(client, options = {}) {
+  const {
+    fetch = false,
+    adds: inputAdds = [],
+    removals: inputRemovals = [],
+    source = fetch ? "fallback-poll" : "push"
+  } = options;
+
   if (syncRunning) {
     syncPending = true;
     return;
@@ -170,75 +305,49 @@ async function processPendingRoleSyncs(client) {
 
   syncRunning = true;
 
+  let shouldFetch = fetch;
+  let applySource = source;
+
   try {
     do {
       syncPending = false;
 
-      const guild = await client.guilds.fetch(GUILD_ID).catch(() => null);
+      let adds = [];
+      let removals = [];
 
-      if (!guild) {
-        console.error("[ROLE SYNC] Guild not found:", GUILD_ID);
-        return;
+      if (shouldFetch) {
+        const [rawAdd, rawRemove] = await Promise.all([
+          fetchPendingRoleSyncs(),
+          fetchPendingRoleRemovals()
+        ]);
+
+        ({ adds, removals } = reconcileAddAndRemoveLists(rawAdd, rawRemove));
+
+        if (adds.length || removals.length) {
+          console.warn(
+            `[ROLE SYNC] Poll found ${adds.length} add(s), ` +
+              `${removals.length} removal(s)` +
+              (source === "push"
+                ? " — check push delivery if unexpected"
+                : "")
+          );
+        }
+      } else {
+        ({ adds, removals } = reconcileAddAndRemoveLists(
+          inputAdds,
+          inputRemovals
+        ));
       }
-
-      const [rawAdd, rawRemove] = await Promise.all([
-        fetchPendingRoleSyncs(),
-        fetchPendingRoleRemovals()
-      ]);
-
-      const { adds, removals } = reconcileAddAndRemoveLists(
-        rawAdd,
-        rawRemove
-      );
 
       if (!adds.length && !removals.length) {
         return;
       }
 
-      if (removals.length) {
-        const removalAck = createRemovalAckQueue();
+      await applyRoleSyncLists(client, adds, removals, { source: applySource });
 
-        const removal = await processPendingEntries(
-          guild,
-          removals,
-          removeRolesForBanType,
-          entry => {
-            removalAck.push(entry);
-          },
-          evaluateRoleRemoval,
-          markProcessedRemoval,
-          "removed"
-        );
-
-        await removalAck.flush();
-
-        console.log(
-          `[ROLE SYNC] ${removals.length} removal(s) — ` +
-            `${removal.applied} removed, ${removal.noop} already off, ` +
-            `${removal.clearedOld} ack-only, ` +
-            `${removal.skipped} skipped, ${removal.failed} failed, ` +
-            `${removal.acknowledged} acknowledged`
-        );
-      }
-
-      if (adds.length) {
-        const addition = await processPendingEntries(
-          guild,
-          adds,
-          assignRolesForBanType,
-          entry => acknowledgeRoleSyncs([entry._id]),
-          evaluateRoleAdd,
-          markProcessedAdd,
-          "added"
-        );
-
-        console.log(
-          `[ROLE SYNC] ${adds.length} assignment(s) — ` +
-            `${addition.applied} added, ${addition.noop} already on, ` +
-            `${addition.clearedOld} ack-only (old/already done), ` +
-            `${addition.skipped} skipped, ${addition.failed} failed, ` +
-            `${addition.acknowledged} acknowledged`
-        );
+      if (syncPending && !fetch) {
+        shouldFetch = true;
+        applySource = "poll";
       }
     } while (syncPending);
   } catch (err) {
@@ -248,25 +357,60 @@ async function processPendingRoleSyncs(client) {
   }
 }
 
+async function processPendingRoleSyncs(client) {
+  return runRoleSyncCycle(client, { fetch: true, source: "poll" });
+}
+
+async function processRoleSyncPayload(client, body, meta = {}) {
+  if (!payloadHasEntries(body)) {
+    console.log(
+      `[ROLE SYNC] Webhook without entries — running fallback poll ` +
+        `(source: ${meta.source || "unknown"})`
+    );
+    return processPendingRoleSyncs(client);
+  }
+
+  const { adds, removals } = parseRoleSyncPayload(body);
+
+  return runRoleSyncCycle(client, {
+    fetch: false,
+    adds,
+    removals,
+    source: meta.source || body.source || "push"
+  });
+}
+
 function startBanExpiryChecker(client) {
   const cutoff = process.env.ROLE_SYNC_ONLY_AFTER?.trim();
+  const fallbackMs = getFallbackPollMs();
 
-  setTimeout(() => {
-    processPendingRoleSyncs(client).catch(console.error);
-  }, 15 * 1000);
+  processPendingRoleSyncs(client).catch(err => {
+    console.error("[ROLE SYNC] startup drain failed:", err);
+  });
 
-  setInterval(() => {
-    processPendingRoleSyncs(client).catch(console.error);
-  }, POLL_MS);
+  if (fallbackMs > 0) {
+    setInterval(() => {
+      processPendingRoleSyncs(client).catch(console.error);
+    }, fallbackMs);
 
-  console.log(
-    `[ROLE SYNC] Polling adds + removals every ${POLL_MS / 1000}s` +
-      (cutoff ? ` (adds only on/after ${cutoff})` : "")
-  );
+    console.log(
+      `[ROLE SYNC] Push-driven sync enabled; fallback poll every ${fallbackMs / 1000}s` +
+        (cutoff ? ` (adds only on/after ${cutoff})` : "")
+    );
+  } else {
+    console.log(
+      "[ROLE SYNC] Push-driven sync enabled; fallback poll disabled " +
+        "(startup drain + manual /eventban sync only)" +
+        (cutoff ? ` (adds only on/after ${cutoff})` : "")
+    );
+  }
 }
 
 module.exports = {
   startBanExpiryChecker,
   processPendingRoleSyncs,
+  processRoleSyncPayload,
+  parseRoleSyncPayload,
+  payloadHasEntries,
   syncRolesFromSheet: processPendingRoleSyncs
 };
