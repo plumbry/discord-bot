@@ -414,7 +414,6 @@ async function finishRoletagged(
     skippedBannedTeams,
     includedDespiteBan,
     tierRejectedCount,
-    ignoreTierRestrictions,
     role,
     isReload,
     requiredTeamSize,
@@ -541,9 +540,7 @@ async function finishRoletagged(
       : "";
 
   const tierNote =
-    ignoreTierRestrictions
-      ? "\nTier restrictions: ignored (temporary override)"
-      : tierRejectedCount > 0
+    tierRejectedCount > 0
       ? `\nInvalid tier combos rejected: ${tierRejectedCount}`
       : "";
 
@@ -579,8 +576,6 @@ async function finishRoletagged(
       (MODE_LABELS[requiredTeamSize] || requiredTeamSize) +
       "\nReload: " +
       (isReload ? "Yes" : "No") +
-      "\nTier restrictions: " +
-      (ignoreTierRestrictions ? "Ignored" : "Enforced") +
       "\nTeams: " +
       validTeams.length +
       banNote +
@@ -599,8 +594,7 @@ async function finishRoletagged(
 
       context:
         `role=${role.id} mode=${requiredTeamSize} reload=${isReload} teams=${validTeams.length} ` +
-        `included_banned=${includedDespiteBan} skipped_banned=${skippedBannedTeams.length} ` +
-        `ignore_tier_restrictions=${ignoreTierRestrictions}`
+        `included_banned=${includedDespiteBan} skipped_banned=${skippedBannedTeams.length}`
     });
 
   } catch (err) {
@@ -642,12 +636,6 @@ module.exports = {
         .setRequired(false)
     )
 
-    .addBooleanOption(o =>
-      o.setName("ignore_tier_restrictions")
-        .setDescription("Temporary: bypass tier combo checks")
-        .setRequired(false)
-    )
-
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ManageRoles
     ),
@@ -669,9 +657,6 @@ module.exports = {
 
     const isReload =
       interaction.options.getBoolean("reload") || false;
-
-    const ignoreTierRestrictions =
-      interaction.options.getBoolean("ignore_tier_restrictions") || false;
 
     const requiredTeamSize =
       parseInt(
@@ -797,7 +782,7 @@ module.exports = {
         continue;
       }
 
-      if (requiredTeamSize > 1 && !ignoreTierRestrictions) {
+      if (requiredTeamSize > 1) {
 
         const tierCheck = await validateTeamTierCombo(
           guild,
@@ -935,7 +920,6 @@ module.exports = {
       skippedBannedTeams,
       includedDespiteBan,
       tierRejectedCount,
-      ignoreTierRestrictions,
       role,
       isReload,
       requiredTeamSize,
