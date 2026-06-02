@@ -223,6 +223,12 @@ const MEMBER_SYNC_UPDATE_DEBOUNCE_MS = Number(
 const MEMBER_SYNC_BACKFILL_INTERVAL_MS = Number(
   process.env.MEMBER_SYNC_BACKFILL_INTERVAL_MS || 0
 );
+const MEMBER_SYNC_ON_JOIN = String(
+  process.env.MEMBER_SYNC_ON_JOIN || "true"
+).toLowerCase() !== "false";
+const MEMBER_SYNC_ON_UPDATE = String(
+  process.env.MEMBER_SYNC_ON_UPDATE || "false"
+).toLowerCase() === "true";
 
 const memberSyncDebounceTimers = new Map();
 const memberSyncSignatures = new Map();
@@ -560,6 +566,10 @@ client.once("ready", async () => {
 
   // ================= MEMBER SYNC BACKFILL =================
   if (hasMemberSyncApiKey()) {
+    console.log(
+      `[MEMBER SYNC] config: on_join=${MEMBER_SYNC_ON_JOIN}, on_update=${MEMBER_SYNC_ON_UPDATE}, debounce_ms=${MEMBER_SYNC_UPDATE_DEBOUNCE_MS}, backfill_interval_ms=${MEMBER_SYNC_BACKFILL_INTERVAL_MS}`
+    );
+
     if (MEMBER_SYNC_BACKFILL_INTERVAL_MS > 0) {
       setInterval(() => {
         runFullMemberBackfill(client, "scheduled").catch(console.error);
@@ -676,7 +686,7 @@ client.once("ready", async () => {
       if (cachedGuild) {
         scheduleEventCacheRefresh(cachedGuild);
       }
-    }, 3 * 60 * 1000);
+    }, 4 * 60 * 60 * 1000);
   } catch (err) {
     console.error("[STARTUP] Scheduled events check failed:", err?.message || err);
   }
@@ -1214,7 +1224,9 @@ client.on("guildMemberAdd", async member => {
 
     }
 
-    scheduleMemberSync(member, "guildMemberAdd");
+    if (MEMBER_SYNC_ON_JOIN) {
+      scheduleMemberSync(member, "guildMemberAdd");
+    }
 
   } catch (err) {
 
@@ -1247,7 +1259,9 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
       return;
     }
 
-    scheduleMemberSync(newMember, "guildMemberUpdate");
+    if (MEMBER_SYNC_ON_UPDATE) {
+      scheduleMemberSync(newMember, "guildMemberUpdate");
+    }
   } catch (err) {
     console.error("[MEMBER SYNC] guildMemberUpdate error:", err?.message || err);
   }
