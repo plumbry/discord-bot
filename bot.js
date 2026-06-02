@@ -221,10 +221,10 @@ const MEMBER_SYNC_UPDATE_DEBOUNCE_MS = Number(
   process.env.MEMBER_SYNC_UPDATE_DEBOUNCE_MS || 2000
 );
 const MEMBER_SYNC_BACKFILL_INTERVAL_MS = Number(
-  process.env.MEMBER_SYNC_BACKFILL_INTERVAL_MS || 0
+  process.env.MEMBER_SYNC_BACKFILL_INTERVAL_MS || 4 * 60 * 60 * 1000
 );
 const MEMBER_SYNC_ON_JOIN = String(
-  process.env.MEMBER_SYNC_ON_JOIN || "true"
+  process.env.MEMBER_SYNC_ON_JOIN || "false"
 ).toLowerCase() !== "false";
 const MEMBER_SYNC_ON_UPDATE = String(
   process.env.MEMBER_SYNC_ON_UPDATE || "false"
