@@ -115,9 +115,7 @@ async function resolveMember(guild, userId, cache) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("lfg")
-    .setDescription(
-      "Collate LFG posts for today, tomorrow, and the day after"
-    )
+    .setDescription("Collate LFG posts for today")
     .addBooleanOption(option =>
       option
         .setName("post")
@@ -169,6 +167,10 @@ module.exports = {
       scheduledEvents,
       referenceNow
     );
+    const todaySignup = signupRolesByDay.get(0) ?? null;
+    const todaySignupRoles = todaySignup
+      ? new Map([[0, todaySignup]])
+      : new Map();
     const messages = await fetchAllMessages(channel, {
       maxMessages: FETCH_CAP
     });
@@ -203,19 +205,15 @@ module.exports = {
         continue;
       }
 
-      if (!parsed.fillOffer) {
-        const daySignup = signupRolesByDay.get(parsed.whenSortKey);
+      if (!parsed.needFill && todaySignup) {
+        const member = await resolveMember(
+          guild,
+          message.author.id,
+          memberCache
+        );
 
-        if (daySignup) {
-          const member = await resolveMember(
-            guild,
-            message.author.id,
-            memberCache
-          );
-
-          if (member?.roles.cache.has(daySignup.role.id)) {
-            continue;
-          }
+        if (member?.roles.cache.has(todaySignup.role.id)) {
+          continue;
         }
       }
 
@@ -264,8 +262,9 @@ module.exports = {
     if (entries.length === 0) {
       return interaction.editReply({
         content:
-          "No LFG posts for **today/tomorrow/day-after** in the last 72 hours.\n\n" +
-          "Only top-level recruiting/fill posts are included (need 1, n1, can fill, etc.)."
+          "No LFG posts for **today** in the last 72 hours.\n\n" +
+          "Only top-level recruiting/fill posts are included (need 1, n1, can fill, etc.). " +
+          "Members who already have today's signup role are skipped unless the post says **need fill**."
       });
     }
 
@@ -309,8 +308,8 @@ module.exports = {
 
     return interaction.editReply({
       content:
-        `Found **${entries.length}** LFG post(s) for today/tomorrow/day-after (last 72 hours).\n` +
-        `${formatSignupRoleSummary(signupRolesByDay)}\n` +
+        `Found **${entries.length}** LFG post(s) for **today** (last 72 hours).\n` +
+        `${formatSignupRoleSummary(todaySignupRoles)}\n` +
         (shouldPost
           ? ` Posted ${postCount} message(s) in ${channel}.`
           : " List was not posted (`post: No`).") +
