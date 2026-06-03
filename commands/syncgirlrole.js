@@ -30,15 +30,22 @@ module.exports = {
 
     try {
       await loadGirlCache();
-      const { scanned, added } = await backfillGirlRolesFromDiscord(
-        interaction.guild
-      );
+      const { scanned, added, tagsUpdated, missingSamples } =
+        await backfillGirlRolesFromDiscord(interaction.guild);
 
-      await interaction.editReply(
+      let message =
         `✅ Girl Role sheet sync complete.\n\n` +
-          `Members with Girl role on Discord: **${scanned}**\n` +
-          `New rows appended to sheet: **${added}**`
-      );
+        `Members with Girl role on Discord: **${scanned}**\n` +
+        `New rows appended: **${added}**\n` +
+        `Usernames corrected on existing rows: **${tagsUpdated}**`;
+
+      if (missingSamples?.length) {
+        message +=
+          `\n\nCould not append (first ${missingSamples.length}):\n` +
+          missingSamples.map(name => `• ${name}`).join("\n");
+      }
+
+      await interaction.editReply(message);
     } catch (err) {
       console.error("[SYNCGIRLROLE]", err);
       await interaction.editReply("❌ Sync failed. Check bot logs.");

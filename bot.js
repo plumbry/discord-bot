@@ -84,6 +84,7 @@ let handleGirlRoleGained = null;
 let backfillGirlRolesFromDiscord = null;
 let shouldBackfillGirlRoleOnStartup = null;
 let isGirlRoleSheetConfigured = null;
+let startGirlRoleReconciler = null;
 
 try {
   ({
@@ -92,7 +93,8 @@ try {
     handleGirlRoleGained,
     backfillGirlRolesFromDiscord,
     shouldBackfillOnStartup: shouldBackfillGirlRoleOnStartup,
-    isConfigured: isGirlRoleSheetConfigured
+    isConfigured: isGirlRoleSheetConfigured,
+    startGirlRoleReconciler
   } = require("./lib/girlRoleSheet"));
 
   console.log("✅ girl role sheet module loaded");
@@ -448,6 +450,10 @@ client.once("ready", async () => {
       }
 
       console.log("✅ Girl Role sheet sync ready");
+
+      if (startGirlRoleReconciler) {
+        startGirlRoleReconciler(client, GUILD_ID);
+      }
     } catch (err) {
       console.error("[GIRL ROLE] startup failed:", err?.message || err);
     }
