@@ -407,65 +407,28 @@ async function promptBannedTeamDecision(interaction, flaggedTeams) {
 
 }
 
-async function finishRoletagged(
+async function applyTeamNumberReactions(
   interaction,
-  {
-    validTeams,
-    skippedBannedTeams,
-    includedDespiteBan,
-    tierRejectedCount,
-    role,
-    isReload,
-    requiredTeamSize,
-    channel,
-    guild
-  }
+  teams,
+  { asOverflow = false, startNumber = 1 }
 ) {
 
-  if (validTeams.length === 0) {
+  let teamNumber = startNumber;
 
-    return interaction.editReply(
-      "No teams selected for role assignment."
-    );
-
-  }
-
-  const teamLimit =
-    TEAM_LIMITS[isReload ? "reload" : "normal"][requiredTeamSize];
-
-  const roledTeams =
-    validTeams.slice(0, teamLimit);
-
-  const overflowTeams =
-    validTeams.slice(teamLimit);
-
-  const roledUserIds =
-    new Set();
-
-  for (const team of roledTeams) {
-
-    for (const user of team.users) {
-      roledUserIds.add(user.id);
-    }
-
-  }
-
-  const { added, skipped } = await assignRolesInBatches(
-    guild,
-    roledUserIds,
-    role
-  );
-
-  let teamNumber = 1;
-
-  for (const team of roledTeams) {
+  for (const team of teams) {
 
     try {
 
-      const expectedEmojis = [
-        ACCEPTED_EMOJI_ID,
-        ...getNumberReactionEmojis(teamNumber)
-      ];
+      const expectedEmojis = asOverflow
+        ? [
+          RELOAD_STOP_EMOJI,
+          RELOAD_K_EMOJI,
+          ...getNumberReactionEmojis(teamNumber)
+        ]
+        : [
+          ACCEPTED_EMOJI_ID,
+          ...getNumberReactionEmojis(teamNumber)
+        ];
 
       const existing =
         await reconcileManagedReactions(
@@ -484,7 +447,10 @@ async function finishRoletagged(
 
     } catch (err) {
 
-      console.error("[REACT ERROR]", err);
+      console.error(
+        asOverflow ? "[OVERFLOW REACT ERROR]" : "[REACT ERROR]",
+        err
+      );
 
     }
 
@@ -492,44 +458,102 @@ async function finishRoletagged(
 
   }
 
+}
+
+async function finishRoletagged(
+  interaction,
+  {
+    validTeams,
+    skippedBannedTeams,
+    includedDespiteBan,
+    tierRejectedCount,
+    role,
+    isReload,
+    requiredTeamSize,
+    twoLobbies,
+    channel,
+    guild
+  }
+) {
+
+  if (validTeams.length === 0) {
+
+    return interaction.editReply(
+      "No teams selected for role assignment."
+    );
+
+  }
+
+  const teamLimit =
+    TEAM_LIMITS[isReload ? "reload" : "normal"][requiredTeamSize];
+
+  let roledTeams;
+  let lobby1Teams = [];
+  let lobby2Teams = [];
+  let overflowTeams;
+
+  if (twoLobbies) {
+
+    lobby1Teams = validTeams.slice(0, teamLimit);
+    lobby2Teams = validTeams.slice(teamLimit, teamLimit * 2);
+    overflowTeams = validTeams.slice(teamLimit * 2);
+    roledTeams = [...lobby1Teams, ...lobby2Teams];
+
+  } else {
+
+    roledTeams = validTeams.slice(0, teamLimit);
+    overflowTeams = validTeams.slice(teamLimit);
+
+  }
+
+  const roledUserIds =
+    new Set();
+
+  for (const team of roledTeams) {
+
+    for (const user of team.users) {
+      roledUserIds.add(user.id);
+    }
+
+  }
+
+  const { added, skipped } = await assignRolesInBatches(
+    guild,
+    roledUserIds,
+    role
+  );
+
+  if (twoLobbies) {
+
+    await applyTeamNumberReactions(
+      interaction,
+      lobby1Teams,
+      { startNumber: 1 }
+    );
+
+    await applyTeamNumberReactions(
+      interaction,
+      lobby2Teams,
+      { startNumber: 1 }
+    );
+
+  } else {
+
+    await applyTeamNumberReactions(
+      interaction,
+      roledTeams,
+      { startNumber: 1 }
+    );
+
+  }
+
   if (overflowTeams.length > 0) {
 
-    let overflowNumber = 1;
-
-    for (const team of overflowTeams) {
-
-      try {
-
-        const expectedEmojis = [
-          RELOAD_STOP_EMOJI,
-          RELOAD_K_EMOJI,
-          ...getNumberReactionEmojis(overflowNumber)
-        ];
-
-        const existing =
-          await reconcileManagedReactions(
-            team.message,
-            interaction.client.user.id,
-            expectedEmojis
-          );
-
-        for (const emojiId of expectedEmojis) {
-          await reactIfMissing(
-            team.message,
-            emojiId,
-            existing
-          );
-        }
-
-      } catch (err) {
-
-        console.error("[OVERFLOW REACT ERROR]", err);
-
-      }
-
-      overflowNumber++;
-
-    }
+    await applyTeamNumberReactions(
+      interaction,
+      overflowTeams,
+      { asOverflow: true, startNumber: 1 }
+    );
 
   }
 
@@ -544,10 +568,17 @@ async function finishRoletagged(
       ? `\nInvalid tier combos rejected: ${tierRejectedCount}`
       : "";
 
+  const lobbyNote = twoLobbies
+    ? "\nTwo lobbies: Yes\n" +
+      "Lobby 1 Teams: " + lobby1Teams.length + "\n" +
+      "Lobby 2 Teams: " + lobby2Teams.length
+    : "";
+
   const result =
 
     "Role assignment complete\n" +
-      "Mode: " + (MODE_LABELS[requiredTeamSize] || requiredTeamSize) + "\n" +
+      "Mode: " + (MODE_LABELS[requiredTeamSize] || requiredTeamSize) +
+      (twoLobbies ? " (capacity per lobby)" : "") + "\n" +
       "Reload: " + (isReload ? "Yes" : "No") + "\n" +
     "Role: " + role.name + "\n" +
     "Added: " + added + "\n" +
@@ -555,6 +586,7 @@ async function finishRoletagged(
     "Valid Teams: " + validTeams.length + "\n" +
     "Roled Teams: " + roledTeams.length + "\n" +
     "Overflow Teams: " + overflowTeams.length +
+    lobbyNote +
     banNote +
     tierNote;
 
@@ -576,6 +608,10 @@ async function finishRoletagged(
       (MODE_LABELS[requiredTeamSize] || requiredTeamSize) +
       "\nReload: " +
       (isReload ? "Yes" : "No") +
+      (twoLobbies
+        ? "\nTwo lobbies: Yes (L1=" + lobby1Teams.length +
+          " L2=" + lobby2Teams.length + ")"
+        : "") +
       "\nTeams: " +
       validTeams.length +
       banNote +
@@ -593,7 +629,8 @@ async function finishRoletagged(
       moderator: interaction.user,
 
       context:
-        `role=${role.id} mode=${requiredTeamSize} reload=${isReload} teams=${validTeams.length} ` +
+        `role=${role.id} mode=${requiredTeamSize} reload=${isReload} ` +
+        `two_lobbies=${twoLobbies} teams=${validTeams.length} ` +
         `included_banned=${includedDespiteBan} skipped_banned=${skippedBannedTeams.length}`
     });
 
@@ -636,6 +673,14 @@ module.exports = {
         .setRequired(false)
     )
 
+    .addBooleanOption(o =>
+      o.setName("two_lobbies")
+        .setDescription(
+          "Two lobbies: any team size, fill overflow only after both lobbies; renumber lobby 2 from 1"
+        )
+        .setRequired(false)
+    )
+
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ManageRoles
     ),
@@ -657,6 +702,9 @@ module.exports = {
 
     const isReload =
       interaction.options.getBoolean("reload") || false;
+
+    const twoLobbies =
+      interaction.options.getBoolean("two_lobbies") || false;
 
     const requiredTeamSize =
       parseInt(
@@ -705,8 +753,16 @@ module.exports = {
       if (users.length === 0)
         continue;
 
-      // Wrong team size
-      if (
+      if (twoLobbies) {
+
+        if (
+          users.length < 1 ||
+          users.length > 4
+        ) {
+          continue;
+        }
+
+      } else if (
         users.length !== requiredTeamSize
       ) {
         continue;
@@ -782,12 +838,17 @@ module.exports = {
         continue;
       }
 
-      if (requiredTeamSize > 1) {
+      const teamSizeForTier =
+        twoLobbies
+          ? team.users.length
+          : requiredTeamSize;
+
+      if (teamSizeForTier > 1) {
 
         const tierCheck = await validateTeamTierCombo(
           guild,
           team.users,
-          requiredTeamSize
+          teamSizeForTier
         );
 
         if (!tierCheck.ok) {
@@ -800,7 +861,7 @@ module.exports = {
               formatInvalidTierSignupMessage({
                 users: team.users,
                 tiers: tierCheck.tiers,
-                teamSize: requiredTeamSize,
+                teamSize: teamSizeForTier,
                 reason: tierCheck.reason,
                 ambiguousUser: tierCheck.ambiguousUser
               })
@@ -923,6 +984,7 @@ module.exports = {
       role,
       isReload,
       requiredTeamSize,
+      twoLobbies,
       channel,
       guild
     });
