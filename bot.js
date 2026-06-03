@@ -76,6 +76,30 @@ try {
 
 }
 
+// ================= GIRL ROLE (sheet + rejoin restore) =================
+
+let loadGirlCache = null;
+let reapplyGirlRoleOnJoin = null;
+let handleGirlRoleGained = null;
+let backfillGirlRolesFromDiscord = null;
+let shouldBackfillGirlRoleOnStartup = null;
+let isGirlRoleSheetConfigured = null;
+
+try {
+  ({
+    loadGirlCache,
+    reapplyGirlRoleOnJoin,
+    handleGirlRoleGained,
+    backfillGirlRolesFromDiscord,
+    shouldBackfillOnStartup: shouldBackfillGirlRoleOnStartup,
+    isConfigured: isGirlRoleSheetConfigured
+  } = require("./lib/girlRoleSheet"));
+
+  console.log("✅ girl role sheet module loaded");
+} catch (err) {
+  console.error("⚠️ girlRoleSheet not loaded:", err?.message || err);
+}
+
 // ================= EVENT BANS =================
 
 let eventBanCommand = null;
@@ -405,6 +429,29 @@ client.once("ready", async () => {
   console.log(
     `🚀 Logged in as ${client.user.tag}`
   );
+
+  // ================= GIRL ROLE SHEET =================
+
+  if (loadGirlCache && isGirlRoleSheetConfigured?.()) {
+    try {
+      await loadGirlCache();
+
+      if (
+        shouldBackfillGirlRoleOnStartup?.() &&
+        backfillGirlRolesFromDiscord
+      ) {
+        const guild = await client.guilds.fetch(GUILD_ID).catch(() => null);
+
+        if (guild) {
+          await backfillGirlRolesFromDiscord(guild);
+        }
+      }
+
+      console.log("✅ Girl Role sheet sync ready");
+    } catch (err) {
+      console.error("[GIRL ROLE] startup failed:", err?.message || err);
+    }
+  }
 
   // ================= BAN CHECKER =================
 
@@ -1228,6 +1275,10 @@ client.on("guildMemberAdd", async member => {
       scheduleMemberSync(member, "guildMemberAdd");
     }
 
+    if (reapplyGirlRoleOnJoin) {
+      await reapplyGirlRoleOnJoin(member);
+    }
+
   } catch (err) {
 
     console.error(
@@ -1261,6 +1312,10 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
 
     if (MEMBER_SYNC_ON_UPDATE) {
       scheduleMemberSync(newMember, "guildMemberUpdate");
+    }
+
+    if (handleGirlRoleGained) {
+      await handleGirlRoleGained(oldMember, newMember);
     }
   } catch (err) {
     console.error("[MEMBER SYNC] guildMemberUpdate error:", err?.message || err);
