@@ -445,7 +445,9 @@ client.once("ready", async () => {
         const guild = await client.guilds.fetch(GUILD_ID).catch(() => null);
 
         if (guild) {
-          await backfillGirlRolesFromDiscord(guild);
+          void backfillGirlRolesFromDiscord(guild).catch(err => {
+            console.error("[GIRL ROLE] startup backfill failed:", err?.message || err);
+          });
         }
       }
 
