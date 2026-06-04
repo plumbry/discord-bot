@@ -3,8 +3,7 @@ const {
   PermissionFlagsBits,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle,
-  ComponentType
+  ButtonStyle
 } = require("discord.js");
 
 const { getSheets } = require("../lib/sheets");
@@ -38,6 +37,22 @@ const ROLE_BATCH_DELAY_MS = 200;
 const REACTION_DELAY_MS = 100;
 const REACT_ADD_DELAY_MS = 300;
 const BAN_PROMPT_TIMEOUT_MS = 120_000;
+
+/** @type {Map<string, { slashUserId: string, prompt: import("discord.js").Message, timeoutId: NodeJS.Timeout, resolve: (decision: string) => void }>} */
+const pendingBanDecisions = new Map();
+
+function parseRoletaggedBanButtonCustomId(customId) {
+  const match = customId.match(
+    /^roletagged_ban_(skip|include|cancel)_(.+)$/
+  );
+  if (!match) {
+    return null;
+  }
+  return {
+    choice: match[1],
+    slashInteractionId: match[2]
+  };
+}
 
 // ================= EMOJIS =================
 const ACCEPTED_EMOJI_ID = "1405510864496361482";
@@ -329,43 +344,33 @@ async function promptBannedTeamDecision(interaction, flaggedTeams) {
     ephemeral: true
   });
 
-  try {
+  return new Promise(resolve => {
+    const timeoutId = setTimeout(() => {
+      const pending = pendingBanDecisions.get(interaction.id);
+      if (!pending) {
+        return;
+      }
+      pendingBanDecisions.delete(interaction.id);
+      prompt
+        .edit({
+          content: "Timed out — cancelled. Run /roletagged again.",
+          components: []
+        })
+        .catch(() => {});
+      resolve("cancel");
+    }, BAN_PROMPT_TIMEOUT_MS);
 
-    const choice = await prompt.awaitMessageComponent({
-      componentType: ComponentType.Button,
-      time: BAN_PROMPT_TIMEOUT_MS,
-      filter: i =>
-        i.user.id === interaction.user.id &&
-        i.customId.endsWith(interaction.id)
+    pendingBanDecisions.set(interaction.id, {
+      slashUserId: interaction.user.id,
+      prompt,
+      timeoutId,
+      resolve: decision => {
+        clearTimeout(timeoutId);
+        pendingBanDecisions.delete(interaction.id);
+        resolve(decision);
+      }
     });
-
-    await choice.deferUpdate();
-
-    await prompt.edit({
-      content: choice.component.label + " — continuing…",
-      components: []
-    });
-
-    if (choice.customId.startsWith("roletagged_ban_cancel_")) {
-      return "cancel";
-    }
-
-    if (choice.customId.startsWith("roletagged_ban_include_")) {
-      return "include";
-    }
-
-    return "skip";
-
-  } catch {
-
-    await prompt.edit({
-      content: "Timed out — cancelled. Run /roletagged again.",
-      components: []
-    }).catch(() => {});
-
-    return "cancel";
-
-  }
+  });
 
 }
 
@@ -926,5 +931,52 @@ module.exports = {
       guild
     });
 
+  },
+
+  async handleButton(interaction) {
+    const parsed = parseRoletaggedBanButtonCustomId(
+      interaction.customId
+    );
+    if (!parsed) {
+      return false;
+    }
+
+    const pending = pendingBanDecisions.get(
+      parsed.slashInteractionId
+    );
+
+    if (
+      !pending ||
+      pending.slashUserId !== interaction.user.id
+    ) {
+      await interaction.reply({
+        content:
+          "This prompt expired. Run /roletagged again.",
+        ephemeral: true
+      });
+      return true;
+    }
+
+    await interaction.deferUpdate();
+
+    const label =
+      interaction.component?.label || "Selected";
+
+    await pending.prompt
+      .edit({
+        content: label + " — continuing…",
+        components: []
+      })
+      .catch(() => {});
+
+    const decision =
+      parsed.choice === "cancel"
+        ? "cancel"
+        : parsed.choice === "include"
+          ? "include"
+          : "skip";
+
+    pending.resolve(decision);
+    return true;
   }
 };
