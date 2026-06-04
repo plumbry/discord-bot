@@ -102,6 +102,22 @@ try {
   console.error("⚠️ girlRoleSheet not loaded:", err?.message || err);
 }
 
+// ================= FEMALE PENDING ROLE (join + verify cleanup) =================
+
+let tryApplyFemalePendingRole = null;
+let handleFemalePendingOnMemberUpdate = null;
+
+try {
+  ({
+    tryApplyFemalePendingRole,
+    handleFemalePendingOnMemberUpdate
+  } = require("./lib/femalePendingRole"));
+
+  console.log("✅ female pending role module loaded");
+} catch (err) {
+  console.error("⚠️ femalePendingRole not loaded:", err?.message || err);
+}
+
 // ================= EVENT BANS =================
 
 let eventBanCommand = null;
@@ -258,7 +274,13 @@ const MEMBER_SYNC_ON_UPDATE = String(
 
 const memberSyncDebounceTimers = new Map();
 const memberSyncSignatures = new Map();
+const femalePendingRoleTimers = new Map();
 let backfillRunning = false;
+
+const FEMALE_PENDING_ROLE_JOIN_DELAY_MS = Number(
+  process.env.FEMALE_PENDING_ROLE_JOIN_DELAY_MS ||
+    MEMBER_SYNC_UPDATE_DEBOUNCE_MS + 500
+);
 
 function buildMemberSignature(member) {
   const roles = member.roles.cache
@@ -295,6 +317,11 @@ async function syncMemberWithGuards(member, source) {
   if (result.ok) {
     memberSyncSignatures.set(member.id, signature);
     console.log(`[MEMBER SYNC] synced ${member.user.tag} (${source})`);
+
+    if (source === "guildMemberAdd" && tryApplyFemalePendingRole) {
+      await tryApplyFemalePendingRole(member, { source: "guildMemberAdd" });
+    }
+
     return;
   }
 
@@ -327,6 +354,33 @@ function scheduleMemberSync(member, source) {
   }, MEMBER_SYNC_UPDATE_DEBOUNCE_MS);
 
   memberSyncDebounceTimers.set(key, timer);
+}
+
+function scheduleFemalePendingRoleOnJoin(member) {
+  if (!tryApplyFemalePendingRole || !member || member.user?.bot) {
+    return;
+  }
+
+  const key = member.id;
+  const existing = femalePendingRoleTimers.get(key);
+
+  if (existing) {
+    clearTimeout(existing);
+  }
+
+  const timer = setTimeout(() => {
+    femalePendingRoleTimers.delete(key);
+    tryApplyFemalePendingRole(member, { source: "guildMemberAdd" }).catch(
+      err => {
+        console.error(
+          "[FEMALE PENDING ROLE] join schedule failure:",
+          err?.message || err
+        );
+      }
+    );
+  }, FEMALE_PENDING_ROLE_JOIN_DELAY_MS);
+
+  femalePendingRoleTimers.set(key, timer);
 }
 
 async function runFullMemberBackfill(client, reason) {
@@ -1287,6 +1341,8 @@ client.on("guildMemberAdd", async member => {
       await reapplyGirlRoleOnJoin(member);
     }
 
+    scheduleFemalePendingRoleOnJoin(member);
+
   } catch (err) {
 
     console.error(
@@ -1324,6 +1380,10 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
 
     if (handleGirlRoleGained) {
       await handleGirlRoleGained(oldMember, newMember);
+    }
+
+    if (handleFemalePendingOnMemberUpdate) {
+      await handleFemalePendingOnMemberUpdate(oldMember, newMember);
     }
   } catch (err) {
     console.error("[MEMBER SYNC] guildMemberUpdate error:", err?.message || err);
