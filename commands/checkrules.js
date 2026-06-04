@@ -1,7 +1,6 @@
 const {
   SlashCommandBuilder,
-  PermissionFlagsBits,
-  ChannelType
+  PermissionFlagsBits
 } = require("discord.js");
 
 const { fetchAllMessages } = require("../lib/messages");
@@ -104,14 +103,7 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName("check-rules")
     .setDescription(
-      "List scrim teams that have not posted rules acknowledgement"
-    )
-    .addChannelOption(option =>
-      option
-        .setName("rules_channel")
-        .setDescription("Channel where teams post rules acknowledgement")
-        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
-        .setRequired(true)
+      "List scrim teams that have not posted rules acknowledgement in this channel"
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
 
@@ -139,13 +131,11 @@ module.exports = {
       });
     }
 
-    const rulesChannel = interaction.options.getChannel("rules_channel");
-
     await interaction.deferReply();
 
     const [signupMessages, acknowledgementMessages] = await Promise.all([
       fetchAllMessages(signupChannel),
-      fetchAllMessages(rulesChannel)
+      fetchAllMessages(interaction.channel)
     ]);
 
     const teams = parseSignupTeams(signupMessages);
