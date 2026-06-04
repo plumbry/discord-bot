@@ -1341,6 +1341,7 @@ client.on("guildMemberAdd", async member => {
       await reapplyGirlRoleOnJoin(member);
     }
 
+    // After sheet reapply so rejoining sheet-verified members are not given NFV
     scheduleFemalePendingRoleOnJoin(member);
 
   } catch (err) {

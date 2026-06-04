@@ -55,6 +55,7 @@ module.exports = {
     const {
       evaluatedOnSite,
       alreadyVerified,
+      verifiedOnSheet = 0,
       alreadyPending,
       notInGuild,
       applied,
@@ -66,6 +67,7 @@ module.exports = {
       `${dryRun ? "Dry run" : "Role assignment"} complete.\n\n` +
       `Website-evaluated female (gender 50): **${evaluatedOnSite}**\n` +
       `Already have Girl verified role: **${alreadyVerified}**\n` +
+      `Girl verified on sheet (skipped): **${verifiedOnSheet}**\n` +
       `Already have pending role: **${alreadyPending}**\n` +
       `Not in this server: **${notInGuild}**\n` +
       `${dryRun ? "Would assign" : "Assigned"}: **${applied}**\n` +
