@@ -285,39 +285,54 @@ async function reactIfMissing(message, emoji, existing) {
   );
 }
 
-async function setRulesAcknowledgedReaction(message, botUserId, acknowledged) {
+async function reconcileRulesAckReaction(
+  message,
+  botUserId,
+  acknowledged
+) {
   if (message.partial) {
     await message.fetch();
   }
 
-  const existing = message.reactions.cache.find(
+  const rulesReactions = message.reactions.cache.filter(
     reaction => reaction.emoji.id === RULES_ACK_EMOJI_ID
   );
 
-  if (acknowledged) {
-    if (!existing?.me) {
-      await message.react(RULES_ACK_EMOJI_ID);
-      await delay(REACT_ADD_DELAY_MS);
+  for (const reaction of rulesReactions.values()) {
+    if (reaction.count > 1 || !reaction.me) {
+      const users = await reaction.users.fetch();
+
+      for (const user of users.values()) {
+        if (user.id !== botUserId) {
+          await reaction.users.remove(user.id);
+          await delay(REACTION_DELAY_MS);
+        }
+      }
     }
 
-    return;
+    if (reaction.me) {
+      await reaction.users.remove(botUserId);
+      await delay(REACTION_DELAY_MS);
+    }
   }
 
-  if (existing?.me) {
-    await existing.users.remove(botUserId);
-    await delay(REACTION_DELAY_MS);
+  if (acknowledged) {
+    await message.react(RULES_ACK_EMOJI_ID);
+    await delay(REACT_ADD_DELAY_MS);
   }
 }
 
-async function applyRulesAcknowledgementMarkers(
+async function applyRulesAcknowledgementForTeams(
   interaction,
-  validTeams,
-  acknowledgementMessages
+  teams,
+  acknowledgementMessages,
+  { teamLabel, startNumber = 1 }
 ) {
-  const missingTeamNumbers = [];
+  const missingLabels = [];
 
-  for (let index = 0; index < validTeams.length; index++) {
-    const team = validTeams[index];
+  for (let index = 0; index < teams.length; index++) {
+    const team = teams[index];
+    const teamNumber = startNumber + index;
     const memberIds = team.users.map(user => user.id);
     const acknowledged = isTeamAcknowledged(
       memberIds,
@@ -325,7 +340,7 @@ async function applyRulesAcknowledgementMarkers(
     );
 
     try {
-      await setRulesAcknowledgedReaction(
+      await reconcileRulesAckReaction(
         team.message,
         interaction.client.user.id,
         acknowledged
@@ -335,23 +350,77 @@ async function applyRulesAcknowledgementMarkers(
     }
 
     if (!acknowledged) {
-      missingTeamNumbers.push(index + 1);
+      missingLabels.push(`${teamLabel} ${teamNumber}`);
     }
   }
 
-  return missingTeamNumbers;
+  return missingLabels;
 }
 
-function formatMissingRulesAckNote(missingTeamNumbers) {
-  if (!missingTeamNumbers.length) {
+async function applyRulesAcknowledgementMarkers(
+  interaction,
+  {
+    twoLobbies,
+    lobby1Teams,
+    lobby2Teams,
+    roledTeams,
+    overflowTeams,
+    acknowledgementMessages
+  }
+) {
+  const missingLabels = [];
+
+  if (twoLobbies) {
+    missingLabels.push(
+      ...(await applyRulesAcknowledgementForTeams(
+        interaction,
+        lobby1Teams,
+        acknowledgementMessages,
+        { teamLabel: "Lobby 1 Team" }
+      ))
+    );
+
+    missingLabels.push(
+      ...(await applyRulesAcknowledgementForTeams(
+        interaction,
+        lobby2Teams,
+        acknowledgementMessages,
+        { teamLabel: "Lobby 2 Team" }
+      ))
+    );
+  } else {
+    missingLabels.push(
+      ...(await applyRulesAcknowledgementForTeams(
+        interaction,
+        roledTeams,
+        acknowledgementMessages,
+        { teamLabel: "Team" }
+      ))
+    );
+  }
+
+  if (overflowTeams.length > 0) {
+    missingLabels.push(
+      ...(await applyRulesAcknowledgementForTeams(
+        interaction,
+        overflowTeams,
+        acknowledgementMessages,
+        { teamLabel: "Overflow Team" }
+      ))
+    );
+  }
+
+  return missingLabels;
+}
+
+function formatMissingRulesAckNote(missingLabels) {
+  if (!missingLabels.length) {
     return "\nRules acknowledgement: all valid teams acknowledged.";
   }
 
-  const lines = missingTeamNumbers.map(number => `Team ${number}`);
-
   return (
-    `\nTeams missing rules acknowledgement: ${missingTeamNumbers.length}\n` +
-    lines.join("\n")
+    `\nTeams missing rules acknowledgement: ${missingLabels.length}\n` +
+    missingLabels.join("\n")
   );
 }
 
@@ -654,13 +723,19 @@ async function finishRoletagged(
       const acknowledgementMessages =
         await loadRulesAcknowledgementMessages(rulesChannel);
 
-      const missingTeamNumbers = await applyRulesAcknowledgementMarkers(
+      const missingLabels = await applyRulesAcknowledgementMarkers(
         interaction,
-        validTeams,
-        acknowledgementMessages
+        {
+          twoLobbies,
+          lobby1Teams,
+          lobby2Teams,
+          roledTeams,
+          overflowTeams,
+          acknowledgementMessages
+        }
       );
 
-      rulesAckNote = formatMissingRulesAckNote(missingTeamNumbers);
+      rulesAckNote = formatMissingRulesAckNote(missingLabels);
     }
   }
 
