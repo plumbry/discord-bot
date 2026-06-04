@@ -95,15 +95,6 @@ const RELOAD_STOP_EMOJI = "✋";
 const RELOAD_K_EMOJI =
   "1435978450958553130";
 
-const MANAGED_REACTION_EMOJIS =
-  new Set([
-    ACCEPTED_EMOJI_ID,
-    RELOAD_STOP_EMOJI,
-    RELOAD_K_EMOJI,
-    ...Object.values(NUMBER_EMOJIS),
-    ...Object.values(DUPLICATE_NUMBER_EMOJIS)
-  ]);
-
 // ================= HELPERS =================
 const delay = (ms) => new Promise(r => setTimeout(r, ms));
 const isoNow = () => new Date().toISOString();
@@ -158,256 +149,81 @@ function getNumberReactionEmojis(number) {
   return emojis;
 }
 
-function managedReactionsLookCorrect(
-  message,
-  expectedEmojis
-) {
-
-  const botManaged = [];
-
-  for (const reaction of message.reactions.cache.values()) {
-
-    const emoji =
-      reaction.emoji.id ||
-      reaction.emoji.name;
-
-    if (!MANAGED_REACTION_EMOJIS.has(emoji)) {
-      continue;
-    }
-
-    if (reaction.count > 1 || !reaction.me) {
-      return false;
-    }
-
-    botManaged.push(emoji);
-
-  }
-
-  return (
-    botManaged.length === expectedEmojis.length &&
-    botManaged.every(
-      (emoji, index) => emoji === expectedEmojis[index]
-    )
-  );
-
-}
-
-async function reconcileManagedReactions(message, botUserId, expectedEmojis) {
-
+async function clearAllMessageReactions(message) {
   if (message.partial) {
     await message.fetch();
   }
 
-  if (managedReactionsLookCorrect(message, expectedEmojis)) {
-    return new Set(expectedEmojis);
-  }
-
-  const existingBotManaged = [];
-
   for (const reaction of message.reactions.cache.values()) {
+    const users = await reaction.users.fetch();
 
-    const emoji =
-      reaction.emoji.id ||
-      reaction.emoji.name;
-
-    if (!MANAGED_REACTION_EMOJIS.has(emoji)) {
-      continue;
-    }
-
-    if (reaction.count > 1 || !reaction.me) {
-
-      const users = await reaction.users.fetch();
-
-      for (const user of users.values()) {
-
-        if (user.id !== botUserId) {
-          await reaction.users.remove(user.id);
-          await delay(REACTION_DELAY_MS);
-        }
-
-      }
-
-    }
-
-    if (reaction.me) {
-      existingBotManaged.push({
-        reaction,
-        emoji
-      });
-    }
-
-  }
-
-  const existingEmojis =
-    existingBotManaged.map(
-      item => item.emoji
-    );
-
-  const alreadyCorrect =
-    existingEmojis.length === expectedEmojis.length &&
-    existingEmojis.every(
-      (emoji, index) => emoji === expectedEmojis[index]
-    );
-
-  if (alreadyCorrect) {
-    return new Set(
-      existingEmojis
-    );
-  }
-
-  for (const item of existingBotManaged) {
-    await item.reaction.users.remove(
-      botUserId
-    );
-    await delay(REACTION_DELAY_MS);
-  }
-
-  return new Set();
-}
-
-async function reactIfMissing(message, emoji, existing) {
-  if (
-    existing.has(
-      emoji
-    )
-  ) {
-    return;
-  }
-
-  await message.react(
-    emoji
-  );
-
-  await delay(REACT_ADD_DELAY_MS);
-
-  existing.add(
-    emoji
-  );
-}
-
-async function reconcileRulesAckReaction(
-  message,
-  botUserId,
-  acknowledged
-) {
-  if (message.partial) {
-    await message.fetch();
-  }
-
-  const rulesReactions = message.reactions.cache.filter(
-    reaction => reaction.emoji.id === RULES_ACK_EMOJI_ID
-  );
-
-  for (const reaction of rulesReactions.values()) {
-    if (reaction.count > 1 || !reaction.me) {
-      const users = await reaction.users.fetch();
-
-      for (const user of users.values()) {
-        if (user.id !== botUserId) {
-          await reaction.users.remove(user.id);
-          await delay(REACTION_DELAY_MS);
-        }
-      }
-    }
-
-    if (reaction.me) {
-      await reaction.users.remove(botUserId);
+    for (const user of users.values()) {
+      await reaction.users.remove(user.id);
       await delay(REACTION_DELAY_MS);
     }
   }
-
-  if (acknowledged) {
-    await message.react(RULES_ACK_EMOJI_ID);
-    await delay(REACT_ADD_DELAY_MS);
-  }
 }
 
-async function applyRulesAcknowledgementForTeams(
-  interaction,
+async function applyTeamSignupReactions(
   teams,
-  acknowledgementMessages,
-  { teamLabel, startNumber = 1 }
+  {
+    asOverflow = false,
+    startNumber = 1,
+    acknowledgementMessages = null,
+    teamLabel = null
+  } = {}
 ) {
   const missingLabels = [];
+  let teamNumber = startNumber;
 
-  for (let index = 0; index < teams.length; index++) {
-    const team = teams[index];
-    const teamNumber = startNumber + index;
-    const memberIds = team.users.map(user => user.id);
-    const acknowledged = isTeamAcknowledged(
-      memberIds,
-      acknowledgementMessages
-    );
+  for (const team of teams) {
+    const expectedEmojis = asOverflow
+      ? [
+        RELOAD_STOP_EMOJI,
+        RELOAD_K_EMOJI,
+        ...getNumberReactionEmojis(teamNumber)
+      ]
+      : [
+        ACCEPTED_EMOJI_ID,
+        ...getNumberReactionEmojis(teamNumber)
+      ];
+
+    let acknowledged = false;
+
+    if (acknowledgementMessages !== null) {
+      const memberIds = team.users.map(user => user.id);
+
+      acknowledged = isTeamAcknowledged(
+        memberIds,
+        acknowledgementMessages
+      );
+
+      if (!acknowledged && teamLabel) {
+        missingLabels.push(`${teamLabel} ${teamNumber}`);
+      }
+    }
+
+    const reactionOrder = [...expectedEmojis];
+
+    if (acknowledged) {
+      reactionOrder.push(RULES_ACK_EMOJI_ID);
+    }
 
     try {
-      await reconcileRulesAckReaction(
-        team.message,
-        interaction.client.user.id,
-        acknowledged
-      );
+      await clearAllMessageReactions(team.message);
+
+      for (const emoji of reactionOrder) {
+        await team.message.react(emoji);
+        await delay(REACT_ADD_DELAY_MS);
+      }
     } catch (err) {
-      console.error("[ROLETAGGED] rules ack reaction:", err);
+      console.error(
+        asOverflow ? "[OVERFLOW REACT ERROR]" : "[REACT ERROR]",
+        err
+      );
     }
 
-    if (!acknowledged) {
-      missingLabels.push(`${teamLabel} ${teamNumber}`);
-    }
-  }
-
-  return missingLabels;
-}
-
-async function applyRulesAcknowledgementMarkers(
-  interaction,
-  {
-    twoLobbies,
-    lobby1Teams,
-    lobby2Teams,
-    roledTeams,
-    overflowTeams,
-    acknowledgementMessages
-  }
-) {
-  const missingLabels = [];
-
-  if (twoLobbies) {
-    missingLabels.push(
-      ...(await applyRulesAcknowledgementForTeams(
-        interaction,
-        lobby1Teams,
-        acknowledgementMessages,
-        { teamLabel: "Lobby 1 Team" }
-      ))
-    );
-
-    missingLabels.push(
-      ...(await applyRulesAcknowledgementForTeams(
-        interaction,
-        lobby2Teams,
-        acknowledgementMessages,
-        { teamLabel: "Lobby 2 Team" }
-      ))
-    );
-  } else {
-    missingLabels.push(
-      ...(await applyRulesAcknowledgementForTeams(
-        interaction,
-        roledTeams,
-        acknowledgementMessages,
-        { teamLabel: "Team" }
-      ))
-    );
-  }
-
-  if (overflowTeams.length > 0) {
-    missingLabels.push(
-      ...(await applyRulesAcknowledgementForTeams(
-        interaction,
-        overflowTeams,
-        acknowledgementMessages,
-        { teamLabel: "Overflow Team" }
-      ))
-    );
+    teamNumber++;
   }
 
   return missingLabels;
@@ -553,59 +369,6 @@ async function promptBannedTeamDecision(interaction, flaggedTeams) {
 
 }
 
-async function applyTeamNumberReactions(
-  interaction,
-  teams,
-  { asOverflow = false, startNumber = 1 }
-) {
-
-  let teamNumber = startNumber;
-
-  for (const team of teams) {
-
-    try {
-
-      const expectedEmojis = asOverflow
-        ? [
-          RELOAD_STOP_EMOJI,
-          RELOAD_K_EMOJI,
-          ...getNumberReactionEmojis(teamNumber)
-        ]
-        : [
-          ACCEPTED_EMOJI_ID,
-          ...getNumberReactionEmojis(teamNumber)
-        ];
-
-      const existing =
-        await reconcileManagedReactions(
-          team.message,
-          interaction.client.user.id,
-          expectedEmojis
-        );
-
-      for (const emojiId of expectedEmojis) {
-        await reactIfMissing(
-          team.message,
-          emojiId,
-          existing
-        );
-      }
-
-    } catch (err) {
-
-      console.error(
-        asOverflow ? "[OVERFLOW REACT ERROR]" : "[REACT ERROR]",
-        err
-      );
-
-    }
-
-    teamNumber++;
-
-  }
-
-}
-
 async function finishRoletagged(
   interaction,
   {
@@ -669,42 +432,8 @@ async function finishRoletagged(
     role
   );
 
-  if (twoLobbies) {
-
-    await applyTeamNumberReactions(
-      interaction,
-      lobby1Teams,
-      { startNumber: 1 }
-    );
-
-    await applyTeamNumberReactions(
-      interaction,
-      lobby2Teams,
-      { startNumber: 1 }
-    );
-
-  } else {
-
-    await applyTeamNumberReactions(
-      interaction,
-      roledTeams,
-      { startNumber: 1 }
-    );
-
-  }
-
-  if (overflowTeams.length > 0) {
-
-    await applyTeamNumberReactions(
-      interaction,
-      overflowTeams,
-      { asOverflow: true, startNumber: 1 }
-    );
-
-  }
-
   let rulesAckNote = "";
-
+  let acknowledgementMessages = null;
   const category = channel.parent;
 
   if (!category) {
@@ -720,23 +449,48 @@ async function finishRoletagged(
       rulesAckNote =
         "\nRules acknowledgement: no acknowledge-rules channel found in this category.";
     } else {
-      const acknowledgementMessages =
+      acknowledgementMessages =
         await loadRulesAcknowledgementMessages(rulesChannel);
-
-      const missingLabels = await applyRulesAcknowledgementMarkers(
-        interaction,
-        {
-          twoLobbies,
-          lobby1Teams,
-          lobby2Teams,
-          roledTeams,
-          overflowTeams,
-          acknowledgementMessages
-        }
-      );
-
-      rulesAckNote = formatMissingRulesAckNote(missingLabels);
     }
+  }
+
+  const missingRulesLabels = [];
+
+  if (twoLobbies) {
+    missingRulesLabels.push(
+      ...(await applyTeamSignupReactions(lobby1Teams, {
+        acknowledgementMessages,
+        teamLabel: "Lobby 1 Team"
+      }))
+    );
+
+    missingRulesLabels.push(
+      ...(await applyTeamSignupReactions(lobby2Teams, {
+        acknowledgementMessages,
+        teamLabel: "Lobby 2 Team"
+      }))
+    );
+  } else {
+    missingRulesLabels.push(
+      ...(await applyTeamSignupReactions(roledTeams, {
+        acknowledgementMessages,
+        teamLabel: "Team"
+      }))
+    );
+  }
+
+  if (overflowTeams.length > 0) {
+    missingRulesLabels.push(
+      ...(await applyTeamSignupReactions(overflowTeams, {
+        asOverflow: true,
+        acknowledgementMessages,
+        teamLabel: "Overflow Team"
+      }))
+    );
+  }
+
+  if (acknowledgementMessages !== null) {
+    rulesAckNote = formatMissingRulesAckNote(missingRulesLabels);
   }
 
   const banNote = includedDespiteBan
