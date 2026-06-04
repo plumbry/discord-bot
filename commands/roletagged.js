@@ -20,6 +20,13 @@ const {
   validateTeamTierCombo
 } = require("../lib/tierRestrictions");
 
+const {
+  RULES_ACK_EMOJI_ID,
+  findRulesAcknowledgementChannel,
+  isTeamAcknowledged,
+  loadRulesAcknowledgementMessages
+} = require("../lib/rulesAcknowledgement");
+
 // ================= CONSTANTS =================
 const LOG_CHANNEL_ID = "1471082166535454780";
 const SHEET_ID = process.env.MAIN_SHEET_ID;
@@ -275,6 +282,76 @@ async function reactIfMissing(message, emoji, existing) {
 
   existing.add(
     emoji
+  );
+}
+
+async function setRulesAcknowledgedReaction(message, botUserId, acknowledged) {
+  if (message.partial) {
+    await message.fetch();
+  }
+
+  const existing = message.reactions.cache.find(
+    reaction => reaction.emoji.id === RULES_ACK_EMOJI_ID
+  );
+
+  if (acknowledged) {
+    if (!existing?.me) {
+      await message.react(RULES_ACK_EMOJI_ID);
+      await delay(REACT_ADD_DELAY_MS);
+    }
+
+    return;
+  }
+
+  if (existing?.me) {
+    await existing.users.remove(botUserId);
+    await delay(REACTION_DELAY_MS);
+  }
+}
+
+async function applyRulesAcknowledgementMarkers(
+  interaction,
+  validTeams,
+  acknowledgementMessages
+) {
+  const missingTeamNumbers = [];
+
+  for (let index = 0; index < validTeams.length; index++) {
+    const team = validTeams[index];
+    const memberIds = team.users.map(user => user.id);
+    const acknowledged = isTeamAcknowledged(
+      memberIds,
+      acknowledgementMessages
+    );
+
+    try {
+      await setRulesAcknowledgedReaction(
+        team.message,
+        interaction.client.user.id,
+        acknowledged
+      );
+    } catch (err) {
+      console.error("[ROLETAGGED] rules ack reaction:", err);
+    }
+
+    if (!acknowledged) {
+      missingTeamNumbers.push(index + 1);
+    }
+  }
+
+  return missingTeamNumbers;
+}
+
+function formatMissingRulesAckNote(missingTeamNumbers) {
+  if (!missingTeamNumbers.length) {
+    return "\nRules acknowledgement: all valid teams acknowledged.";
+  }
+
+  const lines = missingTeamNumbers.map(number => `Team ${number}`);
+
+  return (
+    `\nTeams missing rules acknowledgement: ${missingTeamNumbers.length}\n` +
+    lines.join("\n")
   );
 }
 
@@ -557,6 +634,36 @@ async function finishRoletagged(
 
   }
 
+  let rulesAckNote = "";
+
+  const category = channel.parent;
+
+  if (!category) {
+    rulesAckNote =
+      "\nRules acknowledgement: skipped (signup channel is not in an event category).";
+  } else {
+    const rulesChannel = findRulesAcknowledgementChannel(
+      guild,
+      category.id
+    );
+
+    if (!rulesChannel) {
+      rulesAckNote =
+        "\nRules acknowledgement: no acknowledge-rules channel found in this category.";
+    } else {
+      const acknowledgementMessages =
+        await loadRulesAcknowledgementMessages(rulesChannel);
+
+      const missingTeamNumbers = await applyRulesAcknowledgementMarkers(
+        interaction,
+        validTeams,
+        acknowledgementMessages
+      );
+
+      rulesAckNote = formatMissingRulesAckNote(missingTeamNumbers);
+    }
+  }
+
   const banNote = includedDespiteBan
     ? "\nBanned teams: included by moderator"
     : skippedBannedTeams.length > 0
@@ -588,7 +695,8 @@ async function finishRoletagged(
     "Overflow Teams: " + overflowTeams.length +
     lobbyNote +
     banNote +
-    tierNote;
+    tierNote +
+    rulesAckNote;
 
   await interaction.editReply(result);
 
