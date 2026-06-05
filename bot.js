@@ -333,9 +333,12 @@ const memberSyncSignatures = new Map();
 const femalePendingRoleTimers = new Map();
 let backfillRunning = false;
 
+const MEMBER_SYNC_JOIN_DEBOUNCE_MS = Number(
+  process.env.MEMBER_SYNC_JOIN_DEBOUNCE_MS || 1000
+);
 const FEMALE_PENDING_ROLE_JOIN_DELAY_MS = Number(
   process.env.FEMALE_PENDING_ROLE_JOIN_DELAY_MS ||
-    MEMBER_SYNC_UPDATE_DEBOUNCE_MS + 500
+    MEMBER_SYNC_JOIN_DEBOUNCE_MS + 100
 );
 
 function buildMemberSignature(member) {
@@ -395,6 +398,11 @@ function scheduleMemberSync(member, source) {
     return;
   }
 
+  const debounceMs =
+    source === "guildMemberAdd"
+      ? MEMBER_SYNC_JOIN_DEBOUNCE_MS
+      : MEMBER_SYNC_UPDATE_DEBOUNCE_MS;
+
   const key = member.id;
   const existing = memberSyncDebounceTimers.get(key);
 
@@ -407,7 +415,7 @@ function scheduleMemberSync(member, source) {
     syncMemberWithGuards(member, source).catch(err => {
       console.error("[MEMBER SYNC] schedule failure:", err?.message || err);
     });
-  }, MEMBER_SYNC_UPDATE_DEBOUNCE_MS);
+  }, debounceMs);
 
   memberSyncDebounceTimers.set(key, timer);
 }
@@ -1407,7 +1415,25 @@ client.on("guildMemberAdd", async member => {
     }
 
     // After sheet reapply so rejoining sheet-verified members are not given NFV
-    scheduleFemalePendingRoleOnJoin(member);
+    let femalePendingApplied = false;
+
+    if (tryApplyFemalePendingRole) {
+      const result = await tryApplyFemalePendingRole(member, {
+        source: "guildMemberAdd"
+      }).catch(err => {
+        console.error(
+          "[FEMALE PENDING ROLE] join immediate failure:",
+          err?.message || err
+        );
+        return null;
+      });
+
+      femalePendingApplied = Boolean(result?.applied);
+    }
+
+    if (!femalePendingApplied) {
+      scheduleFemalePendingRoleOnJoin(member);
+    }
 
   } catch (err) {
 
