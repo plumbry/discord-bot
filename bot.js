@@ -21,6 +21,47 @@ const {
 const fs = require("fs");
 const path = require("path");
 const http = require("http");
+
+const HTTP_PORT = Number(process.env.PORT) || 8080;
+const HTTP_HOST = process.env.HOST || "0.0.0.0";
+
+/** @type {import("discord.js").Client | null} */
+let httpHealthClient = null;
+
+/** @type {((req: import("http").IncomingMessage, res: import("http").ServerResponse) => Promise<void> | void) | null} */
+let httpMainHandler = null;
+
+function isHealthCheckRequest(req) {
+  const path = (req.url || "/").split("?")[0];
+  return req.method === "GET" && (path === "/" || path === "/health");
+}
+
+http
+  .createServer((req, res) => {
+    if (isHealthCheckRequest(req)) {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end(httpHealthClient?.isReady() ? "ok" : "starting");
+      return;
+    }
+
+    if (!httpMainHandler) {
+      res.writeHead(503, { "Content-Type": "text/plain" });
+      res.end("starting");
+      return;
+    }
+
+    Promise.resolve(httpMainHandler(req, res)).catch(err => {
+      console.error("[HTTP]", err);
+
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "text/plain" });
+        res.end("Internal Server Error");
+      }
+    });
+  })
+  .listen(HTTP_PORT, HTTP_HOST, () => {
+    console.log(`🌐 HTTP health server on ${HTTP_HOST}:${HTTP_PORT}`);
+  });
 const {
   hasMemberSyncApiKey,
   syncMemberToWebsite,
@@ -1405,10 +1446,9 @@ client.on("guildMemberRemove", async member => {
   }
 });
 
-// ================= HTTP (health + event-ban webhook) =================
+// ================= HTTP (webhooks; health served from early listener) =================
 
-const PORT =
-  process.env.PORT || 8080;
+httpHealthClient = client;
 
 const {
   createWebhookRequestHandler,
@@ -1432,53 +1472,34 @@ const tierClearHandler = createTierClearHandler(client, {
   guildId: GUILD_ID
 });
 
-http
-  .createServer((req, res) => {
-    if (req.method === "GET" && (req.url === "/" || req.url === "/health")) {
-      res.writeHead(200, { "Content-Type": "text/plain" });
-      res.end(client.isReady() ? "ok" : "starting");
-      return;
-    }
+httpMainHandler = async (req, res) => {
+  if (await tierClearHandler(req, res)) {
+    return;
+  }
 
-    (async () => {
-      if (await tierClearHandler(req, res)) {
-        return;
-      }
+  await webhookHandler(req, res);
+};
 
-      await webhookHandler(req, res);
-    })().catch(err => {
-      console.error("[HTTP]", err);
+if (process.env.EVENT_BAN_WEBHOOK_SECRET) {
+  console.log(
+    `🔗 Role sync webhooks: POST ${WEBHOOK_PATH} or ${ROLE_SYNC_WEBHOOK_PATH} ` +
+      "(Authorization: Bearer <secret>)"
+  );
+} else {
+  console.warn(
+    "⚠️ EVENT_BAN_WEBHOOK_SECRET not set — push webhooks disabled (startup poll + /eventban sync only)"
+  );
+}
 
-      if (!res.headersSent) {
-        res.writeHead(500, { "Content-Type": "text/plain" });
-        res.end("Internal Server Error");
-      }
-    });
-  })
-  .listen(PORT, () => {
-    console.log(`🌐 HTTP server on ${PORT}`);
-
-    if (process.env.EVENT_BAN_WEBHOOK_SECRET) {
-      console.log(
-        `🔗 Role sync webhooks: POST ${WEBHOOK_PATH} or ${ROLE_SYNC_WEBHOOK_PATH} ` +
-          "(Authorization: Bearer <secret>)"
-      );
-    } else {
-      console.warn(
-        "⚠️ EVENT_BAN_WEBHOOK_SECRET not set — push webhooks disabled (startup poll + /eventban sync only)"
-      );
-    }
-
-    if (process.env.TIER_CLEAR_API_SECRET || process.env.EVENT_BAN_WEBHOOK_SECRET) {
-      console.log(
-        `🔗 Tier clear endpoint: POST ${TIER_CLEAR_PATH} (Authorization: Bearer <secret>)`
-      );
-    } else {
-      console.warn(
-        "⚠️ TIER_CLEAR_API_SECRET not set — tier clear endpoint disabled"
-      );
-    }
-  });
+if (process.env.TIER_CLEAR_API_SECRET || process.env.EVENT_BAN_WEBHOOK_SECRET) {
+  console.log(
+    `🔗 Tier clear endpoint: POST ${TIER_CLEAR_PATH} (Authorization: Bearer <secret>)`
+  );
+} else {
+  console.warn(
+    "⚠️ TIER_CLEAR_API_SECRET not set — tier clear endpoint disabled"
+  );
+}
 
 // ================= LOGIN =================
 
