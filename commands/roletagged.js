@@ -114,6 +114,41 @@ const RELOAD_K_EMOJI =
 const delay = (ms) => new Promise(r => setTimeout(r, ms));
 const isoNow = () => new Date().toISOString();
 
+async function sendRoletaggedReply(interaction, content) {
+  const payload =
+    typeof content === "string"
+      ? { content }
+      : content;
+
+  try {
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply(payload);
+      return;
+    }
+
+    await interaction.reply({
+      ...payload,
+      ephemeral: false
+    });
+  } catch (err) {
+    if (err?.code !== 10008) {
+      throw err;
+    }
+
+    try {
+      await interaction.followUp({
+        ...payload,
+        ephemeral: false
+      });
+    } catch (followUpErr) {
+      console.error(
+        "[ROLETAGGED] Could not deliver command result:",
+        followUpErr
+      );
+    }
+  }
+}
+
 async function logAudit(data) {
   await getSheets().spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
@@ -530,7 +565,8 @@ async function finishRoletagged(
 
   if (validTeams.length === 0) {
 
-    return interaction.editReply(
+    return sendRoletaggedReply(
+      interaction,
       "No teams selected for role assignment."
     );
 
@@ -670,8 +706,6 @@ async function finishRoletagged(
     tierNote +
     rulesAckNote;
 
-  await interaction.editReply(result);
-
   try {
 
     const logChannel =
@@ -719,6 +753,8 @@ async function finishRoletagged(
     console.error(err);
 
   }
+
+  await sendRoletaggedReply(interaction, result);
 
 }
 
@@ -772,7 +808,7 @@ module.exports = {
     }
 
     if (!process.env.MAIN_SHEET_ID) {
-      return interaction.editReply({
+      return sendRoletaggedReply(interaction, {
         content: "MAIN_SHEET_ID not configured."
       });
     }
@@ -800,7 +836,8 @@ module.exports = {
       eventBanRows = await getRows();
     } catch (err) {
       console.error("[ROLETAGGED] Event ban sheet read failed:", err);
-      return interaction.editReply(
+      return sendRoletaggedReply(
+        interaction,
         "Could not load Event Bans sheet. Try again later."
       );
     }
@@ -989,7 +1026,8 @@ module.exports = {
       flaggedTeams.length === 0
     ) {
 
-      return interaction.editReply(
+      return sendRoletaggedReply(
+        interaction,
         "No eligible signups found."
       );
     }
@@ -1006,7 +1044,8 @@ module.exports = {
 
     if (flaggedTeams.length > 0) {
 
-      await interaction.editReply(
+      await sendRoletaggedReply(
+        interaction,
         `Scan complete. Found **${flaggedTeams.length}** team(s) with an active event ban. Choose an option below (only you can see this).`
       );
 
@@ -1018,7 +1057,8 @@ module.exports = {
 
       if (decision === "cancel") {
 
-        return interaction.editReply(
+        return sendRoletaggedReply(
+          interaction,
           "Cancelled — no roles were assigned."
         );
 
@@ -1064,10 +1104,16 @@ module.exports = {
 
     if (validTeams.length === 0) {
 
-      return interaction.editReply(
+      return sendRoletaggedReply(
+        interaction,
         "No teams selected for role assignment."
       );
     }
+
+    await sendRoletaggedReply(
+      interaction,
+      "Processing role assignment and signup reactions…"
+    );
 
     await finishRoletagged(interaction, {
       validTeams,
