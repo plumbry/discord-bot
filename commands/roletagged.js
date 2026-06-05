@@ -164,10 +164,70 @@ function getNumberReactionEmojis(number) {
   return emojis;
 }
 
-async function clearAllMessageReactions(message) {
+function reactionKey(emoji) {
+  return emoji.id || emoji.name;
+}
+
+function buildExpectedReactionKeys(
+  teamNumber,
+  { asOverflow = false, acknowledged = false } = {}
+) {
+  const keys = asOverflow
+    ? [
+      RELOAD_STOP_EMOJI,
+      RELOAD_K_EMOJI,
+      ...getNumberReactionEmojis(teamNumber)
+    ]
+    : [
+      ACCEPTED_EMOJI_ID,
+      ...getNumberReactionEmojis(teamNumber)
+    ];
+
+  if (acknowledged) {
+    keys.push(RULES_ACK_EMOJI_ID);
+  }
+
+  return keys.sort();
+}
+
+async function ensureMessageReactionsLoaded(message) {
   if (message.partial) {
     await message.fetch();
   }
+}
+
+function getMessageReactionKeysSorted(message) {
+  const keys = [];
+
+  for (const reaction of message.reactions.cache.values()) {
+    if (reaction.count > 0) {
+      keys.push(reactionKey(reaction.emoji));
+    }
+  }
+
+  return keys.sort();
+}
+
+function teamSignupReactionsMatch(
+  message,
+  teamNumber,
+  { asOverflow = false, acknowledged = false } = {}
+) {
+  const expected = buildExpectedReactionKeys(teamNumber, {
+    asOverflow,
+    acknowledged
+  });
+  const actual = getMessageReactionKeysSorted(message);
+
+  if (expected.length !== actual.length) {
+    return false;
+  }
+
+  return expected.every((key, index) => key === actual[index]);
+}
+
+async function clearAllMessageReactions(message) {
+  await ensureMessageReactionsLoaded(message);
 
   for (const reaction of message.reactions.cache.values()) {
     const users = await reaction.users.fetch();
@@ -176,6 +236,34 @@ async function clearAllMessageReactions(message) {
       await reaction.users.remove(user.id);
       await delay(REACTION_DELAY_MS);
     }
+  }
+}
+
+async function syncTeamSignupReactions(
+  message,
+  teamNumber,
+  { asOverflow = false, acknowledged = false } = {}
+) {
+  const reactionOrder = asOverflow
+    ? [
+      RELOAD_STOP_EMOJI,
+      RELOAD_K_EMOJI,
+      ...getNumberReactionEmojis(teamNumber)
+    ]
+    : [
+      ACCEPTED_EMOJI_ID,
+      ...getNumberReactionEmojis(teamNumber)
+    ];
+
+  if (acknowledged) {
+    reactionOrder.push(RULES_ACK_EMOJI_ID);
+  }
+
+  await clearAllMessageReactions(message);
+
+  for (const emoji of reactionOrder) {
+    await message.react(emoji);
+    await delay(REACT_ADD_DELAY_MS);
   }
 }
 
@@ -192,17 +280,6 @@ async function applyTeamSignupReactions(
   let teamNumber = startNumber;
 
   for (const team of teams) {
-    const expectedEmojis = asOverflow
-      ? [
-        RELOAD_STOP_EMOJI,
-        RELOAD_K_EMOJI,
-        ...getNumberReactionEmojis(teamNumber)
-      ]
-      : [
-        ACCEPTED_EMOJI_ID,
-        ...getNumberReactionEmojis(teamNumber)
-      ];
-
     let acknowledged = false;
 
     if (acknowledgementMessages !== null) {
@@ -218,18 +295,26 @@ async function applyTeamSignupReactions(
       }
     }
 
-    const reactionOrder = [...expectedEmojis];
-
-    if (acknowledged) {
-      reactionOrder.push(RULES_ACK_EMOJI_ID);
-    }
+    const reactionOptions = {
+      asOverflow,
+      acknowledged
+    };
 
     try {
-      await clearAllMessageReactions(team.message);
+      await ensureMessageReactionsLoaded(team.message);
 
-      for (const emoji of reactionOrder) {
-        await team.message.react(emoji);
-        await delay(REACT_ADD_DELAY_MS);
+      if (
+        !teamSignupReactionsMatch(
+          team.message,
+          teamNumber,
+          reactionOptions
+        )
+      ) {
+        await syncTeamSignupReactions(
+          team.message,
+          teamNumber,
+          reactionOptions
+        );
       }
     } catch (err) {
       console.error(
