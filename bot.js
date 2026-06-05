@@ -1,46 +1,3 @@
-const http = require("http");
-
-const HTTP_PORT = Number(process.env.PORT) || 8080;
-const HTTP_HOST = process.env.HOST || "0.0.0.0";
-
-/** @type {import("discord.js").Client | null} */
-let httpHealthClient = null;
-
-/** @type {((req: import("http").IncomingMessage, res: import("http").ServerResponse) => Promise<void> | void) | null} */
-let httpMainHandler = null;
-
-function isHealthCheckRequest(req) {
-  const path = (req.url || "/").split("?")[0];
-  return req.method === "GET" && (path === "/" || path === "/health");
-}
-
-http
-  .createServer((req, res) => {
-    if (isHealthCheckRequest(req)) {
-      res.writeHead(200, { "Content-Type": "text/plain" });
-      res.end(httpHealthClient?.isReady() ? "ok" : "starting");
-      return;
-    }
-
-    if (!httpMainHandler) {
-      res.writeHead(503, { "Content-Type": "text/plain" });
-      res.end("starting");
-      return;
-    }
-
-    Promise.resolve(httpMainHandler(req, res)).catch(err => {
-      console.error("[HTTP]", err);
-
-      if (!res.headersSent) {
-        res.writeHead(500, { "Content-Type": "text/plain" });
-        res.end("Internal Server Error");
-      }
-    });
-  })
-  .listen(HTTP_PORT, HTTP_HOST, () => {
-    console.log(`🌐 HTTP health server on ${HTTP_HOST}:${HTTP_PORT}`);
-  });
-
 require("dotenv").config();
 
 console.log("=== BOT STARTING ===");
@@ -1447,9 +1404,14 @@ client.on("guildMemberRemove", async member => {
   }
 });
 
-// ================= HTTP (webhooks; health served from early listener) =================
+// ================= HTTP (webhooks; health served from lib/flyHealth.js) =================
 
-httpHealthClient = client;
+const {
+  setHealthClient,
+  setMainHandler
+} = require("./lib/flyHealth");
+
+setHealthClient(client);
 
 const {
   createWebhookRequestHandler,
@@ -1473,13 +1435,13 @@ const tierClearHandler = createTierClearHandler(client, {
   guildId: GUILD_ID
 });
 
-httpMainHandler = async (req, res) => {
+setMainHandler(async (req, res) => {
   if (await tierClearHandler(req, res)) {
     return;
   }
 
   await webhookHandler(req, res);
-};
+});
 
 if (process.env.EVENT_BAN_WEBHOOK_SECRET) {
   console.log(
