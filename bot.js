@@ -41,6 +41,8 @@ process.on("uncaughtException", error => {
 const SUBMIT_SHEET_ID = process.env.SUBMIT_SHEET_ID;
 const MAIN_SHEET_ID = process.env.MAIN_SHEET_ID;
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+const BOT_STATUS_CHANNEL_ID =
+  process.env.BOT_STATUS_CHANNEL_ID || "1471082166535454780";
 
 console.log("ENV CHECK:", {
   DISCORD_TOKEN: !!DISCORD_TOKEN,
@@ -257,6 +259,61 @@ const client = new Client({
 });
 
 client.commands = new Map();
+
+let botReadyForStatus = false;
+let shuttingDown = false;
+
+async function postBotStatus(message) {
+  if (!client.isReady()) {
+    return;
+  }
+
+  const channel = await client.channels
+    .fetch(BOT_STATUS_CHANNEL_ID)
+    .catch(() => null);
+
+  if (!channel?.isTextBased?.()) {
+    console.warn("[BOT STATUS] channel unavailable:", BOT_STATUS_CHANNEL_ID);
+    return;
+  }
+
+  await channel.send(message);
+}
+
+async function gracefulShutdown(signal) {
+  if (shuttingDown) {
+    return;
+  }
+
+  shuttingDown = true;
+  console.log(`[SHUTDOWN] ${signal} received`);
+
+  if (botReadyForStatus) {
+    try {
+      await Promise.race([
+        postBotStatus("🔴 Bot is offline - please do not use commands"),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("status post timeout")), 5000)
+        )
+      ]);
+    } catch (err) {
+      console.error("[BOT STATUS] offline post failed:", err?.message || err);
+    }
+  }
+
+  try {
+    client.destroy();
+  } catch (_) {}
+
+  process.exit(0);
+}
+
+process.once("SIGTERM", () => {
+  void gracefulShutdown("SIGTERM");
+});
+process.once("SIGINT", () => {
+  void gracefulShutdown("SIGINT");
+});
 
 const MEMBER_SYNC_UPDATE_DEBOUNCE_MS = Number(
   process.env.MEMBER_SYNC_UPDATE_DEBOUNCE_MS || 2000
@@ -484,6 +541,15 @@ client.once("ready", async () => {
   console.log(
     `🚀 Logged in as ${client.user.tag}`
   );
+
+  botReadyForStatus = true;
+
+  try {
+    await postBotStatus("🟢 Bot is online");
+    console.log("[BOT STATUS] posted online");
+  } catch (err) {
+    console.error("[BOT STATUS] online post failed:", err?.message || err);
+  }
 
   // ================= GIRL ROLE SHEET =================
 
