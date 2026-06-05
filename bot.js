@@ -1516,6 +1516,11 @@ const {
   TIER_CLEAR_PATH
 } = require("./lib/tierClearApi");
 
+const {
+  createEvaluationRoleSyncHandler,
+  EVALUATION_ROLE_SYNC_PATH
+} = require("./lib/evaluationRoleSyncApi");
+
 const webhookHandler = createWebhookRequestHandler(
   client,
   processRoleSyncPayload ||
@@ -1527,13 +1532,32 @@ const tierClearHandler = createTierClearHandler(client, {
   guildId: GUILD_ID
 });
 
+const evaluationRoleSyncHandler = createEvaluationRoleSyncHandler(client, {
+  guildId: GUILD_ID
+});
+
 setMainHandler(async (req, res) => {
+  if (await evaluationRoleSyncHandler(req, res)) {
+    return;
+  }
+
   if (await tierClearHandler(req, res)) {
     return;
   }
 
   await webhookHandler(req, res);
 });
+
+if (process.env.EVENT_BAN_WEBHOOK_SECRET || process.env.DISCORD_SYNC_API_KEY) {
+  console.log(
+    `🔗 Evaluation role sync: POST ${EVALUATION_ROLE_SYNC_PATH} ` +
+      "(Authorization: Bearer <secret> or X-Webhook-Signature: sha256=<hmac>)"
+  );
+} else {
+  console.warn(
+    "⚠️ EVALUATION_ROLE_SYNC_SECRET / DISCORD_SYNC_API_KEY not set — evaluation push disabled"
+  );
+}
 
 if (process.env.EVENT_BAN_WEBHOOK_SECRET) {
   console.log(
