@@ -1,25 +1,3 @@
-require("dotenv").config();
-
-console.log("=== BOT STARTING ===");
-
-const GUILD_ID =
-  process.env.GUILD_ID || "1371615693392576580";
-
-// ================= CORE =================
-
-const {
-  Client,
-  GatewayIntentBits,
-  REST,
-  Routes,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
-  ActionRowBuilder
-} = require("discord.js");
-
-const fs = require("fs");
-const path = require("path");
 const http = require("http");
 
 const HTTP_PORT = Number(process.env.PORT) || 8080;
@@ -62,6 +40,29 @@ http
   .listen(HTTP_PORT, HTTP_HOST, () => {
     console.log(`🌐 HTTP health server on ${HTTP_HOST}:${HTTP_PORT}`);
   });
+
+require("dotenv").config();
+
+console.log("=== BOT STARTING ===");
+
+const GUILD_ID =
+  process.env.GUILD_ID || "1371615693392576580";
+
+// ================= CORE =================
+
+const {
+  Client,
+  GatewayIntentBits,
+  REST,
+  Routes,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ActionRowBuilder
+} = require("discord.js");
+
+const fs = require("fs");
+const path = require("path");
 const {
   hasMemberSyncApiKey,
   syncMemberToWebsite,
