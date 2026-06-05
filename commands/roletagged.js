@@ -340,6 +340,59 @@ function formatMissingRulesAckNote(missingLabels) {
   );
 }
 
+function buildFlaggedTeamLookup(flaggedTeams) {
+  const flaggedByMessageId = new Map();
+
+  for (const entry of flaggedTeams) {
+    flaggedByMessageId.set(entry.team.message.id, entry);
+  }
+
+  return flaggedByMessageId;
+}
+
+function resolveValidTeamsInSignupOrder(
+  candidateTeams,
+  eligibleMessageIds,
+  flaggedByMessageId,
+  includeBanned
+) {
+  const validTeams = [];
+  const skippedBannedTeams = [];
+
+  for (const team of candidateTeams) {
+    const messageId = team.message.id;
+
+    if (eligibleMessageIds.has(messageId)) {
+      validTeams.push(team);
+      continue;
+    }
+
+    const flagged = flaggedByMessageId.get(messageId);
+
+    if (!flagged) {
+      continue;
+    }
+
+    if (includeBanned) {
+      validTeams.push(team);
+    } else {
+      skippedBannedTeams.push(flagged);
+    }
+  }
+
+  return { validTeams, skippedBannedTeams };
+}
+
+async function clearSkippedBannedSignupReactions(skippedBannedTeams) {
+  for (const { team } of skippedBannedTeams) {
+    try {
+      await clearAllMessageReactions(team.message);
+    } catch (err) {
+      console.error("[SKIP BANNED REACT ERROR]", err);
+    }
+  }
+}
+
 async function assignRolesInBatches(
   guild,
   userIds,
@@ -941,6 +994,12 @@ module.exports = {
       );
     }
 
+    const eligibleMessageIds = new Set(
+      eligibleTeams.map(team => team.message.id)
+    );
+    const flaggedByMessageId =
+      buildFlaggedTeamLookup(flaggedTeams);
+
     let validTeams = [...eligibleTeams];
     let skippedBannedTeams = [];
     let includedDespiteBan = false;
@@ -965,20 +1024,23 @@ module.exports = {
 
       }
 
-      if (decision === "include") {
+      const includeBanned = decision === "include";
 
-        validTeams = [
-          ...eligibleTeams,
-          ...flaggedTeams.map(item => item.team)
-        ];
+      ({ validTeams, skippedBannedTeams } =
+        resolveValidTeamsInSignupOrder(
+          candidateTeams,
+          eligibleMessageIds,
+          flaggedByMessageId,
+          includeBanned
+        ));
+
+      if (includeBanned) {
 
         includedDespiteBan = true;
 
       } else {
 
-        skippedBannedTeams = flaggedTeams;
-
-        for (const { team, blockReason } of flaggedTeams) {
+        for (const { team, blockReason } of skippedBannedTeams) {
 
           try {
 
@@ -991,6 +1053,10 @@ module.exports = {
           } catch {}
 
         }
+
+        await clearSkippedBannedSignupReactions(
+          skippedBannedTeams
+        );
 
       }
 
