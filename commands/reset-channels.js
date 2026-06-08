@@ -10,7 +10,12 @@ const crypto = require("crypto");
 
 const PREFIX = "reset_channels";
 const PENDING_TTL_MS = 5 * 60 * 1000;
+const DELETE_RETRY_DELAY_MS = 1000;
+const DELETE_MAX_ATTEMPTS = 3;
+const CHANNEL_RESET_DELAY_MS = 500;
 const pendingResets = new Map();
+
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const TARGET_NAMES = new Set([
   "rules",
@@ -154,46 +159,35 @@ function buildCloneOptions(channel, reason) {
   return options;
 }
 
-function makeTempChannelName(name) {
-  return `${name}-reset-${Date.now().toString(36).slice(-6)}`;
+async function deleteChannelWithRetry(guild, channelId, reason) {
+  let lastError;
+
+  for (let attempt = 1; attempt <= DELETE_MAX_ATTEMPTS; attempt++) {
+    try {
+      await guild.channels.delete(channelId, reason);
+      return;
+    } catch (err) {
+      lastError = err;
+
+      if (attempt < DELETE_MAX_ATTEMPTS) {
+        await delay(DELETE_RETRY_DELAY_MS * attempt);
+      }
+    }
+  }
+
+  throw lastError;
 }
 
 async function resetChannel(guild, channel, reason) {
+  const channelId = channel.id;
   const position = channel.rawPosition ?? channel.position;
-  const originalName = channel.name;
-  const isGuildRulesChannel = guild.rulesChannelId === channel.id;
 
-  if (
-    isGuildRulesChannel &&
-    !guild.members.me?.permissions.has(PermissionFlagsBits.ManageGuild)
-  ) {
-    throw new Error(
-      "This is the server rules channel; I need **Manage Server** to reassign it before delete."
-    );
-  }
-
-  if (isGuildRulesChannel) {
-    await guild.setRulesChannel(null, reason);
-  }
-
-  const cloned = await channel.clone({
-    ...buildCloneOptions(channel, reason),
-    name: makeTempChannelName(originalName)
-  });
+  const cloned = await channel.clone(buildCloneOptions(channel, reason));
 
   try {
-    await channel.delete(reason);
-    await cloned.setName(originalName, reason);
+    await deleteChannelWithRetry(guild, channelId, reason);
     await cloned.setPosition(position);
-
-    if (isGuildRulesChannel) {
-      await guild.setRulesChannel(cloned, reason);
-    }
   } catch (err) {
-    if (isGuildRulesChannel) {
-      await guild.setRulesChannel(channel, reason).catch(() => {});
-    }
-
     await cloned.delete(reason).catch(() => {});
     throw err;
   }
@@ -313,21 +307,6 @@ module.exports = {
 
     const category = guild.channels.cache.get(categoryId);
     const categoryName = category?.name ?? "Unknown category";
-    const includesGuildRulesChannel = channels.some(
-      channel => channel.id === guild.rulesChannelId
-    );
-
-    if (
-      includesGuildRulesChannel &&
-      !botMember.permissions.has(PermissionFlagsBits.ManageGuild)
-    ) {
-      return interaction.reply({
-        content:
-          "❌ **#rules** is this server's designated rules channel. " +
-          "I need **Manage Server** to reassign it before it can be reset.",
-        ephemeral: true
-      });
-    }
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -347,11 +326,8 @@ module.exports = {
         `Channels to reset (${channels.length}):\n` +
         `${buildPreviewLines(channels)}\n\n` +
         "Each channel will be cloned with the same settings, then the original will be deleted. " +
-        "This clears all messages, including those older than 14 days." +
-        (includesGuildRulesChannel
-          ? "\n\n⚠️ Includes the server **rules channel** — it will be reassigned to the new clone."
-          : "") +
-        "\n\nClick **Confirm Reset** to proceed.",
+        "This clears all messages, including those older than 14 days.\n\n" +
+        "Click **Confirm Reset** to proceed.",
       components: [row],
       ephemeral: true
     });
@@ -425,22 +401,6 @@ module.exports = {
       return true;
     }
 
-    const includesGuildRulesChannel = job.channelIds.includes(
-      guild.rulesChannelId
-    );
-
-    if (
-      includesGuildRulesChannel &&
-      !botMember.permissions.has(PermissionFlagsBits.ManageGuild)
-    ) {
-      await interaction.update({
-        content:
-          "❌ I need **Manage Server** to reset the designated rules channel.",
-        components: []
-      });
-      return true;
-    }
-
     await interaction.update({
       content: "⏳ Resetting channels…",
       components: []
@@ -502,6 +462,8 @@ module.exports = {
           error: err?.message || "Unknown error"
         });
       }
+
+      await delay(CHANNEL_RESET_DELAY_MS);
     }
 
     await interaction.editReply({
