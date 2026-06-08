@@ -33,8 +33,44 @@ function normalizeChannelName(name) {
     .replace(/[\s\-_]+/g, "");
 }
 
+function matchesTarget(normalizedName, target) {
+  if (normalizedName === target) {
+    return true;
+  }
+
+  if (normalizedName.endsWith(target)) {
+    if (target === "chat" && normalizedName.endsWith("modchat")) {
+      return false;
+    }
+
+    return true;
+  }
+
+  if (target === "twitchlinks") {
+    const withoutStream = normalizedName.replace(/stream/g, "");
+
+    if (withoutStream.includes("twitchlinks")) {
+      return true;
+    }
+
+    return (
+      normalizedName.includes("twitch") && normalizedName.includes("links")
+    );
+  }
+
+  return false;
+}
+
 function isTargetChannelName(name) {
-  return TARGET_NAMES.has(normalizeChannelName(name));
+  const normalized = normalizeChannelName(name);
+
+  for (const target of TARGET_NAMES) {
+    if (matchesTarget(normalized, target)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function canResetChannelType(channel) {
