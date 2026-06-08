@@ -34,31 +34,38 @@ function normalizeChannelName(name) {
 }
 
 function matchesTarget(normalizedName, target) {
-  if (normalizedName === target) {
-    return true;
-  }
+  switch (target) {
+    case "rules":
+      return normalizedName.includes("rules");
 
-  if (normalizedName.endsWith(target)) {
-    if (target === "chat" && normalizedName.endsWith("modchat")) {
+    case "signups":
+      return normalizedName.includes("signup");
+
+    case "chat":
+      return (
+        normalizedName.includes("chat") && !normalizedName.includes("modchat")
+      );
+
+    case "dropmap":
+      return (
+        normalizedName.includes("dropmap") ||
+        (normalizedName.includes("drop") && normalizedName.includes("map"))
+      );
+
+    case "manualcode":
+      return (
+        normalizedName.includes("manual") && normalizedName.includes("code")
+      );
+
+    case "twitchlinks":
+      return (
+        normalizedName.includes("twitch") &&
+        (normalizedName.includes("stream") || normalizedName.includes("links"))
+      );
+
+    default:
       return false;
-    }
-
-    return true;
   }
-
-  if (target === "twitchlinks") {
-    const withoutStream = normalizedName.replace(/stream/g, "");
-
-    if (withoutStream.includes("twitchlinks")) {
-      return true;
-    }
-
-    return (
-      normalizedName.includes("twitch") && normalizedName.includes("links")
-    );
-  }
-
-  return false;
 }
 
 function isTargetChannelName(name) {
@@ -249,7 +256,7 @@ module.exports = {
       return interaction.reply({
         content:
           "❌ No matching channels to reset in this category.\n\n" +
-          "Targets: rules, sign-ups, chat, dropmap, manual-code, twitch-links",
+          "Targets: channels whose names contain rules, signup, chat, dropmap, manual+code, or twitch+stream/links",
         ephemeral: true
       });
     }
