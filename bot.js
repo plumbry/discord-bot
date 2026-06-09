@@ -103,15 +103,35 @@ try {
   console.error("⚠️ girlRoleSheet not loaded:", err?.message || err);
 }
 
+// ================= GENDER SHEET (female-evaluated pending role) =================
+
+let loadGenderEvalCache = null;
+let isGenderEvalSheetConfigured = null;
+let startGenderEvalReconciler = null;
+
+try {
+  ({
+    loadGenderEvalCache,
+    isConfigured: isGenderEvalSheetConfigured,
+    startGenderEvalReconciler
+  } = require("./lib/genderEvalSheet"));
+
+  console.log("✅ gender eval sheet module loaded");
+} catch (err) {
+  console.error("⚠️ genderEvalSheet not loaded:", err?.message || err);
+}
+
 // ================= FEMALE PENDING ROLE (join + verify cleanup) =================
 
 let tryApplyFemalePendingRole = null;
 let handleFemalePendingOnMemberUpdate = null;
+let reconcileFemalePendingRolesFromSheet = null;
 
 try {
   ({
     tryApplyFemalePendingRole,
-    handleFemalePendingOnMemberUpdate
+    handleFemalePendingOnMemberUpdate,
+    reconcileFemalePendingRolesFromSheet
   } = require("./lib/femalePendingRole"));
 
   console.log("✅ female pending role module loaded");
@@ -585,6 +605,26 @@ client.once("ready", async () => {
       }
     } catch (err) {
       console.error("[GIRL ROLE] startup failed:", err?.message || err);
+    }
+  }
+
+  // ================= GENDER SHEET (pending female role) =================
+
+  if (loadGenderEvalCache && isGenderEvalSheetConfigured?.()) {
+    try {
+      await loadGenderEvalCache();
+
+      if (startGenderEvalReconciler && reconcileFemalePendingRolesFromSheet) {
+        startGenderEvalReconciler(
+          client,
+          GUILD_ID,
+          reconcileFemalePendingRolesFromSheet
+        );
+      }
+
+      console.log("✅ Gender Sheet sync ready");
+    } catch (err) {
+      console.error("[GENDER SHEET] startup failed:", err?.message || err);
     }
   }
 
@@ -1516,11 +1556,6 @@ const {
   TIER_CLEAR_PATH
 } = require("./lib/tierClearApi");
 
-const {
-  createEvaluationRoleSyncHandler,
-  EVALUATION_ROLE_SYNC_PATH
-} = require("./lib/evaluationRoleSyncApi");
-
 const webhookHandler = createWebhookRequestHandler(
   client,
   processRoleSyncPayload ||
@@ -1532,32 +1567,13 @@ const tierClearHandler = createTierClearHandler(client, {
   guildId: GUILD_ID
 });
 
-const evaluationRoleSyncHandler = createEvaluationRoleSyncHandler(client, {
-  guildId: GUILD_ID
-});
-
 setMainHandler(async (req, res) => {
-  if (await evaluationRoleSyncHandler(req, res)) {
-    return;
-  }
-
   if (await tierClearHandler(req, res)) {
     return;
   }
 
   await webhookHandler(req, res);
 });
-
-if (process.env.EVENT_BAN_WEBHOOK_SECRET || process.env.DISCORD_SYNC_API_KEY) {
-  console.log(
-    `🔗 Evaluation role sync: POST ${EVALUATION_ROLE_SYNC_PATH} ` +
-      "(Authorization: Bearer <secret> or X-Webhook-Signature: sha256=<hmac>)"
-  );
-} else {
-  console.warn(
-    "⚠️ EVALUATION_ROLE_SYNC_SECRET / DISCORD_SYNC_API_KEY not set — evaluation push disabled"
-  );
-}
 
 if (process.env.EVENT_BAN_WEBHOOK_SECRET) {
   console.log(

@@ -4,7 +4,7 @@ const {
 } = require("discord.js");
 
 const { GIRL_ROLE_ID } = require("../lib/memberProfile");
-const { fetchFemaleEvaluatedMembers } = require("../lib/discordFemaleEvaluatedApi");
+const { loadGenderEvalCache } = require("../lib/genderEvalSheet");
 const {
   FEMALE_PENDING_ROLE_ID,
   applyFemalePendingRoleBackfill
@@ -14,7 +14,7 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName("applyunverifiedfemalerole")
     .setDescription(
-      "Backfill pending female role for site-evaluated females missing Girl verified"
+      "Manual backfill: pending female role from Mod Log Gender Sheet (gender 50)"
     )
     .addBooleanOption(option =>
       option
@@ -30,21 +30,19 @@ module.exports = {
 
     await interaction.deferReply({ ephemeral: true });
 
-    let websiteMembers;
-
     try {
-      websiteMembers = await fetchFemaleEvaluatedMembers();
+      await loadGenderEvalCache();
     } catch (err) {
       console.error("[APPLY UNVERIFIED FEMALE ROLE]", err);
       return interaction.editReply(
-        "Failed to load female-evaluated members from the website API. Check DISCORD_SYNC_API_KEY and CONVEX_API_BASE_URL."
+        "Failed to load Mod Log Gender Sheet. Check GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 and sheet access."
       );
     }
 
     let stats;
 
     try {
-      stats = await applyFemalePendingRoleBackfill(guild, websiteMembers, {
+      stats = await applyFemalePendingRoleBackfill(guild, null, {
         dryRun
       });
     } catch (err) {
@@ -65,7 +63,7 @@ module.exports = {
 
     let message =
       `${dryRun ? "Dry run" : "Role assignment"} complete.\n\n` +
-      `Website-evaluated female (gender 50): **${evaluatedOnSite}**\n` +
+      `Gender Sheet entries (gender 50): **${evaluatedOnSite}**\n` +
       `Already have Girl verified role: **${alreadyVerified}**\n` +
       `Girl verified on sheet (skipped): **${verifiedOnSheet}**\n` +
       `Already have pending role: **${alreadyPending}**\n` +
