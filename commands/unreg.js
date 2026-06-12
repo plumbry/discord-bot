@@ -336,14 +336,6 @@ module.exports = {
     )
 
     .addStringOption(o =>
-      o.setName("players")
-        .setDescription(
-          "Teammate(s) who unregistered (mentions or user IDs). Omit for whole team."
-        )
-        .setRequired(false)
-    )
-
-    .addStringOption(o =>
       o.setName("notify")
         .setDescription("Whether to notify remaining teammates")
         .setRequired(true)
@@ -351,6 +343,14 @@ module.exports = {
           { name: "silent", value: "silent" },
           { name: "tag_remaining", value: "tag_remaining" }
         )
+    )
+
+    .addStringOption(o =>
+      o.setName("players")
+        .setDescription(
+          "Teammate(s) who unregistered (mentions or user IDs). Omit for whole team."
+        )
+        .setRequired(false)
     )
 
     .setDefaultMemberPermissions(
