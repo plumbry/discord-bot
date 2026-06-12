@@ -26,6 +26,12 @@ const {
   loadRulesAcknowledgementMessages
 } = require("../lib/rulesAcknowledgement");
 
+const {
+  clearReactionsOnInvalidSignups,
+  getNonBotMentionedUsers,
+  messageHasExactTaggedPlayers
+} = require("../lib/signupTeamScan");
+
 // ================= CONSTANTS =================
 const LOG_CHANNEL_ID = "1471082166535454780";
 const SHEET_ID = process.env.MAIN_SHEET_ID;
@@ -113,45 +119,6 @@ const RELOAD_K_EMOJI =
 // ================= HELPERS =================
 const delay = (ms) => new Promise(r => setTimeout(r, ms));
 const isoNow = () => new Date().toISOString();
-
-const SIGNUP_SLOT_SEPARATOR = /\s+x\s+/i;
-const USER_MENTION_SLOT_PATTERN = /^<@!?(\d+)>$/;
-
-function getNonBotMentionedUsers(message) {
-  return [...message.mentions.users.values()].filter(user => !user.bot);
-}
-
-/**
- * Signups must mention exactly `requiredTeamSize` players. Messages that use
- * " x " separators must have one user mention per slot (no TBD / filler text).
- */
-function messageHasExactTaggedPlayers(message, requiredTeamSize) {
-  const users = getNonBotMentionedUsers(message);
-
-  if (users.length !== requiredTeamSize) {
-    return false;
-  }
-
-  if (!SIGNUP_SLOT_SEPARATOR.test(message.content)) {
-    return true;
-  }
-
-  const slots = message.content
-    .split(SIGNUP_SLOT_SEPARATOR)
-    .map(slot => slot.trim())
-    .filter(Boolean);
-
-  if (slots.length !== requiredTeamSize) {
-    return false;
-  }
-
-  const taggedIds = new Set(users.map(user => user.id));
-
-  return slots.every(slot => {
-    const match = slot.match(USER_MENTION_SLOT_PATTERN);
-    return match && taggedIds.has(match[1]);
-  });
-}
 
 async function sendRoletaggedReply(interaction, content) {
   const payload =
@@ -593,6 +560,7 @@ async function finishRoletagged(
     skippedBannedTeams,
     includedDespiteBan,
     tierRejectedCount,
+    invalidReactionsCleared,
     role,
     isReload,
     requiredTeamSize,
@@ -722,6 +690,11 @@ async function finishRoletagged(
       ? `\nInvalid tier combos rejected: ${tierRejectedCount}`
       : "";
 
+  const invalidSignupNote =
+    invalidReactionsCleared > 0
+      ? `\nInvalid signups cleared: ${invalidReactionsCleared}`
+      : "";
+
   const lobbyNote = twoLobbies
     ? "\nTwo lobbies: Yes\n" +
       "Lobby 1 Teams: " + lobby1Teams.length + "\n" +
@@ -743,6 +716,7 @@ async function finishRoletagged(
     lobbyNote +
     banNote +
     tierNote +
+    invalidSignupNote +
     rulesAckNote;
 
   try {
@@ -897,6 +871,12 @@ module.exports = {
 
     const orderedMessages =
       [...messages.values()].reverse();
+
+    const invalidReactionsCleared =
+      await clearReactionsOnInvalidSignups(
+        orderedMessages,
+        requiredTeamSize
+      );
 
     // ================= SCAN =================
 
@@ -1054,10 +1034,14 @@ module.exports = {
       eligibleTeams.length === 0 &&
       flaggedTeams.length === 0
     ) {
+      const clearedNote =
+        invalidReactionsCleared > 0
+          ? `\nCleared reactions on ${invalidReactionsCleared} invalid signup(s).`
+          : "";
 
       return sendRoletaggedReply(
         interaction,
-        "No eligible signups found."
+        "No eligible signups found." + clearedNote
       );
     }
 
@@ -1149,6 +1133,7 @@ module.exports = {
       skippedBannedTeams,
       includedDespiteBan,
       tierRejectedCount,
+      invalidReactionsCleared,
       role,
       isReload,
       requiredTeamSize,
