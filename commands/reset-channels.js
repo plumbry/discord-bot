@@ -58,9 +58,7 @@ function matchesTarget(normalizedName, target) {
       );
 
     case "manualcode":
-      return (
-        normalizedName.includes("manual") && normalizedName.includes("code")
-      );
+      return /manual\w*code/.test(normalizedName);
 
     case "twitchlinks":
       return (

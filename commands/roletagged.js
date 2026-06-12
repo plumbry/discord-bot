@@ -114,6 +114,45 @@ const RELOAD_K_EMOJI =
 const delay = (ms) => new Promise(r => setTimeout(r, ms));
 const isoNow = () => new Date().toISOString();
 
+const SIGNUP_SLOT_SEPARATOR = /\s+x\s+/i;
+const USER_MENTION_SLOT_PATTERN = /^<@!?(\d+)>$/;
+
+function getNonBotMentionedUsers(message) {
+  return [...message.mentions.users.values()].filter(user => !user.bot);
+}
+
+/**
+ * Signups must mention exactly `requiredTeamSize` players. Messages that use
+ * " x " separators must have one user mention per slot (no TBD / filler text).
+ */
+function messageHasExactTaggedPlayers(message, requiredTeamSize) {
+  const users = getNonBotMentionedUsers(message);
+
+  if (users.length !== requiredTeamSize) {
+    return false;
+  }
+
+  if (!SIGNUP_SLOT_SEPARATOR.test(message.content)) {
+    return true;
+  }
+
+  const slots = message.content
+    .split(SIGNUP_SLOT_SEPARATOR)
+    .map(slot => slot.trim())
+    .filter(Boolean);
+
+  if (slots.length !== requiredTeamSize) {
+    return false;
+  }
+
+  const taggedIds = new Set(users.map(user => user.id));
+
+  return slots.every(slot => {
+    const match = slot.match(USER_MENTION_SLOT_PATTERN);
+    return match && taggedIds.has(match[1]);
+  });
+}
+
 async function sendRoletaggedReply(interaction, content) {
   const payload =
     typeof content === "string"
@@ -792,7 +831,7 @@ module.exports = {
     .addBooleanOption(o =>
       o.setName("two_lobbies")
         .setDescription(
-          "Two lobbies: any team size, fill overflow only after both lobbies; renumber lobby 2 from 1"
+          "Two lobbies: fill overflow only after both lobbies; renumber lobby 2 from 1"
         )
         .setRequired(false)
     )
@@ -863,27 +902,16 @@ module.exports = {
 
     for (const msg of orderedMessages) {
 
-      const users =
-        [...msg.mentions.users.values()]
-        .filter(u => !u.bot);
-
-      if (users.length === 0)
-        continue;
-
-      if (twoLobbies) {
-
-        if (
-          users.length < 1 ||
-          users.length > 4
-        ) {
-          continue;
-        }
-
-      } else if (
-        users.length !== requiredTeamSize
+      if (
+        !messageHasExactTaggedPlayers(
+          msg,
+          requiredTeamSize
+        )
       ) {
         continue;
       }
+
+      const users = getNonBotMentionedUsers(msg);
 
       candidateTeams.push({
         message: msg,
@@ -942,12 +970,16 @@ module.exports = {
 
       if (hasDuplicate) {
 
+        const dupes = team.users.filter(
+          u => duplicatePlayers.has(u.id)
+        );
+
         try {
 
           await channel.send(
-            `Rejected signup (duplicate player): ${team.users.map(
-              u => `<@${u.id}>`
-            ).join(" ")}`
+            dupes.length === 1
+              ? `<@${dupes[0].id}> player is signed up twice!`
+              : `${dupes.map(u => `<@${u.id}>`).join(" ")} players are signed up twice!`
           );
 
         } catch {}
@@ -955,10 +987,7 @@ module.exports = {
         continue;
       }
 
-      const teamSizeForTier =
-        twoLobbies
-          ? team.users.length
-          : requiredTeamSize;
+      const teamSizeForTier = requiredTeamSize;
 
       if (teamSizeForTier > 1) {
 
