@@ -27,9 +27,12 @@ const {
 } = require("../lib/rulesAcknowledgement");
 
 const {
-  clearReactionsOnInvalidSignups,
+  getInvalidSignupUserIds,
   getNonBotMentionedUsers,
-  messageHasExactTaggedPlayers
+  getSignupUserIdsToUnrole,
+  messageHasExactTaggedPlayers,
+  syncInvalidSignupReactions,
+  syncNonAcceptedSignupReactions
 } = require("../lib/signupTeamScan");
 
 // ================= CONSTANTS =================
@@ -486,6 +489,103 @@ async function assignRolesInBatches(
 
 }
 
+async function removeRolesInBatches(
+  guild,
+  userIds,
+  role
+) {
+
+  let removed = 0;
+  let skipped = 0;
+  const ids = [...userIds];
+
+  for (let i = 0; i < ids.length; i += ROLE_BATCH_SIZE) {
+
+    const batch = ids.slice(i, i + ROLE_BATCH_SIZE);
+
+    await Promise.all(
+      batch.map(async (userId) => {
+
+        let member = guild.members.cache.get(userId);
+
+        if (!member) {
+          member = await guild.members.fetch(userId).catch(() => null);
+        }
+
+        if (!member) {
+          return;
+        }
+
+        if (!member.roles.cache.has(role.id)) {
+          skipped++;
+          return;
+        }
+
+        try {
+          await member.roles.remove(role);
+          removed++;
+        } catch (err) {
+          console.error(err);
+        }
+
+      })
+    );
+
+    if (i + ROLE_BATCH_SIZE < ids.length) {
+      await delay(ROLE_BATCH_DELAY_MS);
+    }
+
+  }
+
+  return { removed, skipped };
+
+}
+
+async function syncSignupChannelRoles(
+  guild,
+  role,
+  scannedMessages,
+  requiredTeamSize,
+  keepUserIds
+) {
+
+  const removeUserIds = new Set([
+    ...getInvalidSignupUserIds(
+      scannedMessages,
+      requiredTeamSize
+    ),
+    ...getSignupUserIdsToUnrole(
+      scannedMessages,
+      keepUserIds
+    )
+  ]);
+
+  for (const userId of keepUserIds) {
+    removeUserIds.delete(userId);
+  }
+
+  const { removed, skipped: removeSkipped } =
+    await removeRolesInBatches(
+      guild,
+      removeUserIds,
+      role
+    );
+
+  const { added, skipped } = await assignRolesInBatches(
+    guild,
+    keepUserIds,
+    role
+  );
+
+  return {
+    added,
+    skipped,
+    removed,
+    removeSkipped
+  };
+
+}
+
 function buildFlaggedBanSummary(flaggedTeams) {
 
   const lines = flaggedTeams.map(({ team, blockReason }) =>
@@ -560,7 +660,9 @@ async function finishRoletagged(
     skippedBannedTeams,
     includedDespiteBan,
     tierRejectedCount,
-    invalidReactionsCleared,
+    invalidSignupsMarked,
+    scannedMessages,
+    emptyResultLabel,
     role,
     isReload,
     requiredTeamSize,
@@ -569,15 +671,6 @@ async function finishRoletagged(
     guild
   }
 ) {
-
-  if (validTeams.length === 0) {
-
-    return sendRoletaggedReply(
-      interaction,
-      "No teams selected for role assignment."
-    );
-
-  }
 
   const teamLimit =
     TEAM_LIMITS[isReload ? "reload" : "normal"][requiredTeamSize];
@@ -612,10 +705,17 @@ async function finishRoletagged(
 
   }
 
-  const { added, skipped } = await assignRolesInBatches(
+  const {
+    added,
+    skipped,
+    removed,
+    removeSkipped
+  } = await syncSignupChannelRoles(
     guild,
-    roledUserIds,
-    role
+    role,
+    scannedMessages,
+    requiredTeamSize,
+    roledUserIds
   );
 
   let rulesAckNote = "";
@@ -642,38 +742,52 @@ async function finishRoletagged(
 
   const missingRulesLabels = [];
 
-  if (twoLobbies) {
-    missingRulesLabels.push(
-      ...(await applyTeamSignupReactions(lobby1Teams, {
-        acknowledgementMessages,
-        teamLabel: "Lobby 1 Team"
-      }))
-    );
+  const acceptedMessageIds = new Set();
 
-    missingRulesLabels.push(
-      ...(await applyTeamSignupReactions(lobby2Teams, {
-        acknowledgementMessages,
-        teamLabel: "Lobby 2 Team"
-      }))
-    );
-  } else {
-    missingRulesLabels.push(
-      ...(await applyTeamSignupReactions(roledTeams, {
-        acknowledgementMessages,
-        teamLabel: "Team"
-      }))
-    );
+  if (validTeams.length > 0) {
+    for (const team of [...roledTeams, ...overflowTeams]) {
+      acceptedMessageIds.add(team.message.id);
+    }
+
+    if (twoLobbies) {
+      missingRulesLabels.push(
+        ...(await applyTeamSignupReactions(lobby1Teams, {
+          acknowledgementMessages,
+          teamLabel: "Lobby 1 Team"
+        }))
+      );
+
+      missingRulesLabels.push(
+        ...(await applyTeamSignupReactions(lobby2Teams, {
+          acknowledgementMessages,
+          teamLabel: "Lobby 2 Team"
+        }))
+      );
+    } else {
+      missingRulesLabels.push(
+        ...(await applyTeamSignupReactions(roledTeams, {
+          acknowledgementMessages,
+          teamLabel: "Team"
+        }))
+      );
+    }
+
+    if (overflowTeams.length > 0) {
+      missingRulesLabels.push(
+        ...(await applyTeamSignupReactions(overflowTeams, {
+          asOverflow: true,
+          acknowledgementMessages,
+          teamLabel: "Overflow Team"
+        }))
+      );
+    }
   }
 
-  if (overflowTeams.length > 0) {
-    missingRulesLabels.push(
-      ...(await applyTeamSignupReactions(overflowTeams, {
-        asOverflow: true,
-        acknowledgementMessages,
-        teamLabel: "Overflow Team"
-      }))
+  const rejectedSignupsMarked =
+    await syncNonAcceptedSignupReactions(
+      scannedMessages,
+      acceptedMessageIds
     );
-  }
 
   if (acknowledgementMessages !== null) {
     rulesAckNote = formatMissingRulesAckNote(missingRulesLabels);
@@ -691,8 +805,8 @@ async function finishRoletagged(
       : "";
 
   const invalidSignupNote =
-    invalidReactionsCleared > 0
-      ? `\nInvalid signups cleared: ${invalidReactionsCleared}`
+    invalidSignupsMarked > 0 || rejectedSignupsMarked > 0
+      ? `\nInvalid signups marked ✋: ${invalidSignupsMarked + rejectedSignupsMarked}`
       : "";
 
   const lobbyNote = twoLobbies
@@ -703,13 +817,17 @@ async function finishRoletagged(
 
   const result =
 
-    "Role assignment complete\n" +
+    (validTeams.length === 0
+      ? (emptyResultLabel || "No teams selected for role assignment.") + "\n"
+      : "Role assignment complete\n") +
       "Mode: " + (MODE_LABELS[requiredTeamSize] || requiredTeamSize) +
       (twoLobbies ? " (capacity per lobby)" : "") + "\n" +
       "Reload: " + (isReload ? "Yes" : "No") + "\n" +
     "Role: " + role.name + "\n" +
     "Added: " + added + "\n" +
     "Skipped: " + skipped + "\n" +
+    "Removed: " + removed + "\n" +
+    "Remove skipped: " + removeSkipped + "\n" +
     "Valid Teams: " + validTeams.length + "\n" +
     "Roled Teams: " + roledTeams.length + "\n" +
     "Overflow Teams: " + overflowTeams.length +
@@ -872,8 +990,8 @@ module.exports = {
     const orderedMessages =
       [...messages.values()].reverse();
 
-    const invalidReactionsCleared =
-      await clearReactionsOnInvalidSignups(
+    const invalidSignupsMarked =
+      await syncInvalidSignupReactions(
         orderedMessages,
         requiredTeamSize
       );
@@ -1034,15 +1152,26 @@ module.exports = {
       eligibleTeams.length === 0 &&
       flaggedTeams.length === 0
     ) {
-      const clearedNote =
-        invalidReactionsCleared > 0
-          ? `\nCleared reactions on ${invalidReactionsCleared} invalid signup(s).`
-          : "";
-
-      return sendRoletaggedReply(
+      await sendRoletaggedReply(
         interaction,
-        "No eligible signups found." + clearedNote
+        "Processing signup cleanup…"
       );
+
+      return finishRoletagged(interaction, {
+        validTeams: [],
+        skippedBannedTeams: [],
+        includedDespiteBan: false,
+        tierRejectedCount,
+        invalidSignupsMarked,
+        scannedMessages: orderedMessages,
+        emptyResultLabel: "No eligible signups found.",
+        role,
+        isReload,
+        requiredTeamSize,
+        twoLobbies,
+        channel,
+        guild
+      });
     }
 
     const eligibleMessageIds = new Set(
@@ -1115,17 +1244,11 @@ module.exports = {
 
     }
 
-    if (validTeams.length === 0) {
-
-      return sendRoletaggedReply(
-        interaction,
-        "No teams selected for role assignment."
-      );
-    }
-
     await sendRoletaggedReply(
       interaction,
-      "Processing role assignment and signup reactions…"
+      validTeams.length === 0
+        ? "Processing signup cleanup…"
+        : "Processing role assignment and signup reactions…"
     );
 
     await finishRoletagged(interaction, {
@@ -1133,7 +1256,8 @@ module.exports = {
       skippedBannedTeams,
       includedDespiteBan,
       tierRejectedCount,
-      invalidReactionsCleared,
+      invalidSignupsMarked,
+      scannedMessages: orderedMessages,
       role,
       isReload,
       requiredTeamSize,
