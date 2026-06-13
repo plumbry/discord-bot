@@ -27,9 +27,7 @@ const {
 } = require("../lib/rulesAcknowledgement");
 
 const {
-  getInvalidSignupUserIds,
   getNonBotMentionedUsers,
-  getSignupUserIdsToUnrole,
   messageHasExactTaggedPlayers,
   syncInvalidSignupReactions,
   syncNonAcceptedSignupReactions
@@ -544,24 +542,27 @@ async function removeRolesInBatches(
 async function syncSignupChannelRoles(
   guild,
   role,
-  scannedMessages,
-  requiredTeamSize,
   keepUserIds
 ) {
 
-  const removeUserIds = new Set([
-    ...getInvalidSignupUserIds(
-      scannedMessages,
-      requiredTeamSize
-    ),
-    ...getSignupUserIdsToUnrole(
-      scannedMessages,
-      keepUserIds
-    )
-  ]);
+  await guild.members.fetch();
 
-  for (const userId of keepUserIds) {
-    removeUserIds.delete(userId);
+  const removeUserIds = new Set();
+
+  for (const member of guild.members.cache.values()) {
+    if (member.user.bot) {
+      continue;
+    }
+
+    if (!member.roles.cache.has(role.id)) {
+      continue;
+    }
+
+    if (keepUserIds.has(member.id)) {
+      continue;
+    }
+
+    removeUserIds.add(member.id);
   }
 
   const { removed, skipped: removeSkipped } =
@@ -713,8 +714,6 @@ async function finishRoletagged(
   } = await syncSignupChannelRoles(
     guild,
     role,
-    scannedMessages,
-    requiredTeamSize,
     roledUserIds
   );
 
