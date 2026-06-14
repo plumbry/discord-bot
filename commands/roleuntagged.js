@@ -3,12 +3,10 @@ const {
   PermissionFlagsBits
 } = require("discord.js");
 
-const { MESSAGE_SCAN_LIMIT } = require("../lib/signupTeamScan");
-
 const {
-  collectUsersFromUntaggedMessages,
-  createNameResolveSession
-} = require("../lib/untaggedSignupScan");
+  MESSAGE_SCAN_LIMIT,
+  collectMentionedUsersFromMessages
+} = require("../lib/signupTeamScan");
 
 const {
   sendCommandReply,
@@ -21,7 +19,7 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName("roleuntagged")
     .setDescription(
-      "Give a role to every plain username listed in this channel (no @mentions)"
+      "Give a role to every @mentioned user in this channel (no team checks)"
     )
 
     .addRoleOption(option =>
@@ -41,37 +39,25 @@ module.exports = {
     }
 
     const role = interaction.options.getRole("role");
-    const channel = interaction.channel;
     const guild = interaction.guild;
-    const sessionCache = createNameResolveSession();
 
-    const messages = await channel.messages.fetch({
+    const messages = await interaction.channel.messages.fetch({
       limit: MESSAGE_SCAN_LIMIT
     });
 
-    const orderedMessages = [...messages.values()].reverse();
+    const mentionedUsers = collectMentionedUsersFromMessages(
+      [...messages.values()]
+    );
 
-    const { resolvedUsers, unresolved } =
-      await collectUsersFromUntaggedMessages(
-        orderedMessages,
-        guild,
-        sessionCache
-      );
-
-    if (resolvedUsers.length === 0) {
-      const unresolvedNote =
-        unresolved.length > 0
-          ? `\nCould not resolve: ${unresolved.map(entry => entry.slot).join(", ")}`
-          : "";
-
+    if (mentionedUsers.length === 0) {
       return sendCommandReply(
         interaction,
-        "No usernames found to role." + unresolvedNote
+        "No @mentioned users found in recent messages."
       );
     }
 
     const keepUserIds = new Set(
-      resolvedUsers.map(user => user.id)
+      mentionedUsers.map(user => user.id)
     );
 
     const {
@@ -85,20 +71,14 @@ module.exports = {
       keepUserIds
     );
 
-    const unresolvedNote =
-      unresolved.length > 0
-        ? `\nUnresolved (${unresolved.length}): ${unresolved.map(entry => entry.slot).slice(0, 20).join(", ")}${unresolved.length > 20 ? "…" : ""}`
-        : "";
-
     const result =
       "Role assignment complete\n" +
       "Role: " + role.name + "\n" +
-      "Usernames matched: " + resolvedUsers.length + "\n" +
+      "Users tagged: " + mentionedUsers.length + "\n" +
       "Added: " + added + "\n" +
       "Skipped: " + skipped + "\n" +
       "Removed: " + removed + "\n" +
-      "Remove skipped: " + removeSkipped +
-      unresolvedNote;
+      "Remove skipped: " + removeSkipped;
 
     try {
       const logChannel =
@@ -108,7 +88,7 @@ module.exports = {
         "Role Assigned via /roleuntagged\n" +
         "Moderator: " + interaction.user.tag + "\n" +
         "Role: " + role.name + "\n" +
-        "Users: " + resolvedUsers.length
+        "Users: " + mentionedUsers.length
       );
     } catch {}
 
