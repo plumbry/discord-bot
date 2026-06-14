@@ -26,7 +26,7 @@ const {
   formatUnresolvedSignupMessage,
   messageHasMentions,
   messageHasValidUntaggedFormat,
-  resolveUntaggedTeamUsers,
+  resolveUntaggedTeamsFromMessage,
   syncInvalidUntaggedSignupReactions
 } = require("../lib/untaggedSignupScan");
 
@@ -44,7 +44,7 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName(COMMAND_NAME)
     .setDescription(
-      "Give roles to untagged signups (plain usernames, not @mentions)"
+      "Give roles from a bulk untagged signup list (one message, one team per line)"
     )
 
     .addRoleOption(option =>
@@ -157,38 +157,45 @@ module.exports = {
         continue;
       }
 
-      const resolved = await resolveUntaggedTeamUsers(
+      const {
+        teams,
+        failures,
+        invalidLines
+      } = await resolveUntaggedTeamsFromMessage(
         msg,
         requiredTeamSize,
         guild,
         sessionCache
       );
 
-      if (!resolved.ok) {
-        unresolvedRejectedCount++;
+      unresolvedRejectedCount += failures.length + invalidLines.length;
 
-        const notice = formatUnresolvedSignupMessage(resolved);
+      for (const failure of failures) {
+        const notice = formatUnresolvedSignupMessage(failure);
 
         if (notice) {
           try {
             await channel.send(notice);
           } catch {}
         }
-
-        continue;
       }
 
-      candidateTeams.push({
-        message: msg,
-        users: resolved.users
-      });
+      for (const team of teams) {
+        candidateTeams.push({
+          message: msg,
+          users: team.users,
+          lineIndex: team.lineIndex,
+          line: team.line,
+          signupKey: team.signupKey
+        });
 
-      for (const user of resolved.users) {
-        if (!playerSignupMap.has(user.id)) {
-          playerSignupMap.set(user.id, []);
+        for (const user of team.users) {
+          if (!playerSignupMap.has(user.id)) {
+            playerSignupMap.set(user.id, []);
+          }
+
+          playerSignupMap.get(user.id).push(team.signupKey);
         }
-
-        playerSignupMap.get(user.id).push(msg.id);
       }
     }
 
@@ -298,7 +305,7 @@ module.exports = {
         tierRejectedCount,
         invalidSignupsMarked,
         scannedMessages: orderedMessages,
-        emptyResultLabel: "No eligible untagged signups found.",
+        emptyResultLabel: "No eligible untagged signups found in list messages.",
         role,
         isReload,
         requiredTeamSize,
@@ -306,14 +313,15 @@ module.exports = {
         channel,
         guild,
         teamLimits: TEAM_LIMITS,
-        extraNotes: unresolvedNote
+        extraNotes: unresolvedNote,
+        skipSignupReactions: true
       });
     }
 
-    const eligibleMessageIds = new Set(
-      eligibleTeams.map(team => team.message.id)
+    const eligibleTeamKeys = new Set(
+      eligibleTeams.map(team => team.signupKey)
     );
-    const flaggedByMessageId =
+    const flaggedByKey =
       buildFlaggedTeamLookup(flaggedTeams);
 
     let validTeams = [...eligibleTeams];
@@ -347,8 +355,8 @@ module.exports = {
       ({ validTeams, skippedBannedTeams } =
         resolveValidTeamsInSignupOrder(
           candidateTeams,
-          eligibleMessageIds,
-          flaggedByMessageId,
+          eligibleTeamKeys,
+          flaggedByKey,
           includeBanned
         ));
 
@@ -395,7 +403,8 @@ module.exports = {
       channel,
       guild,
       teamLimits: TEAM_LIMITS,
-      extraNotes: unresolvedNote
+      extraNotes: unresolvedNote,
+      skipSignupReactions: true
     });
   },
 

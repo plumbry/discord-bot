@@ -31,6 +31,8 @@ const { forEachGuildMemberPage } = require("../lib/guildMemberList");
 const {
   getNonBotMentionedUsers,
   messageHasExactTaggedPlayers,
+  buildFlaggedTeamLookup,
+  resolveValidTeamsInSignupOrder,
   splitValidTeams,
   syncInvalidSignupReactions,
   syncNonAcceptedSignupReactions
@@ -383,49 +385,6 @@ function formatMissingRulesAckNote(missingLabels) {
     `\nTeams missing rules acknowledgement: ${missingLabels.length}\n` +
     missingLabels.join("\n")
   );
-}
-
-function buildFlaggedTeamLookup(flaggedTeams) {
-  const flaggedByMessageId = new Map();
-
-  for (const entry of flaggedTeams) {
-    flaggedByMessageId.set(entry.team.message.id, entry);
-  }
-
-  return flaggedByMessageId;
-}
-
-function resolveValidTeamsInSignupOrder(
-  candidateTeams,
-  eligibleMessageIds,
-  flaggedByMessageId,
-  includeBanned
-) {
-  const validTeams = [];
-  const skippedBannedTeams = [];
-
-  for (const team of candidateTeams) {
-    const messageId = team.message.id;
-
-    if (eligibleMessageIds.has(messageId)) {
-      validTeams.push(team);
-      continue;
-    }
-
-    const flagged = flaggedByMessageId.get(messageId);
-
-    if (!flagged) {
-      continue;
-    }
-
-    if (includeBanned) {
-      validTeams.push(team);
-    } else {
-      skippedBannedTeams.push(flagged);
-    }
-  }
-
-  return { validTeams, skippedBannedTeams };
 }
 
 async function clearSkippedBannedSignupReactions(skippedBannedTeams) {
