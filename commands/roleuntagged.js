@@ -22,7 +22,7 @@ const {
 } = require("../lib/signupTeamScan");
 
 const {
-  buildMemberNameLookup,
+  createNameResolveSession,
   formatUnresolvedSignupMessage,
   messageHasMentions,
   messageHasValidUntaggedFormat,
@@ -123,8 +123,7 @@ module.exports = {
       );
     }
 
-    await guild.members.fetch();
-    const memberLookup = buildMemberNameLookup(guild);
+    const sessionCache = createNameResolveSession();
 
     const messages = await channel.messages.fetch({
       limit: MESSAGE_SCAN_LIMIT
@@ -136,7 +135,8 @@ module.exports = {
       await syncInvalidUntaggedSignupReactions(
         orderedMessages,
         requiredTeamSize,
-        memberLookup
+        guild,
+        sessionCache
       );
 
     const candidateTeams = [];
@@ -157,10 +157,11 @@ module.exports = {
         continue;
       }
 
-      const resolved = resolveUntaggedTeamUsers(
+      const resolved = await resolveUntaggedTeamUsers(
         msg,
         requiredTeamSize,
-        memberLookup
+        guild,
+        sessionCache
       );
 
       if (!resolved.ok) {

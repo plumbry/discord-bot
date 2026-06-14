@@ -26,6 +26,8 @@ const {
   loadRulesAcknowledgementMessages
 } = require("../lib/rulesAcknowledgement");
 
+const { forEachGuildMemberPage } = require("../lib/guildMemberList");
+
 const {
   getNonBotMentionedUsers,
   messageHasExactTaggedPlayers,
@@ -545,25 +547,25 @@ async function syncSignupChannelRoles(
   keepUserIds
 ) {
 
-  await guild.members.fetch();
-
   const removeUserIds = new Set();
 
-  for (const member of guild.members.cache.values()) {
-    if (member.user.bot) {
-      continue;
-    }
+  await forEachGuildMemberPage(guild, async batch => {
+    for (const member of batch.values()) {
+      if (member.user.bot) {
+        continue;
+      }
 
-    if (!member.roles.cache.has(role.id)) {
-      continue;
-    }
+      if (!member.roles.cache.has(role.id)) {
+        continue;
+      }
 
-    if (keepUserIds.has(member.id)) {
-      continue;
-    }
+      if (keepUserIds.has(member.id)) {
+        continue;
+      }
 
-    removeUserIds.add(member.id);
-  }
+      removeUserIds.add(member.id);
+    }
+  });
 
   const { removed, skipped: removeSkipped } =
     await removeRolesInBatches(
