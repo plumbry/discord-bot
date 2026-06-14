@@ -31,6 +31,7 @@ const { forEachGuildMemberPage } = require("../lib/guildMemberList");
 const {
   getNonBotMentionedUsers,
   messageHasExactTaggedPlayers,
+  splitValidTeams,
   syncInvalidSignupReactions,
   syncNonAcceptedSignupReactions
 } = require("../lib/signupTeamScan");
@@ -384,69 +385,6 @@ function formatMissingRulesAckNote(missingLabels) {
   );
 }
 
-function collectRulesAckMissingLabels(
-  teams,
-  acknowledgementMessages,
-  {
-    teamLabel = "Team",
-    startNumber = 1
-  } = {}
-) {
-  if (acknowledgementMessages === null) {
-    return [];
-  }
-
-  const missingLabels = [];
-  let teamNumber = startNumber;
-
-  for (const team of teams) {
-    const acknowledged = isTeamAcknowledged(
-      team.users.map(user => user.id),
-      acknowledgementMessages
-    );
-
-    if (!acknowledged) {
-      missingLabels.push(`${teamLabel} ${teamNumber}`);
-    }
-
-    teamNumber++;
-  }
-
-  return missingLabels;
-}
-
-function splitTeamsForAssignment(
-  validTeams,
-  {
-    isReload,
-    requiredTeamSize,
-    twoLobbies
-  }
-) {
-  const teamLimit =
-    TEAM_LIMITS[isReload ? "reload" : "normal"][requiredTeamSize];
-
-  if (twoLobbies) {
-    const lobby1Teams = validTeams.slice(0, teamLimit);
-    const lobby2Teams = validTeams.slice(teamLimit, teamLimit * 2);
-    const overflowTeams = validTeams.slice(teamLimit * 2);
-
-    return {
-      roledTeams: [...lobby1Teams, ...lobby2Teams],
-      lobby1Teams,
-      lobby2Teams,
-      overflowTeams
-    };
-  }
-
-  return {
-    roledTeams: validTeams.slice(0, teamLimit),
-    lobby1Teams: [],
-    lobby2Teams: [],
-    overflowTeams: validTeams.slice(teamLimit)
-  };
-}
-
 function buildFlaggedTeamLookup(flaggedTeams) {
   const flaggedByMessageId = new Map();
 
@@ -719,180 +657,6 @@ async function promptBannedTeamDecision(interaction, flaggedTeams) {
 
 }
 
-async function finishRulesCheckOnly(
-  interaction,
-  {
-    validTeams,
-    skippedBannedTeams,
-    includedDespiteBan,
-    tierRejectedCount,
-    role,
-    isReload,
-    requiredTeamSize,
-    twoLobbies,
-    channel,
-    guild
-  }
-) {
-
-  const {
-    roledTeams,
-    lobby1Teams,
-    lobby2Teams,
-    overflowTeams
-  } = splitTeamsForAssignment(validTeams, {
-    isReload,
-    requiredTeamSize,
-    twoLobbies
-  });
-
-  let rulesAckNote = "";
-  let acknowledgementMessages = null;
-  const category = channel.parent;
-
-  if (!category) {
-    rulesAckNote =
-      "\nRules acknowledgement: skipped (signup channel is not in an event category).";
-  } else {
-    const rulesChannel = findRulesAcknowledgementChannel(
-      guild,
-      category.id
-    );
-
-    if (!rulesChannel) {
-      rulesAckNote =
-        "\nRules acknowledgement: no acknowledge-rules channel found in this category.";
-    } else {
-      acknowledgementMessages =
-        await loadRulesAcknowledgementMessages(rulesChannel);
-    }
-  }
-
-  const missingLabels = [];
-
-  if (acknowledgementMessages !== null && validTeams.length > 0) {
-    if (twoLobbies) {
-      missingLabels.push(
-        ...collectRulesAckMissingLabels(
-          lobby1Teams,
-          acknowledgementMessages,
-          { teamLabel: "Lobby 1 Team" }
-        ),
-        ...collectRulesAckMissingLabels(
-          lobby2Teams,
-          acknowledgementMessages,
-          { teamLabel: "Lobby 2 Team" }
-        ),
-        ...collectRulesAckMissingLabels(
-          overflowTeams,
-          acknowledgementMessages,
-          { teamLabel: "Overflow Team" }
-        )
-      );
-    } else {
-      missingLabels.push(
-        ...collectRulesAckMissingLabels(
-          roledTeams,
-          acknowledgementMessages,
-          { teamLabel: "Team" }
-        ),
-        ...collectRulesAckMissingLabels(
-          overflowTeams,
-          acknowledgementMessages,
-          { teamLabel: "Overflow Team" }
-        )
-      );
-    }
-
-    rulesAckNote = formatMissingRulesAckNote(missingLabels);
-  }
-
-  const banNote = includedDespiteBan
-    ? "\nBanned teams: included by moderator"
-    : skippedBannedTeams.length > 0
-      ? `\nBanned teams skipped: ${skippedBannedTeams.length}`
-      : "";
-
-  const tierNote =
-    tierRejectedCount > 0
-      ? `\nInvalid tier combos rejected: ${tierRejectedCount}`
-      : "";
-
-  const lobbyNote = twoLobbies
-    ? "\nTwo lobbies: Yes\n" +
-      "Lobby 1 Teams: " + lobby1Teams.length + "\n" +
-      "Lobby 2 Teams: " + lobby2Teams.length
-    : "";
-
-  const result =
-
-    (validTeams.length === 0
-      ? "No eligible signups to check.\n"
-      : "Rules acknowledgement check\n") +
-      "Mode: " + (MODE_LABELS[requiredTeamSize] || requiredTeamSize) +
-      (twoLobbies ? " (capacity per lobby)" : "") + "\n" +
-      "Reload: " + (isReload ? "Yes" : "No") + "\n" +
-    (role ? "Role: " + role.name + "\n" : "") +
-    "Valid Teams: " + validTeams.length + "\n" +
-    "Roled Teams: " + roledTeams.length + "\n" +
-    "Overflow Teams: " + overflowTeams.length +
-    lobbyNote +
-    banNote +
-    tierNote +
-    rulesAckNote;
-
-  try {
-
-    const logChannel =
-      await guild.channels.fetch(LOG_CHANNEL_ID);
-
-    await logChannel.send(
-
-      "Rules check via /roletagged\n" +
-      "Moderator: " +
-      interaction.user.tag +
-      (role ? "\nRole: " + role.name : "") +
-      "\nMode: " +
-      (MODE_LABELS[requiredTeamSize] || requiredTeamSize) +
-      "\nReload: " +
-      (isReload ? "Yes" : "No") +
-      (twoLobbies
-        ? "\nTwo lobbies: Yes (L1=" + lobby1Teams.length +
-          " L2=" + lobby2Teams.length + ")"
-        : "") +
-      "\nTeams: " +
-      validTeams.length +
-      banNote +
-      tierNote +
-      rulesAckNote
-    );
-
-  } catch {}
-
-  try {
-
-    await logAudit({
-
-      action: "ROLE_TAGGED_RULES_CHECK",
-
-      moderator: interaction.user,
-
-      context:
-        `role=${role?.id || "none"} mode=${requiredTeamSize} reload=${isReload} ` +
-        `two_lobbies=${twoLobbies} teams=${validTeams.length} ` +
-        `included_banned=${includedDespiteBan} skipped_banned=${skippedBannedTeams.length}`
-    });
-
-  } catch (err) {
-
-    console.error(err);
-
-  }
-
-  await sendRoletaggedReply(interaction, result);
-
-}
-
 async function finishRoletagged(
   interaction,
   {
@@ -917,7 +681,7 @@ async function finishRoletagged(
     lobby1Teams,
     lobby2Teams,
     overflowTeams
-  } = splitTeamsForAssignment(validTeams, {
+  } = splitValidTeams(validTeams, {
     isReload,
     requiredTeamSize,
     twoLobbies
@@ -1125,8 +889,8 @@ module.exports = {
 
     .addRoleOption(o =>
       o.setName("role")
-        .setDescription("Role to give (not used when check rules only)")
-        .setRequired(false)
+        .setDescription("Role to give")
+        .setRequired(true)
     )
 
     .addStringOption(o =>
@@ -1155,14 +919,6 @@ module.exports = {
         .setRequired(false)
     )
 
-    .addBooleanOption(o =>
-      o.setName("check_rules_only")
-        .setDescription(
-          "Only check rules acknowledgement; no roles or reactions"
-        )
-        .setRequired(false)
-    )
-
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ManageRoles
     ),
@@ -1181,16 +937,6 @@ module.exports = {
 
     const role =
       interaction.options.getRole("role");
-
-    const checkRulesOnly =
-      interaction.options.getBoolean("check_rules_only") || false;
-
-    if (!checkRulesOnly && !role) {
-      return sendRoletaggedReply(
-        interaction,
-        "A role is required unless **check rules only** is enabled."
-      );
-    }
 
     const isReload =
       interaction.options.getBoolean("reload") || false;
@@ -1235,9 +981,8 @@ module.exports = {
     const orderedMessages =
       [...messages.values()].reverse();
 
-    const invalidSignupsMarked = checkRulesOnly
-      ? 0
-      : await syncInvalidSignupReactions(
+    const invalidSignupsMarked =
+      await syncInvalidSignupReactions(
         orderedMessages,
         requiredTeamSize
       );
@@ -1398,21 +1143,6 @@ module.exports = {
       eligibleTeams.length === 0 &&
       flaggedTeams.length === 0
     ) {
-      if (checkRulesOnly) {
-        return finishRulesCheckOnly(interaction, {
-          validTeams: [],
-          skippedBannedTeams: [],
-          includedDespiteBan: false,
-          tierRejectedCount,
-          role,
-          isReload,
-          requiredTeamSize,
-          twoLobbies,
-          channel,
-          guild
-        });
-      }
-
       await sendRoletaggedReply(
         interaction,
         "Processing signup cleanup…"
@@ -1462,9 +1192,7 @@ module.exports = {
 
         return sendRoletaggedReply(
           interaction,
-          checkRulesOnly
-            ? "Cancelled — no rules check performed."
-            : "Cancelled — no roles were assigned."
+          "Cancelled — no roles were assigned."
         );
 
       }
@@ -1485,48 +1213,26 @@ module.exports = {
 
       } else {
 
-        if (!checkRulesOnly) {
-          for (const { team, blockReason } of skippedBannedTeams) {
+        for (const { team, blockReason } of skippedBannedTeams) {
 
-            try {
+          try {
 
-              await channel.send(
-                `Skipped signup (event ban): ${team.users.map(
-                  u => `<@${u.id}>`
-                ).join(" ")}\n${formatSignupBlockMessage(blockReason)}`
-              );
+            await channel.send(
+              `Skipped signup (event ban): ${team.users.map(
+                u => `<@${u.id}>`
+              ).join(" ")}\n${formatSignupBlockMessage(blockReason)}`
+            );
 
-            } catch {}
+          } catch {}
 
-          }
-
-          await clearSkippedBannedSignupReactions(
-            skippedBannedTeams
-          );
         }
+
+        await clearSkippedBannedSignupReactions(
+          skippedBannedTeams
+        );
 
       }
 
-    }
-
-    if (checkRulesOnly) {
-      await sendRoletaggedReply(
-        interaction,
-        "Checking rules acknowledgement…"
-      );
-
-      return finishRulesCheckOnly(interaction, {
-        validTeams,
-        skippedBannedTeams,
-        includedDespiteBan,
-        tierRejectedCount,
-        role,
-        isReload,
-        requiredTeamSize,
-        twoLobbies,
-        channel,
-        guild
-      });
     }
 
     await sendRoletaggedReply(

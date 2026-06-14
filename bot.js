@@ -921,11 +921,12 @@ client.on(
   "interactionCreate",
   async interaction => {
 
-    // Acknowledge long-running /roletagged, /roleuntagged, and /unreg before other handler work.
+    // Acknowledge long-running signup commands before other handler work.
     if (
       interaction.isChatInputCommand() &&
       (interaction.commandName === "roletagged" ||
         interaction.commandName === "roleuntagged" ||
+        interaction.commandName === "checkrules" ||
         interaction.commandName === "unreg") &&
       !interaction.deferred &&
       !interaction.replied
