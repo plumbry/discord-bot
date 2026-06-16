@@ -272,6 +272,7 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages,
@@ -936,7 +937,8 @@ client.on(
       (interaction.commandName === "roletagged" ||
         interaction.commandName === "roleuntagged" ||
         interaction.commandName === "checkrules" ||
-        interaction.commandName === "unreg") &&
+        interaction.commandName === "unreg" ||
+        interaction.commandName === "voicecheck") &&
       !interaction.deferred &&
       !interaction.replied
     ) {
