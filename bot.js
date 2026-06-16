@@ -10,6 +10,7 @@ const GUILD_ID =
 const {
   Client,
   GatewayIntentBits,
+  Partials,
   REST,
   Routes,
   ModalBuilder,
@@ -274,7 +275,15 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages,
-    GatewayIntentBits.GuildScheduledEvents
+    GatewayIntentBits.GuildScheduledEvents,
+    GatewayIntentBits.GuildMessageReactions
+  ],
+  partials: [
+    Partials.Message,
+    Partials.Channel,
+    Partials.Reaction,
+    Partials.User,
+    Partials.GuildMember
   ]
 });
 
@@ -1414,12 +1423,39 @@ WHO IS NOT IN <@&${call.roleId}>`
 // ================= MESSAGE DELETE (rules/bans tracking) =================
 
 const { handleBansMessageDeleted } = require("./lib/eventBansShared");
+const {
+  handleReactionAdd,
+  handleReactionRemove,
+  handleMessageDelete: handleReactionRoleMessageDelete
+} = require("./lib/reactionRoles");
 
 client.on("messageDelete", async message => {
   try {
     await handleBansMessageDeleted(message);
   } catch (err) {
     console.error("[BANS MESSAGE DELETE]", err?.message || err);
+  }
+
+  try {
+    handleReactionRoleMessageDelete(message);
+  } catch (err) {
+    console.error("[REACTION ROLES MESSAGE DELETE]", err?.message || err);
+  }
+});
+
+client.on("messageReactionAdd", async (reaction, user) => {
+  try {
+    await handleReactionAdd(reaction, user);
+  } catch (err) {
+    console.error("[REACTION ROLES ADD]", err?.message || err);
+  }
+});
+
+client.on("messageReactionRemove", async (reaction, user) => {
+  try {
+    await handleReactionRemove(reaction, user);
+  } catch (err) {
+    console.error("[REACTION ROLES REMOVE]", err?.message || err);
   }
 });
 
