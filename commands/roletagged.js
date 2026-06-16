@@ -31,6 +31,8 @@ const { forEachGuildMemberPage } = require("../lib/guildMemberList");
 const {
   getNonBotMentionedUsers,
   messageHasExactTaggedPlayers,
+  messageHasValidDuoSoloPairingSignup,
+  applyDuoSoloPairingFilter,
   buildFlaggedTeamLookup,
   resolveValidTeamsInSignupOrder,
   splitValidTeams,
@@ -878,6 +880,14 @@ module.exports = {
         .setRequired(false)
     )
 
+    .addBooleanOption(o =>
+      o.setName("duo_solo_pairing")
+        .setDescription(
+          "Pair solo and duo signups 1:1 (limits by min count and mode cap)"
+        )
+        .setRequired(false)
+    )
+
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ManageRoles
     ),
@@ -902,6 +912,9 @@ module.exports = {
 
     const twoLobbies =
       interaction.options.getBoolean("two_lobbies") || false;
+
+    const duoSoloPairing =
+      interaction.options.getBoolean("duo_solo_pairing") || false;
 
     const requiredTeamSize =
       parseInt(
@@ -943,14 +956,19 @@ module.exports = {
     const invalidSignupsMarked =
       await syncInvalidSignupReactions(
         orderedMessages,
-        requiredTeamSize
+        requiredTeamSize,
+        { duoSoloPairing }
       );
 
     // ================= SCAN =================
 
     for (const msg of orderedMessages) {
 
-      if (
+      if (duoSoloPairing) {
+        if (!messageHasValidDuoSoloPairingSignup(msg)) {
+          continue;
+        }
+      } else if (
         !messageHasExactTaggedPlayers(
           msg,
           requiredTeamSize
@@ -1035,7 +1053,9 @@ module.exports = {
         continue;
       }
 
-      const teamSizeForTier = requiredTeamSize;
+      const teamSizeForTier = duoSoloPairing
+        ? team.users.length
+        : requiredTeamSize;
 
       if (teamSizeForTier > 1) {
 
@@ -1192,6 +1212,16 @@ module.exports = {
 
       }
 
+    }
+
+    if (duoSoloPairing && validTeams.length > 0) {
+      const maxMatches =
+        TEAM_LIMITS[isReload ? "reload" : "normal"][requiredTeamSize];
+
+      validTeams = applyDuoSoloPairingFilter(
+        validTeams,
+        maxMatches
+      );
     }
 
     await sendRoletaggedReply(
