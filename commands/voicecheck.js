@@ -3,8 +3,10 @@ const {
   PermissionFlagsBits
 } = require("discord.js");
 
-const { forEachGuildMemberPage } = require("../lib/guildMemberList");
+const { getSheets } = require("../lib/sheets");
 
+const SPREADSHEET_ID = process.env.MAIN_SHEET_ID;
+const SHEET_NAME = "'Voice Log'";
 const MESSAGE_LIMIT = 1900;
 
 function splitDiscordMessages(text, limit = MESSAGE_LIMIT) {
@@ -42,8 +44,28 @@ function splitDiscordMessages(text, limit = MESSAGE_LIMIT) {
 }
 
 function isMemberInVoice(member, guild) {
-  const voiceState = member.voice ?? guild.voiceStates.cache.get(member.id);
+  const voiceState = guild.voiceStates.cache.get(member.id) ?? member.voice;
   return Boolean(voiceState?.channelId);
+}
+
+function getVoiceChannelName(member, guild) {
+  const voiceState = guild.voiceStates.cache.get(member.id) ?? member.voice;
+  const channelId = voiceState?.channelId;
+
+  if (!channelId) {
+    return "";
+  }
+
+  return guild.channels.cache.get(channelId)?.name || channelId;
+}
+
+async function appendRows(rows) {
+  await getSheets().spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${SHEET_NAME}!A1`,
+    valueInputOption: "RAW",
+    requestBody: { values: rows }
+  });
 }
 
 function buildReport(role, inVoice, notInVoice) {
@@ -91,27 +113,48 @@ module.exports = {
   async execute(interaction) {
     const role = interaction.options.getRole("role");
     const guild = interaction.guild;
+    const categoryName =
+      interaction.channel.parent?.name || "No Category";
+    const checkedBy = `<@${interaction.user.id}>`;
+    const checkedAt = new Date().toISOString();
+
+    await interaction.editReply("🔍 Fetching guild members…");
+
+    const allMembers = await guild.members.fetch();
 
     const inVoice = [];
     const notInVoice = [];
+    const rows = [];
 
-    await forEachGuildMemberPage(guild, async batch => {
-      for (const member of batch.values()) {
-        if (member.user.bot) {
-          continue;
-        }
-
-        if (!member.roles.cache.has(role.id)) {
-          continue;
-        }
-
-        if (isMemberInVoice(member, guild)) {
-          inVoice.push(member);
-        } else {
-          notInVoice.push(member);
-        }
+    for (const member of allMembers.values()) {
+      if (member.user.bot) {
+        continue;
       }
-    });
+
+      if (!member.roles.cache.has(role.id)) {
+        continue;
+      }
+
+      if (isMemberInVoice(member, guild)) {
+        inVoice.push(member);
+      } else {
+        notInVoice.push(member);
+      }
+
+      rows.push([
+        categoryName,
+        role.name,
+        `<@${member.id}>`,
+        isMemberInVoice(member, guild) ? "YES" : "NO",
+        getVoiceChannelName(member, guild),
+        checkedAt,
+        checkedBy
+      ]);
+    }
+
+    if (rows.length > 0) {
+      await appendRows(rows);
+    }
 
     const report = buildReport(role, inVoice, notInVoice);
     const chunks = splitDiscordMessages(report);
