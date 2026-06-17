@@ -345,18 +345,23 @@ process.once("SIGINT", () => {
   void gracefulShutdown("SIGINT");
 });
 
+// Automatic member sync is retired on the website (POST /api/discord/sync-member → 410).
+// Sync from Admin → Member Management → Discord sync tools. Manual /syncmembers still available.
+const MEMBER_SYNC_AUTO_ENABLED =
+  String(process.env.MEMBER_SYNC_AUTO_ENABLED || "false").toLowerCase() ===
+  "true";
 const MEMBER_SYNC_UPDATE_DEBOUNCE_MS = Number(
   process.env.MEMBER_SYNC_UPDATE_DEBOUNCE_MS || 2000
 );
 const MEMBER_SYNC_BACKFILL_INTERVAL_MS = Number(
-  process.env.MEMBER_SYNC_BACKFILL_INTERVAL_MS || 4 * 60 * 60 * 1000
+  process.env.MEMBER_SYNC_BACKFILL_INTERVAL_MS || 0
 );
-const MEMBER_SYNC_ON_JOIN = String(
-  process.env.MEMBER_SYNC_ON_JOIN || "false"
-).toLowerCase() !== "false";
-const MEMBER_SYNC_ON_UPDATE = String(
-  process.env.MEMBER_SYNC_ON_UPDATE || "false"
-).toLowerCase() === "true";
+const MEMBER_SYNC_ON_JOIN =
+  MEMBER_SYNC_AUTO_ENABLED &&
+  String(process.env.MEMBER_SYNC_ON_JOIN || "false").toLowerCase() === "true";
+const MEMBER_SYNC_ON_UPDATE =
+  MEMBER_SYNC_AUTO_ENABLED &&
+  String(process.env.MEMBER_SYNC_ON_UPDATE || "false").toLowerCase() === "true";
 
 const memberSyncDebounceTimers = new Map();
 const memberSyncSignatures = new Map();
@@ -424,7 +429,12 @@ async function syncMemberWithGuards(member, source) {
 }
 
 function scheduleMemberSync(member, source) {
-  if (!member || member.user?.bot || !hasMemberSyncApiKey()) {
+  if (
+    !MEMBER_SYNC_AUTO_ENABLED ||
+    !member ||
+    member.user?.bot ||
+    !hasMemberSyncApiKey()
+  ) {
     return;
   }
 
@@ -478,7 +488,7 @@ function scheduleFemalePendingRoleOnJoin(member) {
 }
 
 async function runFullMemberBackfill(client, reason) {
-  if (!hasMemberSyncApiKey()) {
+  if (!MEMBER_SYNC_AUTO_ENABLED || !hasMemberSyncApiKey()) {
     return;
   }
 
@@ -797,7 +807,11 @@ client.once("ready", async () => {
   })();
 
   // ================= MEMBER SYNC BACKFILL =================
-  if (hasMemberSyncApiKey()) {
+  if (!MEMBER_SYNC_AUTO_ENABLED) {
+    console.log(
+      "[MEMBER SYNC] automatic sync disabled (use website admin Discord sync tools)"
+    );
+  } else if (hasMemberSyncApiKey()) {
     console.log(
       `[MEMBER SYNC] config: on_join=${MEMBER_SYNC_ON_JOIN}, on_update=${MEMBER_SYNC_ON_UPDATE}, debounce_ms=${MEMBER_SYNC_UPDATE_DEBOUNCE_MS}, backfill_interval_ms=${MEMBER_SYNC_BACKFILL_INTERVAL_MS}`
     );
