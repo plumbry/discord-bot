@@ -31,8 +31,6 @@ const { forEachGuildMemberPage } = require("../lib/guildMemberList");
 const {
   getNonBotMentionedUsers,
   messageHasExactTaggedPlayers,
-  messageHasValidDuoSoloPairingSignup,
-  applyDuoSoloPairingFilter,
   buildFlaggedTeamLookup,
   resolveValidTeamsInSignupOrder,
   splitValidTeams,
@@ -632,6 +630,7 @@ async function finishRoletagged(
     isReload,
     requiredTeamSize,
     twoLobbies,
+    maxSignups,
     channel,
     guild
   }
@@ -645,7 +644,8 @@ async function finishRoletagged(
   } = splitValidTeams(validTeams, {
     isReload,
     requiredTeamSize,
-    twoLobbies
+    twoLobbies,
+    teamLimitOverride: maxSignups
   });
 
   const roledUserIds =
@@ -880,12 +880,14 @@ module.exports = {
         .setRequired(false)
     )
 
-    .addBooleanOption(o =>
-      o.setName("duo_solo_pairing")
+    .addIntegerOption(o =>
+      o.setName("max_signups")
         .setDescription(
-          "Pair solo and duo signups 1:1 (limits by min count and mode cap)"
+          "Max signups to role (first in order); omit for default mode cap"
         )
         .setRequired(false)
+        .setMinValue(1)
+        .setMaxValue(100)
     )
 
     .setDefaultMemberPermissions(
@@ -913,8 +915,8 @@ module.exports = {
     const twoLobbies =
       interaction.options.getBoolean("two_lobbies") || false;
 
-    const duoSoloPairing =
-      interaction.options.getBoolean("duo_solo_pairing") || false;
+    const maxSignups =
+      interaction.options.getInteger("max_signups");
 
     const requiredTeamSize =
       parseInt(
@@ -956,19 +958,14 @@ module.exports = {
     const invalidSignupsMarked =
       await syncInvalidSignupReactions(
         orderedMessages,
-        requiredTeamSize,
-        { duoSoloPairing }
+        requiredTeamSize
       );
 
     // ================= SCAN =================
 
     for (const msg of orderedMessages) {
 
-      if (duoSoloPairing) {
-        if (!messageHasValidDuoSoloPairingSignup(msg)) {
-          continue;
-        }
-      } else if (
+      if (
         !messageHasExactTaggedPlayers(
           msg,
           requiredTeamSize
@@ -1053,9 +1050,7 @@ module.exports = {
         continue;
       }
 
-      const teamSizeForTier = duoSoloPairing
-        ? team.users.length
-        : requiredTeamSize;
+      const teamSizeForTier = requiredTeamSize;
 
       if (teamSizeForTier > 1) {
 
@@ -1139,6 +1134,7 @@ module.exports = {
         isReload,
         requiredTeamSize,
         twoLobbies,
+        maxSignups,
         channel,
         guild
       });
@@ -1214,14 +1210,8 @@ module.exports = {
 
     }
 
-    if (duoSoloPairing && validTeams.length > 0) {
-      const maxMatches =
-        TEAM_LIMITS[isReload ? "reload" : "normal"][requiredTeamSize];
-
-      validTeams = applyDuoSoloPairingFilter(
-        validTeams,
-        maxMatches
-      );
+    if (maxSignups !== null) {
+      validTeams = validTeams.slice(0, maxSignups);
     }
 
     await sendRoletaggedReply(
@@ -1242,6 +1232,7 @@ module.exports = {
       isReload,
       requiredTeamSize,
       twoLobbies,
+      maxSignups,
       channel,
       guild
     });
