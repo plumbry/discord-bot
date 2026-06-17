@@ -5,6 +5,7 @@ const { getSheets } = require("../lib/sheets");
 const VERIFY_CATEGORY_ID = "1405195809057669271";
 const NEW_MEMBER_ROLE_ID = "1419812379692367902";
 const WELCOME_CHANNEL_ID = "1471071557991272459";
+const WELCOME_LOG_CHANNEL_ID = "1471082166535454780";
 
 const SPREADSHEET_ID = process.env.MAIN_SHEET_ID;
 const WELCOME_DM_RANGE = "Welcome DMs!A:E";
@@ -52,6 +53,9 @@ Let us know which option you prefer and we will get started!`;
 // ================= WELCOME BATCHING =================
 let welcomeQueue = [];
 let welcomeTimeout = null;
+
+/** @type {Set<string>} */
+const reactedWelcomeMembers = new Set();
 
 async function logWelcomeDM(member, status, error = "") {
   await getSheets().spreadsheets.values.append({
@@ -114,6 +118,63 @@ async function handleWelcome(member) {
   }
 }
 
+// ================= WELCOME REACTION =================
+async function handleWelcomeReaction(reaction, user) {
+  if (user.bot) {
+    return;
+  }
+
+  if (reaction.partial) {
+    try {
+      await reaction.fetch();
+    } catch {
+      return;
+    }
+  }
+
+  const message = reaction.message;
+
+  if (message.partial) {
+    await message.fetch().catch(() => null);
+  }
+
+  if (
+    !message?.guild ||
+    message.channelId !== WELCOME_CHANNEL_ID ||
+    message.author?.id !== message.client.user?.id ||
+    !message.mentions.users.has(user.id)
+  ) {
+    return;
+  }
+
+  const dedupeKey = `${message.id}:${user.id}`;
+
+  if (reactedWelcomeMembers.has(dedupeKey)) {
+    return;
+  }
+
+  reactedWelcomeMembers.add(dedupeKey);
+
+  try {
+    const logChannel = await message.guild.channels.fetch(
+      WELCOME_LOG_CHANNEL_ID
+    );
+
+    if (!logChannel?.isTextBased()) {
+      reactedWelcomeMembers.delete(dedupeKey);
+      return;
+    }
+
+    await logChannel.send(
+      `<@${user.id}> reacted to their welcome message — ready for manual role assignment.\n` +
+        `Message: https://discord.com/channels/${message.guild.id}/${message.channelId}/${message.id}`
+    );
+  } catch (err) {
+    reactedWelcomeMembers.delete(dedupeKey);
+    console.error("handleWelcomeReaction error:", err);
+  }
+}
+
 // ================= VERIFY HANDLER =================
 async function handleVerify(interaction) {
   try {
@@ -142,5 +203,6 @@ async function handleVerify(interaction) {
 module.exports = {
   verifyCommand,
   handleVerify,
-  handleWelcome
+  handleWelcome,
+  handleWelcomeReaction
 };

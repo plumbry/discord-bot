@@ -57,13 +57,15 @@ console.log("ENV CHECK:", {
 let verifyCommand = null;
 let handleVerify = null;
 let handleWelcome = null;
+let handleWelcomeReaction = null;
 
 try {
 
   ({
     verifyCommand,
     handleVerify,
-    handleWelcome
+    handleWelcome,
+    handleWelcomeReaction
   } = require("./welcome-ping"));
 
   console.log("✅ welcome module loaded");
@@ -1460,6 +1462,14 @@ client.on("messageDelete", async message => {
 });
 
 client.on("messageReactionAdd", async (reaction, user) => {
+  if (handleWelcomeReaction) {
+    try {
+      await handleWelcomeReaction(reaction, user);
+    } catch (err) {
+      console.error("[WELCOME REACTION]", err?.message || err);
+    }
+  }
+
   try {
     await handleReactionAdd(reaction, user);
   } catch (err) {
