@@ -10,6 +10,7 @@ const {
   formatEmojiLabel,
   canBotManageRole,
   savePanel,
+  getPanel,
   removePanel
 } = require("../lib/reactionRoles");
 
@@ -26,7 +27,7 @@ const MAX_PAIRS = 5;
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-function collectEmojiRolePairs(interaction) {
+function collectEmojiRolePairs(interaction, { requireAtLeastOne = true } = {}) {
   const pairs = [];
 
   for (let index = 1; index <= MAX_PAIRS; index++) {
@@ -56,7 +57,7 @@ function collectEmojiRolePairs(interaction) {
     pairs.push({ parsed, role });
   }
 
-  if (!pairs.length) {
+  if (!pairs.length && requireAtLeastOne) {
     return {
       ok: false,
       error: "Add at least one emoji and role pair (emoji1 + role1)."
@@ -116,6 +117,36 @@ function canPostInChannel(channel) {
   return { ok: true, channel };
 }
 
+function parseMessageId(raw) {
+  const idMatch = raw.trim().match(/(\d{17,20})/);
+  return idMatch ? idMatch[1] : null;
+}
+
+function buildMappingsAndSummaryLines(pairs) {
+  const mappings = {};
+  const summaryLines = [];
+
+  for (const { parsed, role } of pairs) {
+    mappings[parsed.id || parsed.name] = role.id;
+    summaryLines.push(`${formatEmojiLabel(parsed)} → ${role}`);
+  }
+
+  return { mappings, summaryLines };
+}
+
+async function applyMessageReactions(message, pairs) {
+  try {
+    await message.reactions.removeAll();
+  } catch (err) {
+    console.error("[REACTFORROLE] removeAll reactions failed:", err);
+  }
+
+  for (const { parsed } of pairs) {
+    await message.react(emojiReactArg(parsed));
+    await delay(REACT_DELAY_MS);
+  }
+}
+
 function addRequiredPairOption(subcommand) {
   return subcommand
     .addStringOption(option =>
@@ -145,6 +176,34 @@ function addOptionalPairOptions(subcommand) {
         option
           .setName(`role${index}`)
           .setDescription(`Optional role for emoji${index}`)
+          .setRequired(false)
+      );
+  }
+
+  return subcommand;
+}
+
+function addAllOptionalPairOptions(subcommand) {
+  for (let index = 1; index <= MAX_PAIRS; index++) {
+    subcommand
+      .addStringOption(option =>
+        option
+          .setName(`emoji${index}`)
+          .setDescription(
+            index === 1
+              ? "Optional emoji 1"
+              : `Optional emoji ${index}`
+          )
+          .setRequired(false)
+      )
+      .addRoleOption(option =>
+        option
+          .setName(`role${index}`)
+          .setDescription(
+            index === 1
+              ? "Optional role for emoji1"
+              : `Optional role for emoji${index}`
+          )
           .setRequired(false)
       );
   }
@@ -205,6 +264,42 @@ const data = new SlashCommandBuilder()
           .setRequired(true)
       )
   )
+  .addSubcommand(sub =>
+    addAllOptionalPairOptions(
+      sub
+        .setName("edit")
+        .setDescription("Edit an existing react-for-role message")
+        .addStringOption(option =>
+          option
+            .setName("message_id")
+            .setDescription("Message ID or message link")
+            .setRequired(true)
+        )
+        .addStringOption(option =>
+          option
+            .setName("message")
+            .setDescription("New message content")
+            .setRequired(false)
+            .setMaxLength(2000)
+        )
+        .addBooleanOption(option =>
+          option
+            .setName("exclusive")
+            .setDescription(
+              "Only keep one role from this message at a time"
+            )
+            .setRequired(false)
+        )
+        .addBooleanOption(option =>
+          option
+            .setName("remove_on_unreact")
+            .setDescription(
+              "Remove the role when the user removes their reaction"
+            )
+            .setRequired(false)
+        )
+    )
+  )
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles);
 
 async function executeCreate(interaction) {
@@ -262,28 +357,18 @@ async function executeCreate(interaction) {
     });
   }
 
-  const mappings = {};
-  const summaryLines = [];
+  const { mappings, summaryLines } = buildMappingsAndSummaryLines(
+    pairsResult.pairs
+  );
 
-  for (const { parsed, role } of pairsResult.pairs) {
-    try {
-      await posted.react(emojiReactArg(parsed));
-      await delay(REACT_DELAY_MS);
-    } catch (err) {
-      console.error("[REACTFORROLE] react failed:", err);
-
-      await posted.delete().catch(() => {});
-
-      return interaction.editReply({
-        content:
-          `❌ Failed to add reaction ${formatEmojiLabel(parsed)}. ` +
-          "Nothing was saved."
-      });
-    }
-
-    const key = parsed.id || parsed.name;
-    mappings[key] = role.id;
-    summaryLines.push(`${formatEmojiLabel(parsed)} → ${role}`);
+  try {
+    await applyMessageReactions(posted, pairsResult.pairs);
+  } catch (err) {
+    console.error("[REACTFORROLE] react failed:", err);
+    await posted.delete().catch(() => {});
+    return interaction.editReply({
+      content: "❌ Failed to add one or more reactions. Nothing was saved."
+    });
   }
 
   savePanel(guild.id, posted.id, {
@@ -308,17 +393,14 @@ async function executeCreate(interaction) {
 }
 
 async function executeRemove(interaction) {
-  const raw = interaction.options.getString("message_id").trim();
-  const idMatch = raw.match(/(\d{17,20})/);
-
-  if (!idMatch) {
+  const messageId = parseMessageId(interaction.options.getString("message_id"));
+  if (!messageId) {
     return interaction.reply({
       content: "❌ Provide a valid message ID or message link.",
       ephemeral: true
     });
   }
 
-  const messageId = idMatch[1];
   const removed = removePanel(interaction.guild.id, messageId);
 
   return interaction.reply({
@@ -326,6 +408,129 @@ async function executeRemove(interaction) {
       ? `✅ Stopped tracking react-for-role message \`${messageId}\`.`
       : `ℹ️ No react-for-role panel found for message \`${messageId}\`.`,
     ephemeral: true
+  });
+}
+
+async function executeEdit(interaction) {
+  const messageId = parseMessageId(interaction.options.getString("message_id"));
+  if (!messageId) {
+    return interaction.reply({
+      content: "❌ Provide a valid message ID or message link.",
+      ephemeral: true
+    });
+  }
+
+  const existingPanel = getPanel(interaction.guild.id, messageId);
+  if (!existingPanel) {
+    return interaction.reply({
+      content: `❌ No react-for-role panel found for \`${messageId}\`.`,
+      ephemeral: true
+    });
+  }
+
+  const pairsResult = collectEmojiRolePairs(interaction, {
+    requireAtLeastOne: false
+  });
+  if (!pairsResult.ok) {
+    return interaction.reply({
+      content: `❌ ${pairsResult.error}`,
+      ephemeral: true
+    });
+  }
+
+  const newMessageText = interaction.options.getString("message");
+  const newExclusive = interaction.options.getBoolean("exclusive");
+  const newRemoveOnUnreact = interaction.options.getBoolean("remove_on_unreact");
+  const hasMappingUpdate = pairsResult.pairs.length > 0;
+  const hasMessageUpdate = newMessageText !== null;
+  const hasSettingsUpdate =
+    newExclusive !== null || newRemoveOnUnreact !== null;
+
+  if (!hasMappingUpdate && !hasMessageUpdate && !hasSettingsUpdate) {
+    return interaction.reply({
+      content: "❌ Provide at least one field to edit.",
+      ephemeral: true
+    });
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const channel = await interaction.guild.channels
+    .fetch(existingPanel.channelId)
+    .catch(() => null);
+  if (!channel?.isTextBased?.()) {
+    return interaction.editReply({
+      content: "❌ Original channel not found for that panel."
+    });
+  }
+
+  let targetMessage;
+  try {
+    targetMessage = await channel.messages.fetch(messageId);
+  } catch {
+    return interaction.editReply({
+      content:
+        "❌ Could not fetch that message. It may have been deleted or moved."
+    });
+  }
+
+  if (hasMappingUpdate) {
+    const invalidRoles = pairsResult.pairs
+      .map(({ role }) => role)
+      .filter(role => !canBotManageRole(interaction.guild, role));
+
+    if (invalidRoles.length) {
+      return interaction.editReply({
+        content:
+          "❌ I can't assign one or more of those roles.\n" +
+          invalidRoles.map(role => `• ${role}`).join("\n")
+      });
+    }
+  }
+
+  if (hasMessageUpdate) {
+    await targetMessage.edit({ content: newMessageText });
+  }
+
+  let mappings = existingPanel.mappings;
+  let summaryLines = [];
+
+  if (hasMappingUpdate) {
+    const built = buildMappingsAndSummaryLines(pairsResult.pairs);
+    mappings = built.mappings;
+    summaryLines = built.summaryLines;
+
+    try {
+      await applyMessageReactions(targetMessage, pairsResult.pairs);
+    } catch (err) {
+      console.error("[REACTFORROLE] edit react failed:", err);
+      return interaction.editReply({
+        content: "❌ Failed updating reactions on that message."
+      });
+    }
+  }
+
+  const panel = {
+    ...existingPanel,
+    mappings,
+    exclusive:
+      newExclusive !== null ? newExclusive : existingPanel.exclusive,
+    removeOnUnreact:
+      newRemoveOnUnreact !== null
+        ? newRemoveOnUnreact
+        : existingPanel.removeOnUnreact,
+    updatedBy: interaction.user.id,
+    updatedAt: new Date().toISOString()
+  };
+
+  savePanel(interaction.guild.id, messageId, panel);
+
+  return interaction.editReply({
+    content:
+      `✅ Updated react-for-role message.\n${targetMessage.url}` +
+      (summaryLines.length
+        ? `\n\nNew mappings:\n${summaryLines.join("\n")}`
+        : "")
   });
 }
 
@@ -340,6 +545,10 @@ module.exports = {
 
     if (subcommand === "remove") {
       return executeRemove(interaction);
+    }
+
+    if (subcommand === "edit") {
+      return executeEdit(interaction);
     }
 
     return interaction.reply({
