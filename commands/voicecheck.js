@@ -68,7 +68,7 @@ async function appendRows(rows) {
   });
 }
 
-function buildReport(role, inVoice, notInVoice) {
+function buildReport(role, inVoice, notInVoice, fetchWarning) {
   const checked = inVoice.length + notInVoice.length;
   const lines = [
     "🎙️ **Voice Check**",
@@ -76,6 +76,10 @@ function buildReport(role, inVoice, notInVoice) {
     "",
     `Checked: **${checked}** | In voice: **${inVoice.length}** | Not in voice: **${notInVoice.length}**`
   ];
+
+  if (fetchWarning) {
+    lines.push("", fetchWarning);
+  }
 
   if (checked === 0) {
     lines.push("", "ℹ️ No non-bot members have this role.");
@@ -113,14 +117,17 @@ module.exports = {
   async execute(interaction) {
     const role = interaction.options.getRole("role");
     const guild = interaction.guild;
-    const categoryName =
-      interaction.channel.parent?.name || "No Category";
     const checkedBy = `<@${interaction.user.id}>`;
     const checkedAt = new Date().toISOString();
 
-    await interaction.editReply("🔍 Fetching guild members…");
+    await interaction.editReply(`🔍 Fetching members with ${role}…`);
 
     const allMembers = await guild.members.fetch();
+    const fetchWarning =
+      allMembers.size < guild.memberCount
+        ? `⚠️ Discord returned **${allMembers.size}/${guild.memberCount}** server members. ` +
+          "Enable the **Server Members Intent** for this bot in the Discord Developer Portal, then restart the bot."
+        : "";
 
     const inVoice = [];
     const notInVoice = [];
@@ -142,9 +149,10 @@ module.exports = {
       }
 
       rows.push([
-        categoryName,
         role.name,
+        role.id,
         `<@${member.id}>`,
+        member.id,
         isMemberInVoice(member, guild) ? "YES" : "NO",
         getVoiceChannelName(member, guild),
         checkedAt,
@@ -156,7 +164,7 @@ module.exports = {
       await appendRows(rows);
     }
 
-    const report = buildReport(role, inVoice, notInVoice);
+    const report = buildReport(role, inVoice, notInVoice, fetchWarning);
     const chunks = splitDiscordMessages(report);
 
     await interaction.editReply({ content: chunks[0] });
