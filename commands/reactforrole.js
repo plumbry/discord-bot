@@ -300,6 +300,37 @@ const data = new SlashCommandBuilder()
         )
     )
   )
+  .addSubcommand(sub =>
+    addOptionalPairOptions(
+      addRequiredPairOption(
+        sub
+          .setName("adopt")
+          .setDescription("Attach react-role storage to an existing message")
+          .addStringOption(option =>
+            option
+              .setName("message_id")
+              .setDescription("Message ID or message link to adopt")
+              .setRequired(true)
+          )
+      )
+        .addBooleanOption(option =>
+          option
+            .setName("exclusive")
+            .setDescription(
+              "Only keep one role from this message at a time"
+            )
+            .setRequired(false)
+        )
+        .addBooleanOption(option =>
+          option
+            .setName("remove_on_unreact")
+            .setDescription(
+              "Remove the role when the user removes their reaction (default: yes)"
+            )
+            .setRequired(false)
+        )
+    )
+  )
   .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles);
 
 async function executeCreate(interaction) {
@@ -371,7 +402,7 @@ async function executeCreate(interaction) {
     });
   }
 
-  savePanel(guild.id, posted.id, {
+  await savePanel(guild.id, posted.id, {
     channelId: targetChannel.id,
     mappings,
     exclusive,
@@ -401,7 +432,7 @@ async function executeRemove(interaction) {
     });
   }
 
-  const removed = removePanel(interaction.guild.id, messageId);
+  const removed = await removePanel(interaction.guild.id, messageId);
 
   return interaction.reply({
     content: removed
@@ -420,7 +451,7 @@ async function executeEdit(interaction) {
     });
   }
 
-  const existingPanel = getPanel(interaction.guild.id, messageId);
+  const existingPanel = await getPanel(interaction.guild.id, messageId);
   if (!existingPanel) {
     return interaction.reply({
       content: `❌ No react-for-role panel found for \`${messageId}\`.`,
@@ -523,7 +554,7 @@ async function executeEdit(interaction) {
     updatedAt: new Date().toISOString()
   };
 
-  savePanel(interaction.guild.id, messageId, panel);
+  await savePanel(interaction.guild.id, messageId, panel);
 
   return interaction.editReply({
     content:
@@ -531,6 +562,90 @@ async function executeEdit(interaction) {
       (summaryLines.length
         ? `\n\nNew mappings:\n${summaryLines.join("\n")}`
         : "")
+  });
+}
+
+async function executeAdopt(interaction) {
+  const messageId = parseMessageId(interaction.options.getString("message_id"));
+  if (!messageId) {
+    return interaction.reply({
+      content: "❌ Provide a valid message ID or message link.",
+      ephemeral: true
+    });
+  }
+
+  const pairsResult = collectEmojiRolePairs(interaction);
+  if (!pairsResult.ok) {
+    return interaction.reply({
+      content: `❌ ${pairsResult.error}`,
+      ephemeral: true
+    });
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const guild = interaction.guild;
+  const invalidRoles = pairsResult.pairs
+    .map(({ role }) => role)
+    .filter(role => !canBotManageRole(guild, role));
+  if (invalidRoles.length) {
+    return interaction.editReply({
+      content:
+        "❌ I can't assign one or more of those roles.\n" +
+        invalidRoles.map(role => `• ${role}`).join("\n")
+    });
+  }
+
+  let targetMessage = null;
+  const channels = await guild.channels.fetch();
+  for (const channel of channels.values()) {
+    if (!channel?.isTextBased?.()) {
+      continue;
+    }
+
+    targetMessage = await channel.messages.fetch(messageId).catch(() => null);
+    if (targetMessage) {
+      break;
+    }
+  }
+
+  if (!targetMessage) {
+    return interaction.editReply({
+      content: "❌ Could not find that message in this server."
+    });
+  }
+
+  try {
+    await applyMessageReactions(targetMessage, pairsResult.pairs);
+  } catch (err) {
+    console.error("[REACTFORROLE] adopt react failed:", err);
+    return interaction.editReply({
+      content: "❌ Failed to apply reactions to that message."
+    });
+  }
+
+  const { mappings, summaryLines } = buildMappingsAndSummaryLines(
+    pairsResult.pairs
+  );
+  const exclusive = interaction.options.getBoolean("exclusive") ?? false;
+  const removeOnUnreact =
+    interaction.options.getBoolean("remove_on_unreact") ?? true;
+
+  await savePanel(guild.id, messageId, {
+    channelId: targetMessage.channelId,
+    mappings,
+    exclusive,
+    removeOnUnreact,
+    createdBy: interaction.user.id,
+    createdAt: new Date().toISOString(),
+    updatedBy: interaction.user.id,
+    updatedAt: new Date().toISOString()
+  });
+
+  return interaction.editReply({
+    content:
+      `✅ Adopted existing message for react roles.\n${targetMessage.url}\n\n` +
+      summaryLines.join("\n")
   });
 }
 
@@ -549,6 +664,10 @@ module.exports = {
 
     if (subcommand === "edit") {
       return executeEdit(interaction);
+    }
+
+    if (subcommand === "adopt") {
+      return executeAdopt(interaction);
     }
 
     return interaction.reply({

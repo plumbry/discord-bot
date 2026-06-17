@@ -1455,7 +1455,7 @@ client.on("messageDelete", async message => {
   }
 
   try {
-    handleReactionRoleMessageDelete(message);
+    await handleReactionRoleMessageDelete(message);
   } catch (err) {
     console.error("[REACTION ROLES MESSAGE DELETE]", err?.message || err);
   }
