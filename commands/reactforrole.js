@@ -116,28 +116,36 @@ function canPostInChannel(channel) {
   return { ok: true, channel };
 }
 
-function addPairOptions(subcommand) {
-  for (let index = 1; index <= MAX_PAIRS; index++) {
+function addRequiredPairOption(subcommand) {
+  return subcommand
+    .addStringOption(option =>
+      option
+        .setName("emoji1")
+        .setDescription("Emoji to react with (unicode or custom)")
+        .setRequired(true)
+    )
+    .addRoleOption(option =>
+      option
+        .setName("role1")
+        .setDescription("Role granted for emoji1")
+        .setRequired(true)
+    );
+}
+
+function addOptionalPairOptions(subcommand) {
+  for (let index = 2; index <= MAX_PAIRS; index++) {
     subcommand
       .addStringOption(option =>
         option
           .setName(`emoji${index}`)
-          .setDescription(
-            index === 1
-              ? "Emoji to react with (unicode or custom)"
-              : `Optional emoji ${index}`
-          )
-          .setRequired(index === 1)
+          .setDescription(`Optional emoji ${index}`)
+          .setRequired(false)
       )
       .addRoleOption(option =>
         option
           .setName(`role${index}`)
-          .setDescription(
-            index === 1
-              ? "Role granted for emoji1"
-              : `Optional role for emoji${index}`
-          )
-          .setRequired(index === 1)
+          .setDescription(`Optional role for emoji${index}`)
+          .setRequired(false)
       );
   }
 
@@ -148,17 +156,19 @@ const data = new SlashCommandBuilder()
   .setName("reactforrole")
   .setDescription("Create or remove react-for-role messages")
   .addSubcommand(sub =>
-    addPairOptions(
-      sub
-        .setName("create")
-        .setDescription("Post a message with emoji reactions that grant roles")
-        .addStringOption(option =>
-          option
-            .setName("message")
-            .setDescription("Message content")
-            .setRequired(true)
-            .setMaxLength(2000)
-        )
+    addOptionalPairOptions(
+      addRequiredPairOption(
+        sub
+          .setName("create")
+          .setDescription("Post a message with emoji reactions that grant roles")
+          .addStringOption(option =>
+            option
+              .setName("message")
+              .setDescription("Message content")
+              .setRequired(true)
+              .setMaxLength(2000)
+          )
+      )
         .addChannelOption(option =>
           option
             .setName("channel")
