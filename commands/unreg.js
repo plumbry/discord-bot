@@ -235,6 +235,7 @@ async function isValidSignupTeam(channel, guild, team) {
 
 async function logUnreg({
   interaction,
+  moderator,
   guild,
   teamNumber,
   teamUsers,
@@ -249,6 +250,7 @@ async function logUnreg({
   roleFailed,
   notificationSent
 }) {
+  const actor = moderator || interaction.user;
   const teamPlayerTags =
     teamUsers.map(u => u.tag || u.id).join(", ");
   const unregisteringTags =
@@ -264,7 +266,7 @@ async function logUnreg({
 
   console.log(
     "[UNREG] " +
-    `moderator=${interaction.user.tag} (${interaction.user.id}) ` +
+    `moderator=${actor.tag} (${actor.id}) ` +
     `team_number=${teamNumber} ` +
     `team_players=[${teamPlayerTags}] ` +
     `unregistering=[${unregisteringTags}] ` +
@@ -284,7 +286,7 @@ async function logUnreg({
 
     await logChannel.send(
       "Sign-up unregistered via /unreg\n" +
-      "Moderator: " + interaction.user.tag + "\n" +
+      "Moderator: " + actor.tag + "\n" +
       "Team number: " + teamNumber + "\n" +
       "Team players: " + teamPlayerTags + "\n" +
       "Unregistering: " + unregisteringTags + "\n" +
@@ -303,7 +305,7 @@ async function logUnreg({
   try {
     await logAudit({
       action: "ROLE_UNREG",
-      moderator: interaction.user,
+      moderator: actor,
       context:
         `team_number=${teamNumber} role=${role.id} notify=${notifyMode} ` +
         `signup_message_id=${signupMessageId} deletion=${deletionSucceeded} ` +
@@ -314,6 +316,207 @@ async function logUnreg({
   } catch (err) {
     console.error("[UNREG AUDIT ERROR]", err);
   }
+}
+
+async function runUnregisterTeam({
+  channel,
+  guild,
+  teamNumber,
+  role,
+  playersValue,
+  notifyMode,
+  moderator
+}) {
+  if (!process.env.MAIN_SHEET_ID) {
+    return "MAIN_SHEET_ID not configured.";
+  }
+
+  if (role.managed) {
+    return "This role is managed and cannot be removed.";
+  }
+
+  const botMember = await guild.members.fetchMe();
+
+  if (role.position >= botMember.roles.highest.position) {
+    return "I cannot remove this role due to role hierarchy.";
+  }
+
+  let matches;
+
+  try {
+    matches = await findSignupMatchesByTeamNumber(
+      channel,
+      teamNumber
+    );
+  } catch (err) {
+    console.error("[UNREG] Signup lookup failed:", err);
+    return "Could not scan signups. Try again later.";
+  }
+
+  if (matches.length === 0) {
+    return `Team number **${teamNumber}** does not exist among valid signups.`;
+  }
+
+  if (matches.length > 1) {
+    const details = matches.map(entry => {
+      const label = entry.asOverflow ? "Overflow" : "Main";
+      return `${label} — ${entry.team.users.map(u => `<@${u.id}>`).join(" ")}`;
+    }).join("\n");
+
+    return `Team number **${teamNumber}** matches multiple signups:\n${details}`;
+  }
+
+  const team = matches[0].team;
+
+  let isValid;
+
+  try {
+    isValid = await isValidSignupTeam(
+      channel,
+      guild,
+      team
+    );
+  } catch (err) {
+    if (err?.code === "EVENT_BAN_SHEET") {
+      console.error("[UNREG] Event ban sheet read failed:", err);
+      return "Could not load Event Bans sheet. Try again later.";
+    }
+
+    console.error("[UNREG] Signup validation failed:", err);
+    return "Could not validate signup. Try again later.";
+  }
+
+  if (!isValid) {
+    return `Team number **${teamNumber}** does not correspond to a valid signup.`;
+  }
+
+  const teamUserIds = new Set(team.users.map(u => u.id));
+  const parsedPlayers = parsePlayersInput(playersValue, guild);
+
+  if (parsedPlayers.length) {
+    const invalidPlayers = parsedPlayers.filter(
+      player => !teamUserIds.has(player.id)
+    );
+
+    if (invalidPlayers.length) {
+      return (
+        "No changes were made. These selected players are not on team " +
+        teamNumber + ": " +
+        invalidPlayers.map(player => `<@${player.id}>`).join(" ")
+      );
+    }
+  }
+
+  const unregisteringPlayers = parsedPlayers.length
+    ? parsedPlayers.map(player => ({
+      id: player.id,
+      tag: player.tag
+    }))
+    : team.users.map(user => ({
+      id: user.id,
+      tag: user.tag
+    }));
+
+  const unregisteringIds = new Set(
+    unregisteringPlayers.map(player => player.id)
+  );
+  const remainingTeammates = team.users
+    .filter(user => !unregisteringIds.has(user.id))
+    .map(user => ({
+      id: user.id,
+      tag: user.tag
+    }));
+
+  const failures = [];
+  const { removed, failed, skipped } =
+    await removeRolesInBatches(
+      guild,
+      team.users.map(user => user.id),
+      role
+    );
+
+  if (failed.length) {
+    failures.push(
+      "Role removal failed for: " +
+      failed.map(entry =>
+        `<@${entry.id}> (${entry.reason || "unknown error"})`
+      ).join(", ")
+    );
+  }
+
+  let deletionSucceeded = false;
+
+  try {
+    await team.message.delete();
+    deletionSucceeded = true;
+  } catch (err) {
+    failures.push(
+      "Sign-up message deletion failed: " +
+      (err?.message || "unknown error")
+    );
+    console.error("[UNREG] Sign-up message deletion failed:", err);
+  }
+
+  let notificationSent = false;
+
+  if (
+    notifyMode === "tag_remaining" &&
+    remainingTeammates.length > 0
+  ) {
+    try {
+      await channel.send(
+        remainingTeammates
+          .map(teammate => `<@${teammate.id}>`)
+          .join(" ") +
+        " " +
+        NOTIFY_MESSAGE
+      );
+      notificationSent = true;
+    } catch (err) {
+      failures.push(
+        "Teammate notification failed: " +
+        (err?.message || "unknown error")
+      );
+      console.error("[UNREG] Teammate notification failed:", err);
+    }
+  }
+
+  const resultLines = [
+    "**Unregister complete**",
+    "Team number: " + teamNumber,
+    formatRemovedPlayers(removed, skipped),
+    "Sign-up deleted: " + (deletionSucceeded ? "Yes" : "No"),
+    "Unregistering player(s): " + formatPlayerList(unregisteringPlayers),
+    "Remaining teammate(s): " + formatPlayerList(remainingTeammates),
+    "Teammate notifications sent: " + (notificationSent ? "Yes" : "No")
+  ];
+
+  if (failures.length) {
+    resultLines.push(
+      "",
+      "**Partial failures:**",
+      ...failures
+    );
+  }
+
+  await logUnreg({
+    moderator,
+    guild,
+    teamNumber,
+    teamUsers: team.users,
+    unregisteringPlayers,
+    remainingTeammates,
+    role,
+    notifyMode,
+    signupMessageId: team.message.id,
+    deletionSucceeded,
+    failures,
+    roleRemoved: removed,
+    roleFailed: failed,
+    notificationSent
+  });
+
+  return resultLines.join("\n");
 }
 
 // ================= COMMAND =================
@@ -362,13 +565,6 @@ module.exports = {
       await interaction.deferReply();
     }
 
-    if (!process.env.MAIN_SHEET_ID) {
-      return sendUnregReply(
-        interaction,
-        "MAIN_SHEET_ID not configured."
-      );
-    }
-
     const teamNumber =
       interaction.options.getInteger("team_number");
     const role =
@@ -381,221 +577,23 @@ module.exports = {
     const channel = interaction.channel;
     const guild = interaction.guild;
 
-    if (role.managed) {
-      return sendUnregReply(
-        interaction,
-        "This role is managed and cannot be removed."
-      );
-    }
-
-    const botMember = await guild.members.fetchMe();
-
-    if (role.position >= botMember.roles.highest.position) {
-      return sendUnregReply(
-        interaction,
-        "I cannot remove this role due to role hierarchy."
-      );
-    }
-
-    let matches;
-
-    try {
-      matches = await findSignupMatchesByTeamNumber(
-        channel,
-        teamNumber
-      );
-    } catch (err) {
-      console.error("[UNREG] Signup lookup failed:", err);
-      return sendUnregReply(
-        interaction,
-        "Could not scan signups. Try again later."
-      );
-    }
-
-    if (matches.length === 0) {
-      return sendUnregReply(
-        interaction,
-        `Team number **${teamNumber}** does not exist among valid signups.`
-      );
-    }
-
-    if (matches.length > 1) {
-      const details = matches.map(entry => {
-        const label = entry.asOverflow ? "Overflow" : "Main";
-        return `${label} — ${entry.team.users.map(u => `<@${u.id}>`).join(" ")}`;
-      }).join("\n");
-
-      return sendUnregReply(
-        interaction,
-        `Team number **${teamNumber}** matches multiple signups:\n${details}`
-      );
-    }
-
-    const team = matches[0].team;
-
-    let isValid;
-
-    try {
-      isValid = await isValidSignupTeam(
-        channel,
-        guild,
-        team
-      );
-    } catch (err) {
-      if (err?.code === "EVENT_BAN_SHEET") {
-        console.error("[UNREG] Event ban sheet read failed:", err);
-        return sendUnregReply(
-          interaction,
-          "Could not load Event Bans sheet. Try again later."
-        );
-      }
-
-      console.error("[UNREG] Signup validation failed:", err);
-      return sendUnregReply(
-        interaction,
-        "Could not validate signup. Try again later."
-      );
-    }
-
-    if (!isValid) {
-      return sendUnregReply(
-        interaction,
-        `Team number **${teamNumber}** does not correspond to a valid signup.`
-      );
-    }
-
-    const teamUserIds = new Set(team.users.map(u => u.id));
-    const parsedPlayers = parsePlayersInput(playersValue, guild);
-
-    if (parsedPlayers.length) {
-      const invalidPlayers = parsedPlayers.filter(
-        player => !teamUserIds.has(player.id)
-      );
-
-      if (invalidPlayers.length) {
-        return sendUnregReply(
-          interaction,
-          "No changes were made. These selected players are not on team " +
-          teamNumber + ": " +
-          invalidPlayers.map(player => `<@${player.id}>`).join(" ")
-        );
-      }
-    }
-
-    const unregisteringPlayers = parsedPlayers.length
-      ? parsedPlayers.map(player => ({
-        id: player.id,
-        tag: player.tag
-      }))
-      : team.users.map(user => ({
-        id: user.id,
-        tag: user.tag
-      }));
-
-    const unregisteringIds = new Set(
-      unregisteringPlayers.map(player => player.id)
-    );
-    const remainingTeammates = team.users
-      .filter(user => !unregisteringIds.has(user.id))
-      .map(user => ({
-        id: user.id,
-        tag: user.tag
-      }));
-
     await sendUnregReply(
       interaction,
       `Processing unregister for team **${teamNumber}**…`
     );
 
-    const failures = [];
-    const { removed, failed, skipped } =
-      await removeRolesInBatches(
-        guild,
-        team.users.map(user => user.id),
-        role
-      );
-
-    if (failed.length) {
-      failures.push(
-        "Role removal failed for: " +
-        failed.map(entry =>
-          `<@${entry.id}> (${entry.reason || "unknown error"})`
-        ).join(", ")
-      );
-    }
-
-    let deletionSucceeded = false;
-
-    try {
-      await team.message.delete();
-      deletionSucceeded = true;
-    } catch (err) {
-      failures.push(
-        "Sign-up message deletion failed: " +
-        (err?.message || "unknown error")
-      );
-      console.error("[UNREG] Sign-up message deletion failed:", err);
-    }
-
-    let notificationSent = false;
-
-    if (
-      notifyMode === "tag_remaining" &&
-      remainingTeammates.length > 0
-    ) {
-      try {
-        await channel.send(
-          remainingTeammates
-            .map(teammate => `<@${teammate.id}>`)
-            .join(" ") +
-          " " +
-          NOTIFY_MESSAGE
-        );
-        notificationSent = true;
-      } catch (err) {
-        failures.push(
-          "Teammate notification failed: " +
-          (err?.message || "unknown error")
-        );
-        console.error("[UNREG] Teammate notification failed:", err);
-      }
-    }
-
-    const resultLines = [
-      "**Unregister complete**",
-      "Team number: " + teamNumber,
-      formatRemovedPlayers(removed, skipped),
-      "Sign-up deleted: " + (deletionSucceeded ? "Yes" : "No"),
-      "Unregistering player(s): " + formatPlayerList(unregisteringPlayers),
-      "Remaining teammate(s): " + formatPlayerList(remainingTeammates),
-      "Teammate notifications sent: " + (notificationSent ? "Yes" : "No")
-    ];
-
-    if (failures.length) {
-      resultLines.push(
-        "",
-        "**Partial failures:**",
-        ...failures
-      );
-    }
-
-    await sendUnregReply(interaction, resultLines.join("\n"));
-
-    await logUnreg({
-      interaction,
+    const result = await runUnregisterTeam({
+      channel,
       guild,
       teamNumber,
-      teamUsers: team.users,
-      unregisteringPlayers,
-      remainingTeammates,
       role,
+      playersValue,
       notifyMode,
-      signupMessageId: team.message.id,
-      deletionSucceeded,
-      failures,
-      roleRemoved: removed,
-      roleFailed: failed,
-      notificationSent
+      moderator: interaction.user
     });
+
+    await sendUnregReply(interaction, result);
   }
 };
+
+module.exports.runUnregisterTeam = runUnregisterTeam;

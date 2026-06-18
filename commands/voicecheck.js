@@ -100,6 +100,62 @@ function buildReport(role, inVoice, notInVoice, fetchWarning) {
   return lines.join("\n");
 }
 
+async function runVoiceCheck({
+  guild,
+  role,
+  checkedBy
+}) {
+  const checkedAt = new Date().toISOString();
+  const allMembers = await guild.members.fetch();
+  const fetchWarning =
+    allMembers.size < guild.memberCount
+      ? `⚠️ Discord returned **${allMembers.size}/${guild.memberCount}** server members. ` +
+        "Enable the **Server Members Intent** for this bot in the Discord Developer Portal, then restart the bot."
+      : "";
+
+  const inVoice = [];
+  const notInVoice = [];
+  const rows = [];
+
+  for (const member of allMembers.values()) {
+    if (member.user.bot) {
+      continue;
+    }
+
+    if (!member.roles.cache.has(role.id)) {
+      continue;
+    }
+
+    if (isMemberInVoice(member, guild)) {
+      inVoice.push(member);
+    } else {
+      notInVoice.push(member);
+    }
+
+    rows.push([
+      role.name,
+      role.id,
+      `<@${member.id}>`,
+      member.id,
+      isMemberInVoice(member, guild) ? "YES" : "NO",
+      getVoiceChannelName(member, guild),
+      checkedAt,
+      checkedBy || ""
+    ]);
+  }
+
+  if (rows.length > 0) {
+    await appendRows(rows);
+  }
+
+  return {
+    report: buildReport(role, inVoice, notInVoice, fetchWarning),
+    inVoice,
+    notInVoice,
+    fetchWarning
+  };
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("voicecheck")
@@ -118,53 +174,15 @@ module.exports = {
     const role = interaction.options.getRole("role");
     const guild = interaction.guild;
     const checkedBy = `<@${interaction.user.id}>`;
-    const checkedAt = new Date().toISOString();
 
     await interaction.editReply(`🔍 Fetching members with ${role}…`);
 
-    const allMembers = await guild.members.fetch();
-    const fetchWarning =
-      allMembers.size < guild.memberCount
-        ? `⚠️ Discord returned **${allMembers.size}/${guild.memberCount}** server members. ` +
-          "Enable the **Server Members Intent** for this bot in the Discord Developer Portal, then restart the bot."
-        : "";
+    const { report } = await runVoiceCheck({
+      guild,
+      role,
+      checkedBy
+    });
 
-    const inVoice = [];
-    const notInVoice = [];
-    const rows = [];
-
-    for (const member of allMembers.values()) {
-      if (member.user.bot) {
-        continue;
-      }
-
-      if (!member.roles.cache.has(role.id)) {
-        continue;
-      }
-
-      if (isMemberInVoice(member, guild)) {
-        inVoice.push(member);
-      } else {
-        notInVoice.push(member);
-      }
-
-      rows.push([
-        role.name,
-        role.id,
-        `<@${member.id}>`,
-        member.id,
-        isMemberInVoice(member, guild) ? "YES" : "NO",
-        getVoiceChannelName(member, guild),
-        checkedAt,
-        checkedBy
-      ]);
-    }
-
-    if (rows.length > 0) {
-      await appendRows(rows);
-    }
-
-    const report = buildReport(role, inVoice, notInVoice, fetchWarning);
     const chunks = splitDiscordMessages(report);
 
     await interaction.editReply({ content: chunks[0] });
@@ -174,3 +192,6 @@ module.exports = {
     }
   }
 };
+
+module.exports.runVoiceCheck = runVoiceCheck;
+module.exports.splitDiscordMessages = splitDiscordMessages;

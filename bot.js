@@ -246,6 +246,18 @@ const {
   activeCalls
 } = require("./commands/gamecall");
 
+let restoreScrimDashboard = null;
+
+try {
+  ({
+    restoreScrimDashboard
+  } = require("./commands/scrimdashboard"));
+
+  console.log("✅ scrim dashboard module loaded");
+} catch (err) {
+  console.error("⚠️ scrim dashboard not loaded:", err?.message || err);
+}
+
 // ================= GUARDIAN TIER WIPE =================
 
 let handleGuardianRemoval = null;
@@ -599,6 +611,14 @@ client.once("ready", async () => {
     console.log("[BOT STATUS] posted online");
   } catch (err) {
     console.error("[BOT STATUS] online post failed:", err?.message || err);
+  }
+
+  if (restoreScrimDashboard) {
+    try {
+      await restoreScrimDashboard(client);
+    } catch (err) {
+      console.error("[SCRIM DASHBOARD] startup restore failed:", err?.message || err);
+    }
   }
 
   // ================= GIRL ROLE SHEET =================
@@ -1130,7 +1150,11 @@ client.on(
 
     // ================= SELECT MENUS =================
 
-    if (interaction.isStringSelectMenu()) {
+    if (
+      interaction.isStringSelectMenu() ||
+      interaction.isChannelSelectMenu?.() ||
+      interaction.isRoleSelectMenu?.()
+    ) {
 
       try {
 

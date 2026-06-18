@@ -504,28 +504,31 @@ async function removeRolesInBatches(
 async function syncSignupChannelRoles(
   guild,
   role,
-  keepUserIds
+  keepUserIds,
+  { removeMissingRoles = true } = {}
 ) {
 
   const removeUserIds = new Set();
 
-  await forEachGuildMemberPage(guild, async batch => {
-    for (const member of batch.values()) {
-      if (member.user.bot) {
-        continue;
-      }
+  if (removeMissingRoles) {
+    await forEachGuildMemberPage(guild, async batch => {
+      for (const member of batch.values()) {
+        if (member.user.bot) {
+          continue;
+        }
 
-      if (!member.roles.cache.has(role.id)) {
-        continue;
-      }
+        if (!member.roles.cache.has(role.id)) {
+          continue;
+        }
 
-      if (keepUserIds.has(member.id)) {
-        continue;
-      }
+        if (keepUserIds.has(member.id)) {
+          continue;
+        }
 
-      removeUserIds.add(member.id);
-    }
-  });
+        removeUserIds.add(member.id);
+      }
+    });
+  }
 
   const { removed, skipped: removeSkipped } =
     await removeRolesInBatches(
@@ -667,7 +670,8 @@ async function finishRoletagged(
   } = await syncSignupChannelRoles(
     guild,
     role,
-    roledUserIds
+    roledUserIds,
+    { removeMissingRoles: maxSignups == null }
   );
 
   let rulesAckNote = "";

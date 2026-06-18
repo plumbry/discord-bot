@@ -3,6 +3,12 @@ const {
   PermissionFlagsBits
 } = require("discord.js");
 
+async function postDropmapClosed(channel) {
+  return channel.send(
+    "## DROPMAP CLOSED UNTIL NEXT GAME"
+  );
+}
+
 module.exports = {
 
   data: new SlashCommandBuilder()
@@ -21,9 +27,7 @@ module.exports = {
 
     try {
 
-      await interaction.channel.send(
-        "## DROPMAP CLOSED UNTIL NEXT GAME"
-      );
+      await postDropmapClosed(interaction.channel);
 
       await interaction.reply({
         content: "✅ Dropmap closure posted.",
@@ -56,3 +60,5 @@ module.exports = {
   }
 
 };
+
+module.exports.postDropmapClosed = postDropmapClosed;

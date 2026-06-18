@@ -78,6 +78,44 @@ function findDropmapChannel(guild, categoryId, preferredChannel) {
   }) || null;
 }
 
+async function runDropmapCheck({
+  signupChannel,
+  dropmapChannel
+}) {
+  const teams = await collectTeamsFromSignupChannel(signupChannel);
+
+  if (teams.length === 0) {
+    return {
+      chunks: [
+        `No signup teams found in ${signupChannel}. ` +
+        "Expected @mention signups, numbered team reactions, or a multi-line mention list."
+      ],
+      teams,
+      marked: [],
+      missing: []
+    };
+  }
+
+  const dropmapMessages = await fetchAllMessages(dropmapChannel);
+  const typistIds = collectTypistIds(dropmapMessages);
+  const { marked, missing } = evaluateDropmapTeams(teams, typistIds);
+
+  const report = buildDropmapCheckReport({
+    teams,
+    marked,
+    missing,
+    signupChannel,
+    dropmapChannel
+  });
+
+  return {
+    chunks: splitDiscordMessages(report),
+    teams,
+    marked,
+    missing
+  };
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("dropmapcheck")
@@ -135,29 +173,10 @@ module.exports = {
       });
     }
 
-    const teams = await collectTeamsFromSignupChannel(signupChannel);
-
-    if (teams.length === 0) {
-      return interaction.editReply({
-        content:
-          `No signup teams found in ${signupChannel}. ` +
-          "Expected @mention signups, numbered team reactions, or a multi-line mention list."
-      });
-    }
-
-    const dropmapMessages = await fetchAllMessages(dropmapChannel);
-    const typistIds = collectTypistIds(dropmapMessages);
-    const { marked, missing } = evaluateDropmapTeams(teams, typistIds);
-
-    const report = buildDropmapCheckReport({
-      teams,
-      marked,
-      missing,
+    const { chunks } = await runDropmapCheck({
       signupChannel,
       dropmapChannel
     });
-
-    const chunks = splitDiscordMessages(report);
 
     await interaction.editReply({ content: chunks[0] });
 
@@ -169,3 +188,9 @@ module.exports = {
     }
   }
 };
+
+module.exports.isSignupChannelName = isSignupChannelName;
+module.exports.isDropmapChannelName = isDropmapChannelName;
+module.exports.findSignupChannel = findSignupChannel;
+module.exports.findDropmapChannel = findDropmapChannel;
+module.exports.runDropmapCheck = runDropmapCheck;

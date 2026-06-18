@@ -103,6 +103,61 @@ async function getStreamPosts(streamChannel) {
     }));
 }
 
+async function runTeamStreamCheck({
+  signupChannel,
+  streamChannel,
+  gamemode
+}) {
+  const required = gamemode === "squads" ? 2 : 1;
+  const teams = await getTeams(signupChannel);
+
+  if (!teams.length) {
+    return {
+      teams,
+      missing: [],
+      output: "❌ No accepted teams detected"
+    };
+  }
+
+  const streamPosts = await getStreamPosts(streamChannel);
+  const missing = [];
+
+  for (const team of teams) {
+    let total = 0;
+
+    for (const post of streamPosts) {
+      if (!team.members.includes(post.authorId)) continue;
+
+      total += Math.min(post.linkCount, 2);
+
+      if (total >= required) break;
+    }
+
+    console.log(`Team ${team.number}: ${total}/${required}`);
+
+    if (total < required) {
+      missing.push({
+        number: team.number,
+        count: total
+      });
+    }
+  }
+
+  let output = `📺 **Team Stream Check**\n\n`;
+
+  if (missing.length) {
+    output += `Teams Missing Streams (${missing.length})\n\n`;
+
+    for (const team of missing) {
+      output += `Team ${team.number} (${team.count}/${required})\n`;
+    }
+  } else {
+    output += "All accepted teams submitted enough streams.";
+  }
+
+  return { teams, missing, output };
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("teamstreamcheck")
@@ -123,10 +178,7 @@ module.exports = {
 
   async execute(interaction) {
     try {
-      const required =
-        interaction.options.getString("gamemode") === "squads"
-          ? 2
-          : 1;
+      const gamemode = interaction.options.getString("gamemode");
 
       const baseChannel = interaction.channel.isThread?.()
         ? interaction.channel.parent
@@ -174,48 +226,11 @@ module.exports = {
 
       await interaction.reply("Scanning...");
 
-      const teams = await getTeams(signupChannel);
-
-      if (!teams.length) {
-        return interaction.followUp("❌ No accepted teams detected");
-      }
-
-      const streamPosts = await getStreamPosts(baseChannel);
-
-      const missing = [];
-
-      for (const team of teams) {
-        let total = 0;
-
-        for (const post of streamPosts) {
-          if (!team.members.includes(post.authorId)) continue;
-
-          total += Math.min(post.linkCount, 2);
-
-          if (total >= required) break;
-        }
-
-        console.log(`Team ${team.number}: ${total}/${required}`);
-
-        if (total < required) {
-          missing.push({
-            number: team.number,
-            count: total
-          });
-        }
-      }
-
-      let output = `📺 **Team Stream Check**\n\n`;
-
-      if (missing.length) {
-        output += `Teams Missing Streams (${missing.length})\n\n`;
-
-        for (const team of missing) {
-          output += `Team ${team.number} (${team.count}/${required})\n`;
-        }
-      } else {
-        output += "All accepted teams submitted enough streams.";
-      }
+      const { output } = await runTeamStreamCheck({
+        signupChannel,
+        streamChannel: baseChannel,
+        gamemode
+      });
 
       await interaction.followUp(output);
 
@@ -224,3 +239,5 @@ module.exports = {
     }
   }
 };
+
+module.exports.runTeamStreamCheck = runTeamStreamCheck;

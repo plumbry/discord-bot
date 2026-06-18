@@ -31,6 +31,65 @@ async function getNextGameNumber(channel){
   return highest + 1;
 }
 
+async function startGameCall({
+  channel,
+  role,
+  code,
+  region,
+  minutes
+}) {
+  const game = await getNextGameNumber(channel);
+
+  const start = Date.now() + minutes * 60000;
+  const unix = Math.floor(start / 1000);
+
+  const relative = `<t:${unix}:R>`;
+  const exact = `<t:${unix}:t>`;
+
+  const msg = await channel.send(
+`GAME ${game} ${region} CODE ${code}
+GAME ${game} START ${relative} (${exact})
+WHO IS NOT IN ${role}`
+  );
+
+  await msg.react(RAISE_HAND);
+  await msg.react(ZBD_ERROR_ID);
+
+  const t1 = setTimeout(async ()=>{
+
+    const m = await channel.send(`WHO IS NOT IN ${role}`);
+
+    await m.react(RAISE_HAND);
+    await m.react(ZBD_ERROR_ID);
+
+  },120000);
+
+  const t2 = setTimeout(async ()=>{
+
+    const m = await channel.send(
+`WHO IS NOT IN ${role} (game starting in 2 min max)`
+    );
+
+    await m.react(RAISE_HAND);
+    await m.react(ZBD_ERROR_ID);
+
+    activeCalls.delete(channel.id);
+
+  },240000);
+
+  activeCalls.set(channel.id,{
+    messageId:msg.id,
+    roleId:role.id,
+    gameNumber:game,
+    region,
+    code,
+    t1,
+    t2
+  });
+
+  return { game, message: msg };
+}
+
 module.exports = {
 
   data: new SlashCommandBuilder()
@@ -72,14 +131,6 @@ module.exports = {
 
     const channel = interaction.channel;
 
-    const game = await getNextGameNumber(channel);
-
-    const start = Date.now() + minutes * 60000;
-    const unix = Math.floor(start / 1000);
-
-    const relative = `<t:${unix}:R>`;
-    const exact = `<t:${unix}:t>`;
-
     const controls = new ActionRowBuilder().addComponents(
 
       new ButtonBuilder()
@@ -99,51 +150,18 @@ module.exports = {
 
     );
 
+    const { game } = await startGameCall({
+      channel,
+      role,
+      code,
+      region,
+      minutes
+    });
+
     await interaction.reply({
       content:`Game ${game} call started.`,
       ephemeral:true,
       components:[controls]
-    });
-
-    const msg = await channel.send(
-`GAME ${game} ${region} CODE ${code}
-GAME ${game} START ${relative} (${exact})
-WHO IS NOT IN ${role}`
-    );
-
-    await msg.react(RAISE_HAND);
-    await msg.react(ZBD_ERROR_ID);
-
-    const t1 = setTimeout(async ()=>{
-
-      const m = await channel.send(`WHO IS NOT IN ${role}`);
-
-      await m.react(RAISE_HAND);
-      await m.react(ZBD_ERROR_ID);
-
-    },120000);
-
-    const t2 = setTimeout(async ()=>{
-
-      const m = await channel.send(
-`WHO IS NOT IN ${role} (game starting in 2 min max)`
-      );
-
-      await m.react(RAISE_HAND);
-      await m.react(ZBD_ERROR_ID);
-
-      activeCalls.delete(channel.id);
-
-    },240000);
-
-    activeCalls.set(channel.id,{
-      messageId:msg.id,
-      roleId:role.id,
-      gameNumber:game,
-      region,
-      code,
-      t1,
-      t2
     });
 
   }
@@ -151,3 +169,4 @@ WHO IS NOT IN ${role}`
 };
 
 module.exports.activeCalls = activeCalls;
+module.exports.startGameCall = startGameCall;
