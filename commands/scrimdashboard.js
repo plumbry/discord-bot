@@ -30,6 +30,7 @@ const { runLiveCheck } = require("./checklive");
 const { runTeamStreamCheck } = require("./teamstreamcheck");
 const { runVoiceCheck, splitDiscordMessages } = require("./voicecheck");
 const { runUnregisterTeam } = require("./unreg");
+const roletaggedCommand = require("./roletagged");
 const { postDropmapClosed } = require("./dropmap");
 const { runDropmapCheck } = require("./dropmapcheck");
 
@@ -81,7 +82,11 @@ function statusLine(result) {
 
   const label = result.status === "overridden" ? "manual" : "auto";
   const warning = result.warning ? ` - ${result.warning}` : "";
-  return `${channelMention(result.channelId)} \`${label}\`${warning}`;
+  const channels = result.matches?.length > 1
+    ? result.matches.map(channelMention).join(", ")
+    : channelMention(result.channelId);
+
+  return `${channels} \`${label}\`${warning}`;
 }
 
 function collectWarnings(record, results) {
@@ -198,20 +203,15 @@ function buildDashboardPayload({ guild, record, results }) {
     ),
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`${PREFIX}:gamecall`)
-        .setLabel("Game Call")
+        .setCustomId(`${PREFIX}:roletagged`)
+        .setLabel("Role Teams")
         .setStyle(ButtonStyle.Primary)
-        .setDisabled(!hasRole || !isActionReady(results, "gamecall")),
+        .setDisabled(!hasRole || !isActionReady(results, "roletagged")),
       new ButtonBuilder()
-        .setCustomId(`${PREFIX}:vod`)
-        .setLabel("VOD Check")
-        .setStyle(ButtonStyle.Secondary)
-        .setDisabled(!isActionReady(results, "vod")),
-      new ButtonBuilder()
-        .setCustomId(`${PREFIX}:checklive`)
-        .setLabel("Live Check")
-        .setStyle(ButtonStyle.Secondary)
-        .setDisabled(!isActionReady(results, "checklive")),
+        .setCustomId(`${PREFIX}:unreg`)
+        .setLabel("Unreg Team")
+        .setStyle(ButtonStyle.Danger)
+        .setDisabled(!hasRole || !isActionReady(results, "unreg")),
       new ButtonBuilder()
         .setCustomId(`${PREFIX}:teamstreamcheck`)
         .setLabel("Twitch Links")
@@ -223,15 +223,27 @@ function buildDashboardPayload({ guild, record, results }) {
     ),
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
+        .setCustomId(`${PREFIX}:checklive`)
+        .setLabel("Live Check")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(!isActionReady(results, "checklive")),
+      new ButtonBuilder()
+        .setCustomId(`${PREFIX}:vod`)
+        .setLabel("VOD Check")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(!isActionReady(results, "vod")),
+      new ButtonBuilder()
         .setCustomId(`${PREFIX}:voicecheck`)
         .setLabel("Voice Check")
         .setStyle(ButtonStyle.Secondary)
-        .setDisabled(!hasRole || !isActionReady(results, "voicecheck")),
+        .setDisabled(!hasRole || !isActionReady(results, "voicecheck"))
+    ),
+    new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId(`${PREFIX}:unreg`)
-        .setLabel("Unreg Team")
-        .setStyle(ButtonStyle.Danger)
-        .setDisabled(!hasRole || !isActionReady(results, "unreg")),
+        .setCustomId(`${PREFIX}:gamecall`)
+        .setLabel("Manual Code")
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(!hasRole || !isActionReady(results, "gamecall")),
       new ButtonBuilder()
         .setCustomId(`${PREFIX}:dropmapcheck`)
         .setLabel("Dropmap Check")
@@ -388,6 +400,21 @@ function getResolvedChannel(guild, results, key) {
   return channel;
 }
 
+function getResolvedChannels(guild, results, key) {
+  const result = results?.[key];
+  const ids = result?.matches?.length ? result.matches : [result?.channelId];
+  const channels = ids
+    .filter(Boolean)
+    .map(id => guild.channels.cache.get(id))
+    .filter(channel => channel?.isTextBased?.());
+
+  if (!channels.length) {
+    throw new Error(`${key} channel is not available.`);
+  }
+
+  return channels;
+}
+
 function buildGameCallModal() {
   return new ModalBuilder()
     .setCustomId(`${PREFIX}:modal:gamecall`)
@@ -500,6 +527,107 @@ function buildTeamStreamModal() {
           .setMaxLength(16)
       )
     );
+}
+
+function buildRoleTeamsModal() {
+  return new ModalBuilder()
+    .setCustomId(`${PREFIX}:modal:roletagged`)
+    .setTitle("Role Teams")
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("mode")
+          .setLabel("Mode: 1 solos, 2 duos, 3 trios, 4 squads")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setValue("4")
+          .setMaxLength(1)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("reload")
+          .setLabel("Reload? yes or no")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setValue("no")
+          .setMaxLength(3)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("two_lobbies")
+          .setLabel("Two lobbies? yes or no")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setValue("no")
+          .setMaxLength(3)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("max_signups")
+          .setLabel("Max signups (optional)")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setMaxLength(3)
+      )
+    );
+}
+
+function parseYesNo(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return ["yes", "y", "true", "1"].includes(normalized);
+}
+
+function buildDashboardCommandInteraction({
+  interaction,
+  channel,
+  role,
+  mode,
+  reload,
+  twoLobbies,
+  maxSignups
+}) {
+  const sendToChannel = async payload => {
+    if (typeof payload === "string") {
+      return channel.send(payload);
+    }
+
+    return channel.send({
+      content: payload.content || "",
+      embeds: payload.embeds || [],
+      components: payload.components || []
+    });
+  };
+
+  return {
+    id: interaction.id,
+    user: interaction.user,
+    member: interaction.member,
+    guild: interaction.guild,
+    guildId: interaction.guildId,
+    channel,
+    channelId: channel.id,
+    deferred: true,
+    replied: true,
+    options: {
+      getRole: name => name === "role" ? role : null,
+      getString: name => name === "mode" ? mode : null,
+      getBoolean: name => {
+        if (name === "reload") return reload;
+        if (name === "two_lobbies") return twoLobbies;
+        return null;
+      },
+      getInteger: name => name === "max_signups" ? maxSignups : null
+    },
+    editReply: sendToChannel,
+    reply: sendToChannel,
+    followUp: async payload => {
+      if (payload?.ephemeral || payload?.components?.length) {
+        return interaction.followUp(payload);
+      }
+
+      return sendToChannel(payload);
+    }
+  };
 }
 
 async function sendLongResult(channel, text) {
@@ -694,6 +822,11 @@ module.exports = {
 
     const action = interaction.customId.split(":")[1];
 
+    if (action === "roletagged") {
+      await interaction.showModal(buildRoleTeamsModal());
+      return true;
+    }
+
     if (action === "gamecall") {
       await interaction.showModal(buildGameCallModal());
       return true;
@@ -820,27 +953,41 @@ module.exports = {
       await interaction.deferReply({ ephemeral: true });
       const { guild, results } = await requireDashboardContext(interaction);
       const signupChannel = getResolvedChannel(guild, results, "unreg");
-      const dropmapChannel = getResolvedChannel(guild, results, "dropmapcheck");
-      const { chunks } = await runDropmapCheck({
-        signupChannel,
-        dropmapChannel
-      });
+      const dropmapChannels = getResolvedChannels(
+        guild,
+        results,
+        "dropmapcheck"
+      );
 
-      for (const chunk of chunks) {
-        await dropmapChannel.send(chunk);
+      for (const dropmapChannel of dropmapChannels) {
+        const { chunks } = await runDropmapCheck({
+          signupChannel,
+          dropmapChannel
+        });
+
+        for (const chunk of chunks) {
+          await dropmapChannel.send(chunk);
+        }
       }
 
-      await interaction.editReply(`Dropmap check posted in ${dropmapChannel}.`);
+      await interaction.editReply(
+        `Dropmap check posted in ${dropmapChannels.map(channel => `${channel}`).join(", ")}.`
+      );
       return true;
     }
 
     if (action === "dropmapclosed") {
       await interaction.deferReply({ ephemeral: true });
       const { guild, results } = await requireDashboardContext(interaction);
-      const channel = getResolvedChannel(guild, results, "dropmapclosed");
+      const channels = getResolvedChannels(guild, results, "dropmapclosed");
 
-      await postDropmapClosed(channel);
-      await interaction.editReply(`Dropmap closed message posted in ${channel}.`);
+      for (const channel of channels) {
+        await postDropmapClosed(channel);
+      }
+
+      await interaction.editReply(
+        `Dropmap closed message posted in ${channels.map(channel => `${channel}`).join(", ")}.`
+      );
       return true;
     }
 
@@ -861,6 +1008,63 @@ module.exports = {
     }
 
     const modal = interaction.customId.split(":")[2];
+
+    if (modal === "roletagged") {
+      await interaction.deferReply({ ephemeral: true });
+      const { guild, record, results } =
+        await requireDashboardContext(interaction);
+      const role = guild.roles.cache.get(record.activeRoleId);
+      const channel = getResolvedChannel(guild, results, "roletagged");
+      const mode = interaction.fields.getTextInputValue("mode").trim();
+      const reload = parseYesNo(
+        interaction.fields.getTextInputValue("reload")
+      );
+      const twoLobbies = parseYesNo(
+        interaction.fields.getTextInputValue("two_lobbies")
+      );
+      const maxRaw = interaction.fields
+        .getTextInputValue("max_signups")
+        .trim();
+      const maxSignups = maxRaw ? Number(maxRaw) : null;
+
+      if (!role) {
+        await interaction.editReply("Active role no longer exists.");
+        return true;
+      }
+
+      if (!["1", "2", "3", "4"].includes(mode)) {
+        await interaction.editReply("Mode must be 1, 2, 3, or 4.");
+        return true;
+      }
+
+      if (
+        maxSignups !== null &&
+        (!Number.isInteger(maxSignups) || maxSignups < 1 || maxSignups > 100)
+      ) {
+        await interaction.editReply("Max signups must be blank or a whole number from 1 to 100.");
+        return true;
+      }
+
+      await interaction.editReply(`Running Role Teams in ${channel}...`);
+
+      await roletaggedCommand.execute(
+        buildDashboardCommandInteraction({
+          interaction,
+          channel,
+          role,
+          mode,
+          reload,
+          twoLobbies,
+          maxSignups
+        })
+      );
+
+      await interaction.followUp({
+        content: `Role Teams completed in ${channel}.`,
+        ephemeral: true
+      });
+      return true;
+    }
 
     if (modal === "gamecall") {
       await interaction.deferReply({ ephemeral: true });

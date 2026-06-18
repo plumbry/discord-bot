@@ -93,11 +93,19 @@ function buildReport(role, inVoice, notInVoice, fetchWarning) {
 
   lines.push("", `❌ **Not in voice (${notInVoice.length}):**`, "");
 
-  for (const member of notInVoice) {
-    lines.push(`• <@${member.id}>`);
-  }
+  lines.push(notInVoice.map(getMemberDisplayName).join(", "));
 
   return lines.join("\n");
+}
+
+function getMemberDisplayName(member) {
+  return (
+    member.displayName ||
+    member.user?.globalName ||
+    member.user?.username ||
+    member.user?.tag ||
+    member.id
+  );
 }
 
 async function runVoiceCheck({
