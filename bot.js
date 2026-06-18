@@ -973,6 +973,7 @@ client.on(
       (interaction.commandName === "roletagged" ||
         interaction.commandName === "roleuntagged" ||
         interaction.commandName === "checkrules" ||
+        interaction.commandName === "disqualify" ||
         interaction.commandName === "unreg" ||
         interaction.commandName === "voicecheck") &&
       !interaction.deferred &&
