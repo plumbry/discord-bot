@@ -29,6 +29,7 @@ const {
 const { forEachGuildMemberPage } = require("../lib/guildMemberList");
 
 const {
+  collectMentionedUsersFromMessages,
   getNonBotMentionedUsers,
   messageHasExactTaggedPlayers,
   buildFlaggedTeamLookup,
@@ -505,29 +506,37 @@ async function syncSignupChannelRoles(
   guild,
   role,
   keepUserIds,
-  { removeMissingRoles = true } = {}
+  { removeMissingRoles = true, removeScopeUserIds = null } = {}
 ) {
 
   const removeUserIds = new Set();
 
   if (removeMissingRoles) {
-    await forEachGuildMemberPage(guild, async batch => {
-      for (const member of batch.values()) {
-        if (member.user.bot) {
-          continue;
+    if (removeScopeUserIds) {
+      for (const userId of removeScopeUserIds) {
+        if (!keepUserIds.has(userId)) {
+          removeUserIds.add(userId);
         }
-
-        if (!member.roles.cache.has(role.id)) {
-          continue;
-        }
-
-        if (keepUserIds.has(member.id)) {
-          continue;
-        }
-
-        removeUserIds.add(member.id);
       }
-    });
+    } else {
+      await forEachGuildMemberPage(guild, async batch => {
+        for (const member of batch.values()) {
+          if (member.user.bot) {
+            continue;
+          }
+
+          if (!member.roles.cache.has(role.id)) {
+            continue;
+          }
+
+          if (keepUserIds.has(member.id)) {
+            continue;
+          }
+
+          removeUserIds.add(member.id);
+        }
+      });
+    }
   }
 
   const { removed, skipped: removeSkipped } =
@@ -662,6 +671,10 @@ async function finishRoletagged(
 
   }
 
+  const channelParticipantIds = new Set(
+    collectMentionedUsersFromMessages(scannedMessages).map(user => user.id)
+  );
+
   const {
     added,
     skipped,
@@ -671,7 +684,10 @@ async function finishRoletagged(
     guild,
     role,
     roledUserIds,
-    { removeMissingRoles: maxSignups == null }
+    {
+      removeMissingRoles: maxSignups == null,
+      removeScopeUserIds: channelParticipantIds
+    }
   );
 
   let rulesAckNote = "";

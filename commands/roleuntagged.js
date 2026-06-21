@@ -68,7 +68,8 @@ module.exports = {
     } = await syncSignupChannelRoles(
       guild,
       role,
-      keepUserIds
+      keepUserIds,
+      { removeScopeUserIds: keepUserIds }
     );
 
     const result =
