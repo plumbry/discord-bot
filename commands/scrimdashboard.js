@@ -30,6 +30,7 @@ const { runLiveCheck } = require("./checklive");
 const { runTeamStreamCheck } = require("./teamstreamcheck");
 const { runVoiceCheck, splitDiscordMessages } = require("./voicecheck");
 const { runUnregisterTeam } = require("./unreg");
+const { runDisqualifyTeam } = require("./disqualify");
 const roletaggedCommand = require("./roletagged");
 const { postDropmapClosed } = require("./dropmap");
 const { runDropmapCheck } = require("./dropmapcheck");
@@ -150,13 +151,95 @@ function compactStatusText(record, warnings) {
   return warnings.join("\n");
 }
 
+function sameRoutingResult(results, keys) {
+  const signatures = keys.map(key => {
+    const result = results?.[key];
+
+    if (!result) {
+      return "";
+    }
+
+    return JSON.stringify({
+      status: result.status,
+      channelId: result.channelId,
+      matches: result.matches || [],
+      warning: result.warning || ""
+    });
+  });
+
+  return signatures.every(signature => signature && signature === signatures[0]);
+}
+
+function buildGroupedRoutingLine(results, title, labels, keys) {
+  if (sameRoutingResult(results, keys)) {
+    return [
+      `**${title}**`,
+      labels.join(", "),
+      statusLine(results?.[keys[0]])
+    ].join("\n");
+  }
+
+  return keys.map((key, index) => {
+    return `**${labels[index]}**\n${statusLine(results?.[key])}`;
+  });
+}
+
+function buildChannelRoutingLines(results) {
+  const groups = [
+    {
+      title: "Team Management",
+      labels: ["Role Teams", "Unreg Team", "Disqualify"],
+      keys: ["roletagged", "unreg", "disqualify"]
+    },
+    {
+      title: "Stream Checks",
+      labels: ["Twitch Links", "Live Check", "VOD Check"],
+      keys: ["teamstreamcheck", "checklive", "vod"]
+    },
+    {
+      title: "Dropmap",
+      labels: ["Dropmap Check", "Dropmap Closed"],
+      keys: ["dropmapcheck", "dropmapclosed"]
+    }
+  ];
+  const groupedKeys = new Set(groups.flatMap(group => group.keys));
+  const lines = [];
+
+  for (const action of ACTIONS) {
+    if (groupedKeys.has(action.key)) {
+      const group = groups.find(entry => entry.keys[0] === action.key);
+
+      if (!group) {
+        continue;
+      }
+
+      const grouped = buildGroupedRoutingLine(
+        results,
+        group.title,
+        group.labels,
+        group.keys
+      );
+
+      if (Array.isArray(grouped)) {
+        lines.push(...grouped);
+      } else {
+        lines.push(grouped);
+      }
+
+      continue;
+    }
+
+    lines.push(`**${action.label}**\n${statusLine(results?.[action.key])}`);
+  }
+
+  return lines;
+}
+
 function buildDashboardPayload({ guild, record, results }) {
   const warnings = collectWarnings(record, results);
   const statusLabel = dashboardStatusLabel(record, warnings);
   const status = compactStatusText(record, warnings);
-  const channelLines = ACTIONS.map(action => {
-    return `**${action.label}**\n${statusLine(results?.[action.key])}`;
-  });
+  const channelLines = buildChannelRoutingLines(results);
 
   const embed = new EmbedBuilder()
     .setTitle("Scrim Operations Dashboard")
@@ -212,6 +295,11 @@ function buildDashboardPayload({ guild, record, results }) {
         .setLabel("Unreg Team")
         .setStyle(ButtonStyle.Danger)
         .setDisabled(!hasRole || !isActionReady(results, "unreg")),
+      new ButtonBuilder()
+        .setCustomId(`${PREFIX}:disqualify`)
+        .setLabel("Disqualify")
+        .setStyle(ButtonStyle.Danger)
+        .setDisabled(!hasRole || !isActionReady(results, "disqualify")),
       new ButtonBuilder()
         .setCustomId(`${PREFIX}:teamstreamcheck`)
         .setLabel("Twitch Links")
@@ -512,6 +600,38 @@ function buildUnregModal() {
     );
 }
 
+function buildDisqualifyModal() {
+  return new ModalBuilder()
+    .setCustomId(`${PREFIX}:modal:disqualify`)
+    .setTitle("Disqualify Player(s)")
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("team_number")
+          .setLabel("Team number")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(5)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("players")
+          .setLabel("Player mentions or IDs to disqualify")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(500)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("reason")
+          .setLabel("Reason shown to disqualified player(s)")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(1000)
+      )
+    );
+}
+
 function buildTeamStreamModal() {
   return new ModalBuilder()
     .setCustomId(`${PREFIX}:modal:teamstreamcheck`)
@@ -560,14 +680,6 @@ function buildRoleTeamsModal() {
           .setRequired(true)
           .setValue("no")
           .setMaxLength(3)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("max_signups")
-          .setLabel("Max signups (optional)")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setMaxLength(3)
       )
     );
 }
@@ -583,8 +695,7 @@ function buildDashboardCommandInteraction({
   role,
   mode,
   reload,
-  twoLobbies,
-  maxSignups
+  twoLobbies
 }) {
   const sendToChannel = async payload => {
     if (typeof payload === "string") {
@@ -616,7 +727,7 @@ function buildDashboardCommandInteraction({
         if (name === "two_lobbies") return twoLobbies;
         return null;
       },
-      getInteger: name => name === "max_signups" ? maxSignups : null
+      getInteger: () => null
     },
     editReply: sendToChannel,
     reply: sendToChannel,
@@ -847,6 +958,11 @@ module.exports = {
       return true;
     }
 
+    if (action === "disqualify") {
+      await interaction.showModal(buildDisqualifyModal());
+      return true;
+    }
+
     if (action === "confirm_unreg" || action === "cancel_unreg") {
       const token = interaction.customId.split(":")[2];
       const pending = pendingUnregs.get(token);
@@ -1022,10 +1138,6 @@ module.exports = {
       const twoLobbies = parseYesNo(
         interaction.fields.getTextInputValue("two_lobbies")
       );
-      const maxRaw = interaction.fields
-        .getTextInputValue("max_signups")
-        .trim();
-      const maxSignups = maxRaw ? Number(maxRaw) : null;
 
       if (!role) {
         await interaction.editReply("Active role no longer exists.");
@@ -1034,14 +1146,6 @@ module.exports = {
 
       if (!["1", "2", "3", "4"].includes(mode)) {
         await interaction.editReply("Mode must be 1, 2, 3, or 4.");
-        return true;
-      }
-
-      if (
-        maxSignups !== null &&
-        (!Number.isInteger(maxSignups) || maxSignups < 1 || maxSignups > 100)
-      ) {
-        await interaction.editReply("Max signups must be blank or a whole number from 1 to 100.");
         return true;
       }
 
@@ -1054,8 +1158,7 @@ module.exports = {
           role,
           mode,
           reload,
-          twoLobbies,
-          maxSignups
+          twoLobbies
         })
       );
 
@@ -1160,6 +1263,61 @@ module.exports = {
 
       await sendLongResult(streamChannel, output);
       await interaction.editReply(`Twitch Links check posted in ${streamChannel}.`);
+      return true;
+    }
+
+    if (modal === "disqualify") {
+      await interaction.deferReply({ ephemeral: true });
+      const { guild, record, results } =
+        await requireDashboardContext(interaction);
+      const role = guild.roles.cache.get(record.activeRoleId);
+      const channel = getResolvedChannel(guild, results, "disqualify");
+      const teamNumber = Number(
+        interaction.fields.getTextInputValue("team_number").trim()
+      );
+      const playersValue =
+        interaction.fields.getTextInputValue("players").trim();
+      const reason =
+        interaction.fields.getTextInputValue("reason").trim();
+
+      if (!role) {
+        await interaction.editReply("Active role no longer exists.");
+        return true;
+      }
+
+      if (!Number.isInteger(teamNumber) || teamNumber < 1) {
+        await interaction.editReply("Team number must be a positive whole number.");
+        return true;
+      }
+
+      if (!playersValue) {
+        await interaction.editReply("Add at least one player mention or ID.");
+        return true;
+      }
+
+      if (!reason) {
+        await interaction.editReply("Add a disqualification reason.");
+        return true;
+      }
+
+      await interaction.editReply(
+        `Processing disqualification for team **${teamNumber}** in ${channel}...`
+      );
+
+      const result = await runDisqualifyTeam({
+        channel,
+        guild,
+        teamNumber,
+        role,
+        playersValue,
+        reason,
+        moderator: interaction.user
+      });
+
+      await sendLongResult(channel, result);
+      await interaction.editReply(
+        `Disqualification complete. Result posted in ${channel}.`
+      );
       return true;
     }
 

@@ -506,7 +506,11 @@ async function syncSignupChannelRoles(
   guild,
   role,
   keepUserIds,
-  { removeMissingRoles = true, removeScopeUserIds = null } = {}
+  {
+    removeMissingRoles = true,
+    removeScopeUserIds = null,
+    removeKeepUserIds = keepUserIds
+  } = {}
 ) {
 
   const removeUserIds = new Set();
@@ -514,7 +518,7 @@ async function syncSignupChannelRoles(
   if (removeMissingRoles) {
     if (removeScopeUserIds) {
       for (const userId of removeScopeUserIds) {
-        if (!keepUserIds.has(userId)) {
+        if (!removeKeepUserIds.has(userId)) {
           removeUserIds.add(userId);
         }
       }
@@ -529,7 +533,7 @@ async function syncSignupChannelRoles(
             continue;
           }
 
-          if (keepUserIds.has(member.id)) {
+          if (removeKeepUserIds.has(member.id)) {
             continue;
           }
 
@@ -642,7 +646,6 @@ async function finishRoletagged(
     isReload,
     requiredTeamSize,
     twoLobbies,
-    maxSignups,
     channel,
     guild
   }
@@ -656,8 +659,7 @@ async function finishRoletagged(
   } = splitValidTeams(validTeams, {
     isReload,
     requiredTeamSize,
-    twoLobbies,
-    teamLimitOverride: maxSignups
+    twoLobbies
   });
 
   const roledUserIds =
@@ -685,8 +687,7 @@ async function finishRoletagged(
     role,
     roledUserIds,
     {
-      removeMissingRoles: maxSignups == null,
-      removeScopeUserIds: channelParticipantIds
+      removeKeepUserIds: channelParticipantIds
     }
   );
 
@@ -900,16 +901,6 @@ module.exports = {
         .setRequired(false)
     )
 
-    .addIntegerOption(o =>
-      o.setName("max_signups")
-        .setDescription(
-          "Max signups to role (first in order); omit for default mode cap"
-        )
-        .setRequired(false)
-        .setMinValue(1)
-        .setMaxValue(100)
-    )
-
     .setDefaultMemberPermissions(
       PermissionFlagsBits.ManageRoles
     ),
@@ -934,9 +925,6 @@ module.exports = {
 
     const twoLobbies =
       interaction.options.getBoolean("two_lobbies") || false;
-
-    const maxSignups =
-      interaction.options.getInteger("max_signups");
 
     const requiredTeamSize =
       parseInt(
@@ -1154,7 +1142,6 @@ module.exports = {
         isReload,
         requiredTeamSize,
         twoLobbies,
-        maxSignups,
         channel,
         guild
       });
@@ -1230,10 +1217,6 @@ module.exports = {
 
     }
 
-    if (maxSignups !== null) {
-      validTeams = validTeams.slice(0, maxSignups);
-    }
-
     await sendRoletaggedReply(
       interaction,
       validTeams.length === 0
@@ -1252,7 +1235,6 @@ module.exports = {
       isReload,
       requiredTeamSize,
       twoLobbies,
-      maxSignups,
       channel,
       guild
     });
