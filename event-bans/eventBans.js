@@ -147,6 +147,7 @@ module.exports = {
   handleEventBan,
   getRows,
   getSignupBlockReason: require("../lib/eventBanRoles").getSignupBlockReason,
+  memberHasEventBanRole: require("../lib/eventBanRoles").memberHasEventBanRole,
   formatSignupBlockMessage:
     require("../lib/eventBanRoles").formatSignupBlockMessage
 };

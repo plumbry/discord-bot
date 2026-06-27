@@ -19,6 +19,8 @@ const {
   validateTeamTierCombo
 } = require("../lib/tierRestrictions");
 
+const { memberHasEventBanRole } = require("../lib/eventBanRoles");
+
 const {
   RULES_ACK_EMOJI_ID,
   findRulesAcknowledgementChannel,
@@ -1096,10 +1098,27 @@ module.exports = {
 
       for (const user of team.users) {
 
-        blockReason = getSignupBlockReason(
+        const sheetBlockReason = getSignupBlockReason(
           user.id,
           eventBanRows
         );
+
+        if (!sheetBlockReason) {
+          continue;
+        }
+
+        const hasEventBanRole =
+          await memberHasEventBanRole(guild, user.id);
+
+        if (!hasEventBanRole) {
+          console.warn(
+            "[ROLETAGGED] Ignoring active event-ban sheet row because member lacks role:",
+            user.id
+          );
+          continue;
+        }
+
+        blockReason = sheetBlockReason;
 
         if (blockReason) {
           break;
