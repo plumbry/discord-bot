@@ -38,17 +38,17 @@ const verifyCommand = new SlashCommandBuilder()
 
 // ================= VERIFY MESSAGE =================
 const VERIFY_MESSAGE = memberMention =>
-`Hi ${memberMention}, we need to woman verify you if possible please! We have 2 ways we can do this:
+`Hi ${memberMention}! As ZBD is a co-ed competitive Fortnite server, we verify all female players before they can compete. Unfortunately we've had people falsely claim to be female in the past, so this process helps us keep tournaments fair and ensures everyone can trust that teams meet our eligibility requirements. We have two quick ways to verify:
 
-• A quick face cam check - you would join a call in the server with a moderator, turn on your camera and say your username
+• **Facecam** – Join a quick call with a female moderator, turn on your camera, and say your Discord username.
 
 OR
 
-• A picture of your ID clearly showing your gender with a piece of paper with your discord name on it.
+• **Photo ID** – Send a photo of your ID with a piece of paper showing your Discord name. You may cover any personal information - we only need to see your gender. Your ID is never stored.
 
-Your personal info can be crossed out. If you are 25+ and wish to "boomer verify" for future tournaments, do not cover your year of birth.
+If you're 25+ and would also like the Boomer role for future tournaments, please leave your birth year visible.
 
-Let us know which option you prefer and we will get started!`;
+Let us know which option you'd prefer and we'll get you verified!`;
 
 // ================= WELCOME BATCHING =================
 let welcomeQueue = [];
