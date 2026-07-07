@@ -1,10 +1,57 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 const { getSheets } = require("../lib/sheets");
 const { getAccessToken } = require("../twitchBatch");
-const { findEventChannels, scanPostedChannelVods } = require("../lib/vodEventScan");
+const {
+  findEventChannels,
+  scanPostedChannelVods,
+  collectPostedLoginsByAuthor
+} = require("../lib/vodEventScan");
+const { getTeams } = require("./teamstreamcheck");
 
 const SPREADSHEET_ID = process.env.MAIN_SHEET_ID;
 const SHEET_NAME = "'VOD Report'";
+
+function requiredVodsForTeam(team) {
+  return team.members.length >= 4 ? 2 : 1;
+}
+
+function filterMissingByTeamCompliance({
+  missing,
+  teams,
+  results,
+  loginsByAuthor
+}) {
+  if (!teams.length) return missing;
+
+  const resultsByTwitch = new Map(results.map(r => [r.twitch, r]));
+  const exemptLogins = new Set();
+
+  for (const team of teams) {
+    const required = requiredVodsForTeam(team);
+    let validCount = 0;
+
+    for (const memberId of team.members) {
+      for (const login of loginsByAuthor.get(memberId) || []) {
+        if (resultsByTwitch.get(login)?.valid) {
+          validCount++;
+          if (validCount >= required) break;
+        }
+      }
+
+      if (validCount >= required) break;
+    }
+
+    if (validCount >= required) {
+      for (const memberId of team.members) {
+        for (const login of loginsByAuthor.get(memberId) || []) {
+          exemptLogins.add(login);
+        }
+      }
+    }
+  }
+
+  return missing.filter(twitch => !exemptLogins.has(twitch));
+}
 
 async function appendRows(rows) {
   await getSheets().spreadsheets.values.append({
@@ -38,7 +85,7 @@ module.exports = {
         });
       }
 
-      const { streamChannel } = findEventChannels(
+      const { signupChannel, streamChannel } = findEventChannels(
         interaction.guild,
         category
       );
@@ -70,6 +117,16 @@ module.exports = {
         end
       });
 
+      let loginsByAuthor = new Map();
+      let teams = [];
+
+      if (signupChannel) {
+        [teams, loginsByAuthor] = await Promise.all([
+          getTeams(signupChannel),
+          collectPostedLoginsByAuthor(streamChannel, token)
+        ]);
+      }
+
       const rows = [];
       const missing = [];
 
@@ -90,14 +147,21 @@ module.exports = {
         ]);
       }
 
+      const reportedMissing = filterMissingByTeamCompliance({
+        missing,
+        teams,
+        results,
+        loginsByAuthor
+      });
+
       await appendRows(rows);
 
       let summary = `VOD Report Complete\n\n`;
 
       if (!results.length) {
         summary += "No Twitch channel links posted.";
-      } else if (missing.length) {
-        summary += `Issues Found (${missing.length})\n${missing.join("\n")}`;
+      } else if (reportedMissing.length) {
+        summary += `Issues Found (${reportedMissing.length})\n${reportedMissing.join("\n")}`;
       } else {
         summary += "All posted channels have valid VODs.";
       }

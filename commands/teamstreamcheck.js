@@ -241,3 +241,4 @@ module.exports = {
 };
 
 module.exports.runTeamStreamCheck = runTeamStreamCheck;
+module.exports.getTeams = getTeams;
