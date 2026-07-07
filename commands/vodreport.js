@@ -4,7 +4,8 @@ const { getAccessToken } = require("../twitchBatch");
 const {
   findEventChannels,
   scanPostedChannelVods,
-  collectPostedLoginsByAuthor
+  collectPostedLoginsByAuthor,
+  collectTeamTaggedLogins
 } = require("../lib/vodEventScan");
 const { getTeams } = require("./teamstreamcheck");
 
@@ -26,6 +27,7 @@ function filterMissingByTeamCompliance({
   teams,
   results,
   loginsByAuthor,
+  loginsByTeamNumber = new Map(),
   categoryName = ""
 }) {
   if (!teams.length) return missing;
@@ -41,6 +43,10 @@ function filterMissingByTeamCompliance({
       for (const login of loginsByAuthor.get(memberId) || []) {
         teamLogins.add(login);
       }
+    }
+
+    for (const login of loginsByTeamNumber.get(team.number) || []) {
+      teamLogins.add(login);
     }
 
     let validCount = 0;
@@ -127,12 +133,14 @@ module.exports = {
       });
 
       let loginsByAuthor = new Map();
+      let loginsByTeamNumber = new Map();
       let teams = [];
 
       if (signupChannel) {
-        [teams, loginsByAuthor] = await Promise.all([
+        [teams, loginsByAuthor, loginsByTeamNumber] = await Promise.all([
           getTeams(signupChannel),
-          collectPostedLoginsByAuthor(streamChannel, token)
+          collectPostedLoginsByAuthor(streamChannel, token),
+          collectTeamTaggedLogins(streamChannel, token)
         ]);
       }
 
@@ -161,6 +169,7 @@ module.exports = {
         teams,
         results,
         loginsByAuthor,
+        loginsByTeamNumber,
         categoryName: category.name
       });
 
