@@ -65,7 +65,15 @@ function filterMissingByTeamCompliance({
     }
   }
 
-  return missing.filter(twitch => !exemptLogins.has(twitch));
+  return missing.filter(twitch => {
+    const result = resultsByTwitch.get(twitch);
+
+    if (result?.note === "Invalid Twitch channel") {
+      return true;
+    }
+
+    return !exemptLogins.has(twitch);
+  });
 }
 
 async function appendRows(rows) {
