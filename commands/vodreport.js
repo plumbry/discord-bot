@@ -11,7 +11,13 @@ const { getTeams } = require("./teamstreamcheck");
 const SPREADSHEET_ID = process.env.MAIN_SHEET_ID;
 const SHEET_NAME = "'VOD Report'";
 
-function requiredVodsForTeam(team) {
+function requiredVodsForTeam(team, categoryName = "") {
+  const name = categoryName.toLowerCase();
+
+  if (name.includes("squad")) {
+    return 2;
+  }
+
   return team.members.length >= 4 ? 2 : 1;
 }
 
@@ -19,7 +25,8 @@ function filterMissingByTeamCompliance({
   missing,
   teams,
   results,
-  loginsByAuthor
+  loginsByAuthor,
+  categoryName = ""
 }) {
   if (!teams.length) return missing;
 
@@ -27,7 +34,7 @@ function filterMissingByTeamCompliance({
   const exemptLogins = new Set();
 
   for (const team of teams) {
-    const required = requiredVodsForTeam(team);
+    const required = requiredVodsForTeam(team, categoryName);
     let validCount = 0;
 
     for (const memberId of team.members) {
@@ -151,7 +158,8 @@ module.exports = {
         missing,
         teams,
         results,
-        loginsByAuthor
+        loginsByAuthor,
+        categoryName: category.name
       });
 
       await appendRows(rows);
