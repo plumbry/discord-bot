@@ -35,24 +35,26 @@ function filterMissingByTeamCompliance({
 
   for (const team of teams) {
     const required = requiredVodsForTeam(team, categoryName);
-    let validCount = 0;
+    const teamLogins = new Set();
 
     for (const memberId of team.members) {
       for (const login of loginsByAuthor.get(memberId) || []) {
-        if (resultsByTwitch.get(login)?.valid) {
-          validCount++;
-          if (validCount >= required) break;
-        }
+        teamLogins.add(login);
       }
+    }
 
-      if (validCount >= required) break;
+    let validCount = 0;
+
+    for (const login of teamLogins) {
+      if (resultsByTwitch.get(login)?.valid) {
+        validCount++;
+        if (validCount >= required) break;
+      }
     }
 
     if (validCount >= required) {
-      for (const memberId of team.members) {
-        for (const login of loginsByAuthor.get(memberId) || []) {
-          exemptLogins.add(login);
-        }
+      for (const login of teamLogins) {
+        exemptLogins.add(login);
       }
     }
   }
