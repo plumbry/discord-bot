@@ -22,18 +22,20 @@ function requiredVodsForTeam(team, categoryName = "") {
   return team.members.length >= 4 ? 2 : 1;
 }
 
-function filterMissingByTeamCompliance({
-  missing,
+function buildExemptLogins({
   teams,
   results,
   loginsByAuthor,
-  loginsByTeamNumber = new Map(),
-  categoryName = ""
+  loginsByTeamNumber,
+  categoryName
 }) {
-  if (!teams.length) return missing;
+  const exemptLogins = new Set();
+
+  if (!teams.length) {
+    return exemptLogins;
+  }
 
   const resultsByTwitch = new Map(results.map(r => [r.twitch, r]));
-  const exemptLogins = new Set();
 
   for (const team of teams) {
     const required = requiredVodsForTeam(team, categoryName);
@@ -65,15 +67,47 @@ function filterMissingByTeamCompliance({
     }
   }
 
-  return missing.filter(twitch => {
-    const result = resultsByTwitch.get(twitch);
+  return exemptLogins;
+}
 
-    if (result?.note === "Invalid Twitch channel") {
-      return true;
+function buildIssueSummary({
+  results,
+  teams,
+  loginsByAuthor,
+  loginsByTeamNumber = new Map(),
+  categoryName = ""
+}) {
+  const exemptLogins = buildExemptLogins({
+    teams,
+    results,
+    loginsByAuthor,
+    loginsByTeamNumber,
+    categoryName
+  });
+
+  const issues = [];
+
+  for (const r of results) {
+    if (r.valid) continue;
+
+    if (r.note === "Invalid twitch link") {
+      issues.push(`${r.twitch} - Invalid twitch link`);
+      continue;
     }
 
-    return !exemptLogins.has(twitch);
-  });
+    if (teams.length && exemptLogins.has(r.twitch)) {
+      continue;
+    }
+
+    if (teams.length) {
+      issues.push(`${r.twitch} - no VOD, no valid teammate link`);
+      continue;
+    }
+
+    issues.push(r.twitch);
+  }
+
+  return issues;
 }
 
 async function appendRows(rows) {
@@ -153,11 +187,8 @@ module.exports = {
       }
 
       const rows = [];
-      const missing = [];
 
       for (const r of results) {
-        if (!r.valid) missing.push(r.twitch);
-
         rows.push([
           category.name,
           "",
@@ -172,10 +203,9 @@ module.exports = {
         ]);
       }
 
-      const reportedMissing = filterMissingByTeamCompliance({
-        missing,
-        teams,
+      const reportedIssues = buildIssueSummary({
         results,
+        teams,
         loginsByAuthor,
         loginsByTeamNumber,
         categoryName: category.name
@@ -187,8 +217,8 @@ module.exports = {
 
       if (!results.length) {
         summary += "No Twitch channel links posted.";
-      } else if (reportedMissing.length) {
-        summary += `Issues Found (${reportedMissing.length})\n${reportedMissing.join("\n")}`;
+      } else if (reportedIssues.length) {
+        summary += `Issues Found (${reportedIssues.length})\n${reportedIssues.join("\n")}`;
       } else {
         summary += "All posted channels have valid VODs.";
       }
