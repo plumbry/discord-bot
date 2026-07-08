@@ -790,13 +790,15 @@ async function finishRoletagged(
       "Lobby 2 Teams: " + lobby2Teams.length
     : "";
 
-  const result =
+  const modeLabel =
+    (MODE_LABELS[requiredTeamSize] || requiredTeamSize) +
+    (twoLobbies ? " (capacity per lobby)" : "");
 
+  const detailedResult =
     (validTeams.length === 0
       ? (emptyResultLabel || "No teams selected for role assignment.") + "\n"
       : "Role assignment complete\n") +
-      "Mode: " + (MODE_LABELS[requiredTeamSize] || requiredTeamSize) +
-      (twoLobbies ? " (capacity per lobby)" : "") + "\n" +
+      "Mode: " + modeLabel + "\n" +
       "Reload: " + (isReload ? "Yes" : "No") + "\n" +
     "Role: " + role.name + "\n" +
     "Added: " + added + "\n" +
@@ -812,30 +814,22 @@ async function finishRoletagged(
     invalidSignupNote +
     rulesAckNote;
 
+  const publicResult =
+    validTeams.length === 0
+      ? (emptyResultLabel || "No teams selected for role assignment.")
+      : `${role.name} ${MODE_LABELS[requiredTeamSize] || requiredTeamSize}, ${validTeams.length} valid teams`;
+
   try {
 
     const logChannel =
       await guild.channels.fetch(LOG_CHANNEL_ID);
 
     await logChannel.send(
-
       "Role Assigned via /roletagged\n" +
       "Moderator: " +
       interaction.user.tag +
-      "\nRole: " +
-      role.name +
-      "\nMode: " +
-      (MODE_LABELS[requiredTeamSize] || requiredTeamSize) +
-      "\nReload: " +
-      (isReload ? "Yes" : "No") +
-      (twoLobbies
-        ? "\nTwo lobbies: Yes (L1=" + lobby1Teams.length +
-          " L2=" + lobby2Teams.length + ")"
-        : "") +
-      "\nTeams: " +
-      validTeams.length +
-      banNote +
-      tierNote
+      "\n" +
+      detailedResult
     );
 
   } catch {}
@@ -860,7 +854,7 @@ async function finishRoletagged(
 
   }
 
-  await sendRoletaggedReply(interaction, result);
+  await sendRoletaggedReply(interaction, publicResult);
 
 }
 
