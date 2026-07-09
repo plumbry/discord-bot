@@ -3,6 +3,7 @@ const { getSheets } = require("../lib/sheets");
 
 // ================= CONFIG =================
 const VERIFY_CATEGORY_ID = "1405195809057669271";
+const BOOMER_CATEGORY_ID = "1435302520279924956";
 const NEW_MEMBER_ROLE_ID = "1419812379692367902";
 const WELCOME_CHANNEL_ID = "1471071557991272459";
 const WELCOME_LOG_CHANNEL_ID = "1471082166535454780";
@@ -229,7 +230,7 @@ async function handleBoomer(interaction) {
 
     if (
       !interaction.channel ||
-      interaction.channel.parentId !== VERIFY_CATEGORY_ID
+      interaction.channel.parentId !== BOOMER_CATEGORY_ID
     ) {
       return interaction.editReply("Wrong channel.");
     }
