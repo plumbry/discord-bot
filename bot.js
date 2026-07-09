@@ -56,6 +56,8 @@ console.log("ENV CHECK:", {
 
 let verifyCommand = null;
 let handleVerify = null;
+let boomerCommand = null;
+let handleBoomer = null;
 let handleWelcome = null;
 let handleWelcomeReaction = null;
 
@@ -64,6 +66,8 @@ try {
   ({
     verifyCommand,
     handleVerify,
+    boomerCommand,
+    handleBoomer,
     handleWelcome,
     handleWelcomeReaction
   } = require("./welcome-ping"));
@@ -756,6 +760,33 @@ client.once("ready", async () => {
 
   }
 
+  // ================= BOOMER =================
+
+  if (boomerCommand) {
+
+    try {
+
+      const json =
+        boomerCommand.toJSON();
+
+      commandJSON.push(json);
+
+      console.log(
+        `📦 Registering command: ${json.name}`
+      );
+
+    } catch (err) {
+
+      console.error(
+        "❌ Failed converting boomer command:"
+      );
+
+      console.error(err);
+
+    }
+
+  }
+
   // ================= EVENTBAN =================
 
   if (eventBanCommand) {
@@ -1359,6 +1390,20 @@ WHO IS NOT IN <@&${call.roleId}>`
       ) {
 
         return await handleVerify(
+          interaction
+        );
+
+      }
+
+      // ================= BOOMER =================
+
+      if (
+        interaction.commandName ===
+          "boomer" &&
+        handleBoomer
+      ) {
+
+        return await handleBoomer(
           interaction
         );
 

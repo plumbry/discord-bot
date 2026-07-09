@@ -49,6 +49,13 @@ function loadExtraCommands() {
   }
 
   try {
+    const { boomerCommand } = require('../welcome-ping');
+    if (boomerCommand?.toJSON) extra.push(boomerCommand.toJSON());
+  } catch (err) {
+    console.warn('boomer command not loaded:', err.message);
+  }
+
+  try {
     const { eventBanCommand } = require('../event-bans/eventBans');
     if (eventBanCommand?.toJSON) extra.push(eventBanCommand.toJSON());
   } catch (err) {

@@ -36,6 +36,17 @@ const verifyCommand = new SlashCommandBuilder()
       .setRequired(true)
   );
 
+// ================= BOOMER COMMAND =================
+const boomerCommand = new SlashCommandBuilder()
+  .setName("boomer")
+  .setDescription("Send boomer verification message")
+  .addUserOption(o =>
+    o
+      .setName("member")
+      .setDescription("Member to verify")
+      .setRequired(true)
+  );
+
 // ================= VERIFY MESSAGE =================
 const VERIFY_MESSAGE = memberMention =>
 `Hi ${memberMention}! As ZBD is a co-ed competitive Fortnite server, we verify all female players before they can compete. Unfortunately we've had people falsely claim to be female in the past, so this process helps us keep tournaments fair and ensures everyone can trust that teams meet our eligibility requirements. We have two quick ways to verify:
@@ -49,6 +60,16 @@ OR
 If you're 25+ and would also like the Boomer role for future tournaments, please leave your birth year visible.
 
 Let us know which option you'd prefer and we'll get you verified!`;
+
+// ================= BOOMER MESSAGE =================
+const BOOMER_MESSAGE = memberMention =>
+`Hey! ${memberMention} You have two options:
+
+• Send a picture of your ID (hiding confidential information such as name and address) but showing your age (must be 25+) — you must also have a piece of paper in the pic with your Discord username in
+
+OR
+
+• Show your boomer roles from the 'Boomer League' server`;
 
 // ================= WELCOME BATCHING =================
 let welcomeQueue = [];
@@ -199,10 +220,36 @@ async function handleVerify(interaction) {
   }
 }
 
+// ================= BOOMER HANDLER =================
+async function handleBoomer(interaction) {
+  try {
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({ ephemeral: false });
+    }
+
+    if (
+      !interaction.channel ||
+      interaction.channel.parentId !== VERIFY_CATEGORY_ID
+    ) {
+      return interaction.editReply("Wrong channel.");
+    }
+
+    const user = interaction.options.getUser("member");
+
+    await interaction.editReply(
+      BOOMER_MESSAGE(`<@${user.id}>`)
+    );
+  } catch (err) {
+    console.error("handleBoomer error:", err);
+  }
+}
+
 // ================= EXPORTS =================
 module.exports = {
   verifyCommand,
   handleVerify,
+  boomerCommand,
+  handleBoomer,
   handleWelcome,
   handleWelcomeReaction
 };
