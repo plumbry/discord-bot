@@ -585,7 +585,9 @@ for (const file of commandFiles) {
     );
 
     console.log(
-      `✅ Loaded command: ${command.data.name}`
+      command.decommissioned
+        ? `✅ Loaded command: ${command.data.name} (decommissioned — not registered)`
+        : `✅ Loaded command: ${command.data.name}`
     );
 
   } catch (err) {
@@ -709,6 +711,13 @@ client.once("ready", async () => {
   // ================= COMMANDS FOLDER =================
 
   for (const command of client.commands.values()) {
+
+    if (command.decommissioned) {
+      console.log(
+        `⏸️ Skipped registering decommissioned command: ${command.data.name}`
+      );
+      continue;
+    }
 
     try {
 

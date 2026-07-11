@@ -81,6 +81,7 @@ async function loadExistingPenaltyKeys(sheets, spreadsheetId) {
 }
 
 module.exports = {
+  decommissioned: true,
   data: new SlashCommandBuilder()
     .setName('submit')
     .setDescription('Submit match results from Yunite')

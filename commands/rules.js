@@ -757,6 +757,7 @@ async function postRulesPack(interaction, payload) {
 }
 
 module.exports = {
+  decommissioned: true,
   data: new SlashCommandBuilder()
     .setName("rules")
     .setDescription("Post and manage event rules + banned items")

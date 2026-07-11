@@ -221,6 +221,7 @@ async function openBansEditor(interaction) {
 }
 
 module.exports = {
+  decommissioned: true,
   data: new SlashCommandBuilder()
     .setName("bans")
     .setDescription("Post or edit a bans-only message (no rules text)")

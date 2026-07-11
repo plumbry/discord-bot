@@ -3,6 +3,7 @@ const { SlashCommandBuilder } = require("discord.js");
 let yuniteRunning = false;
 
 module.exports = {
+  decommissioned: true,
   data: new SlashCommandBuilder()
     .setName("yunite")
     .setDescription("Control Yunite stream")

@@ -32,6 +32,7 @@ function loadCommandsFromFolder() {
   for (const file of fs.readdirSync(commandsPath).filter((f) => f.endsWith('.js'))) {
     const command = require(path.join(commandsPath, file));
     if (!command?.data?.toJSON) continue;
+    if (command.decommissioned) continue;
     body.push(command.data.toJSON());
   }
 
@@ -70,22 +71,6 @@ function logCommandSummary(body) {
     const opts = (json.options || []).map((o) => o.name).join(', ') || '(none)';
     console.log(`  ${json.name}: ${opts}`);
   }
-
-  const submit = body.find((c) => c.name === 'submit');
-  if (!submit) {
-    console.error('\nERROR: submit command missing from payload.');
-    process.exit(1);
-  }
-
-  const names = (submit.options || []).map((o) => o.name);
-  if (!names.includes('id') || !names.includes('session')) {
-    console.error('\nERROR: submit is missing id and/or session options.');
-    console.error(JSON.stringify(submit.options, null, 2));
-    process.exit(1);
-  }
-
-  console.log('\nsubmit OK — required options: id, session');
-  console.log('description:', submit.description);
 }
 
 async function main() {
@@ -104,14 +89,11 @@ async function main() {
   logCommandSummary(body);
 
   await rest.put(Routes.applicationCommands(clientId), { body: [] });
-  console.log('Cleared global slash commands (removes stale /submit).');
+  console.log('Cleared global slash commands.');
 
   await rest.put(Routes.applicationGuildCommands(clientId, GUILD_ID), { body });
 
-  console.log('\nDone. In Discord, /submit should show:');
-  console.log('  - id (Yunite tournament ID)');
-  console.log('  - session (1-12)');
-  console.log('  Description: "Submit match results from Yunite"');
+  console.log(`\nDone. Registered ${body.length} guild commands.`);
 }
 
 main().catch((err) => {
