@@ -290,6 +290,7 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildPresences, // privileged: enable Presence Intent in the Discord Developer Portal
     GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
@@ -1015,7 +1016,8 @@ client.on(
         interaction.commandName === "checkrules" ||
         interaction.commandName === "disqualify" ||
         interaction.commandName === "unreg" ||
-        interaction.commandName === "voicecheck") &&
+        interaction.commandName === "voicecheck" ||
+        interaction.commandName === "online") &&
       !interaction.deferred &&
       !interaction.replied
     ) {
