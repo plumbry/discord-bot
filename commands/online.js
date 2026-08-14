@@ -9,6 +9,13 @@ const ONLINE_STATUSES = new Set(["online", "idle", "dnd"]);
 const EMBED_DESCRIPTION_LIMIT = 4096;
 const EMBED_COLOR = 0x57f287;
 const NO_PING_MENTIONS = { parse: [] };
+const PRESENCE_BATCH_SIZE = 100;
+const PRESENCE_FETCH_TIME_MS = 90_000;
+const PRESENCE_BATCH_TIME_MS = 30_000;
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 function getDisplayName(member) {
   return (
@@ -19,8 +26,16 @@ function getDisplayName(member) {
   );
 }
 
+function getPresenceStatus(member) {
+  return (
+    member.presence?.status ||
+    member.guild.presences.cache.get(member.id)?.status ||
+    null
+  );
+}
+
 function isConsideredOnline(member) {
-  return ONLINE_STATUSES.has(member.presence?.status);
+  return ONLINE_STATUSES.has(getPresenceStatus(member));
 }
 
 function compareDisplayNames(a, b) {
@@ -84,20 +99,15 @@ function chunkDescriptionPages(header, lines) {
 }
 
 function buildEmptyEmbed(role1, role2, excludeRole, warning) {
+  const header = buildFilterHeader(role1, role2, excludeRole);
+  const body = warning
+    ? warning
+    : buildEmptyMessage(role1, role2, excludeRole);
+
   const embed = new EmbedBuilder()
     .setTitle("🟢 Online Members")
     .setColor(EMBED_COLOR)
-    .setDescription(
-      `${buildFilterHeader(role1, role2, excludeRole)}\n\n${buildEmptyMessage(
-        role1,
-        role2,
-        excludeRole
-      )}`
-    );
-
-  if (warning) {
-    embed.setFooter({ text: warning });
-  }
+    .setDescription(`${header}\n\n${body}`);
 
   return embed;
 }
@@ -136,15 +146,117 @@ function presenceIntentEnabled(guild) {
   return guild.client.options.intents.has(GatewayIntentBits.GuildPresences);
 }
 
-async function fetchMembersWithPresence(guild) {
-  try {
-    const members = await guild.members.fetch({ withPresences: true });
-    return { members, withPresences: true };
-  } catch (err) {
-    console.error("[ONLINE] fetch with presences failed:", err?.message || err);
-    const members = await guild.members.fetch();
-    return { members, withPresences: false };
+function matchesRoleFilters(member, role1, role2, excludeRole) {
+  if (member.user.bot) return false;
+  if (!member.roles.cache.has(role1.id)) return false;
+  if (role2 && !member.roles.cache.has(role2.id)) return false;
+  if (excludeRole && member.roles.cache.has(excludeRole.id)) return false;
+  return true;
+}
+
+async function ensureMembersCached(guild) {
+  if (guild.members.cache.size >= guild.memberCount) {
+    return guild.members.cache;
   }
+
+  try {
+    return await guild.members.fetch();
+  } catch (err) {
+    console.error("[ONLINE] member fetch failed:", err?.message || err);
+    return guild.members.cache;
+  }
+}
+
+async function fetchAllMembersWithPresences(guild) {
+  return guild.members.fetch({
+    query: "",
+    limit: 0,
+    withPresences: true,
+    time: PRESENCE_FETCH_TIME_MS
+  });
+}
+
+async function fetchPresencesForIds(guild, ids) {
+  for (let index = 0; index < ids.length; index += PRESENCE_BATCH_SIZE) {
+    const batch = ids.slice(index, index + PRESENCE_BATCH_SIZE);
+    let attempt = 0;
+
+    while (attempt < 3) {
+      try {
+        await guild.members.fetch({
+          user: batch,
+          withPresences: true,
+          time: PRESENCE_BATCH_TIME_MS
+        });
+        break;
+      } catch (err) {
+        attempt += 1;
+        console.error(
+          `[ONLINE] presence batch failed (${index}-${index + batch.length}):`,
+          err?.message || err
+        );
+
+        if (attempt >= 3) {
+          throw err;
+        }
+
+        await delay(5000);
+      }
+    }
+  }
+}
+
+async function loadOnlineMatches(guild, role1, role2, excludeRole) {
+  let presenceFetchComplete = false;
+
+  try {
+    await fetchAllMembersWithPresences(guild);
+    presenceFetchComplete = guild.presences.cache.size > 0;
+  } catch (err) {
+    console.error("[ONLINE] full presence fetch failed:", err?.message || err);
+  }
+
+  const allMembers = await ensureMembersCached(guild);
+  const candidates = [];
+
+  for (const member of allMembers.values()) {
+    if (matchesRoleFilters(member, role1, role2, excludeRole)) {
+      candidates.push(member);
+    }
+  }
+
+  const missingPresenceIds = candidates
+    .filter(member => !guild.presences.cache.has(member.id))
+    .map(member => member.id);
+
+  if (!presenceFetchComplete && missingPresenceIds.length > 0) {
+    try {
+      await fetchPresencesForIds(guild, missingPresenceIds);
+      presenceFetchComplete = true;
+    } catch (err) {
+      console.error("[ONLINE] candidate presence fetch failed:", err?.message || err);
+    }
+  }
+
+  const matches = candidates.filter(isConsideredOnline).sort(compareDisplayNames);
+  const presenceAvailable =
+    presenceIntentEnabled(guild) &&
+    (presenceFetchComplete ||
+      matches.length > 0 ||
+      guild.presences.cache.size > 0);
+
+  console.log(
+    `[ONLINE] members=${allMembers.size}/${guild.memberCount} ` +
+      `presences=${guild.presences.cache.size} ` +
+      `candidates=${candidates.length} matches=${matches.length} ` +
+      `presenceAvailable=${presenceAvailable}`
+  );
+
+  return {
+    matches,
+    memberCount: allMembers.size,
+    presenceAvailable
+  };
 }
 
 module.exports = {
@@ -189,47 +301,39 @@ module.exports = {
       });
     }
 
-    const { members: allMembers, withPresences } =
-      await fetchMembersWithPresence(guild);
+    await interaction.editReply({
+      content: "🔍 Fetching online members…"
+    });
 
-    const matches = [];
+    const { matches, memberCount, presenceAvailable } = await loadOnlineMatches(
+      guild,
+      role1,
+      role2,
+      excludeRole
+    );
 
-    for (const member of allMembers.values()) {
-      if (member.user.bot) continue;
-      if (!member.roles.cache.has(role1.id)) continue;
-      if (role2 && !member.roles.cache.has(role2.id)) continue;
-      if (excludeRole && member.roles.cache.has(excludeRole.id)) continue;
-      if (!isConsideredOnline(member)) continue;
-      matches.push(member);
-    }
-
-    matches.sort(compareDisplayNames);
-
-    const fetchIncomplete = allMembers.size < guild.memberCount;
-    const presenceUnavailable =
-      !presenceIntentEnabled(guild) || !withPresences;
     const warnings = [];
 
-    if (fetchIncomplete) {
+    if (memberCount < guild.memberCount) {
       warnings.push(
-        `Discord returned ${allMembers.size}/${guild.memberCount} members. Enable Server Members Intent, then restart.`
+        `Discord returned ${memberCount}/${guild.memberCount} members. Enable Server Members Intent, then restart.`
       );
     }
 
-    if (presenceUnavailable) {
+    if (!presenceAvailable) {
       warnings.push(
-        "No online presence data. Enable Presence Intent in the Discord Developer Portal, then restart the bot."
+        "Could not read Discord online status. Enable **Presence Intent** in the Discord Developer Portal (Bot → Privileged Gateway Intents), then restart the bot."
       );
     }
 
     const warning = warnings.join(" ");
-
     const embeds =
       matches.length === 0
         ? [buildEmptyEmbed(role1, role2, excludeRole, warning)]
         : buildResultEmbeds(role1, role2, excludeRole, matches, warning);
 
     await interaction.editReply({
+      content: null,
       embeds: [embeds[0]],
       allowedMentions: NO_PING_MENTIONS
     });
