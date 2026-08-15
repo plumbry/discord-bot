@@ -19,6 +19,11 @@ const {
   validateTeamTierCombo
 } = require("../lib/tierRestrictions");
 
+const {
+  formatInvalidGenderSignupMessage,
+  validateTeamGenderCombo
+} = require("../lib/genderRestrictions");
+
 const { memberHasEventBanRole } = require("../lib/eventBanRoles");
 
 const {
@@ -640,6 +645,7 @@ async function finishRoletagged(
     validTeams,
     skippedBannedTeams,
     includedDespiteBan,
+    genderRejectedCount = 0,
     tierRejectedCount,
     invalidSignupsMarked,
     scannedMessages,
@@ -774,6 +780,11 @@ async function finishRoletagged(
       ? `\nBanned teams skipped: ${skippedBannedTeams.length}`
       : "";
 
+  const genderNote =
+    genderRejectedCount > 0
+      ? `\nInvalid gender combos rejected: ${genderRejectedCount}`
+      : "";
+
   const tierNote =
     tierRejectedCount > 0
       ? `\nInvalid tier combos rejected: ${tierRejectedCount}`
@@ -810,6 +821,7 @@ async function finishRoletagged(
     "Overflow Teams: " + overflowTeams.length +
     lobbyNote +
     banNote +
+    genderNote +
     tierNote +
     invalidSignupNote +
     rulesAckNote;
@@ -1023,6 +1035,7 @@ module.exports = {
 
     // ================= VALIDATE =================
 
+    let genderRejectedCount = 0;
     let tierRejectedCount = 0;
 
     for (const team of candidateTeams) {
@@ -1052,6 +1065,32 @@ module.exports = {
         } catch {}
 
         continue;
+      }
+
+      if (requiredTeamSize > 1) {
+
+        const genderCheck = await validateTeamGenderCombo(
+          guild,
+          team.users,
+          requiredTeamSize
+        );
+
+        if (!genderCheck.ok) {
+
+          genderRejectedCount++;
+
+          try {
+
+            await channel.send(
+              formatInvalidGenderSignupMessage(genderCheck)
+            );
+
+          } catch {}
+
+          continue;
+
+        }
+
       }
 
       const teamSizeForTier = requiredTeamSize;
@@ -1147,6 +1186,7 @@ module.exports = {
         validTeams: [],
         skippedBannedTeams: [],
         includedDespiteBan: false,
+        genderRejectedCount,
         tierRejectedCount,
         invalidSignupsMarked,
         scannedMessages: orderedMessages,
@@ -1241,6 +1281,7 @@ module.exports = {
       validTeams,
       skippedBannedTeams,
       includedDespiteBan,
+      genderRejectedCount,
       tierRejectedCount,
       invalidSignupsMarked,
       scannedMessages: orderedMessages,
