@@ -244,6 +244,28 @@ try {
 
 }
 
+// ================= LFG =================
+
+let startLfgExpiryScheduler = null;
+
+try {
+
+  ({
+    startLfgExpiryScheduler
+  } = require("./lib/lfgExpiry"));
+
+  console.log("✅ LFG module loaded");
+
+} catch (err) {
+
+  console.error(
+    "⚠️ LFG module not loaded:"
+  );
+
+  console.error(err);
+
+}
+
 // ================= GAME CALL =================
 
 const {
@@ -969,6 +991,26 @@ client.once("ready", async () => {
 
   }
 
+  // ================= LFG EXPIRY SCHEDULER =================
+
+  if (startLfgExpiryScheduler) {
+
+    try {
+
+      startLfgExpiryScheduler(client);
+
+    } catch (err) {
+
+      console.error(
+        "❌ LFG expiry scheduler error:"
+      );
+
+      console.error(err);
+
+    }
+
+  }
+
   // ================= SCHEDULED EVENTS HEALTH CHECK =================
 
   try {
@@ -1000,6 +1042,45 @@ client.once("ready", async () => {
     console.error("[STARTUP] Scheduled events check failed:", err?.message || err);
   }
 
+});
+
+client.on("guildScheduledEventUpdate", async (_oldEvent, event) => {
+  try {
+    const { getLfgEvent } = require("./lib/lfgSheet");
+    const { eventHasStarted, expireLfgEvent } = require("./lib/lfgExpiry");
+    const config = await getLfgEvent(event.id);
+
+    if (!config?.lfgEnabled) {
+      return;
+    }
+
+    if (
+      eventHasStarted(config, {
+        scheduledStartAt: event.scheduledStartAt,
+        status: event.status
+      })
+    ) {
+      await expireLfgEvent(client, config, "event_started");
+    }
+  } catch (err) {
+    console.error("[LFG] scheduled event update failed:", err?.message || err);
+  }
+});
+
+client.on("guildScheduledEventDelete", async event => {
+  try {
+    const { getLfgEvent } = require("./lib/lfgSheet");
+    const { expireLfgEvent } = require("./lib/lfgExpiry");
+    const config = await getLfgEvent(event.id);
+
+    if (!config) {
+      return;
+    }
+
+    await expireLfgEvent(client, config, "event_started");
+  } catch (err) {
+    console.error("[LFG] scheduled event delete failed:", err?.message || err);
+  }
 });
 
 // ================= INTERACTIONS =================
@@ -1196,7 +1277,8 @@ client.on(
     if (
       interaction.isStringSelectMenu() ||
       interaction.isChannelSelectMenu?.() ||
-      interaction.isRoleSelectMenu?.()
+      interaction.isRoleSelectMenu?.() ||
+      interaction.isUserSelectMenu?.()
     ) {
 
       try {
