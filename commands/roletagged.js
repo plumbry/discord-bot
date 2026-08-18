@@ -43,7 +43,8 @@ const {
   resolveValidTeamsInSignupOrder,
   splitValidTeams,
   syncInvalidSignupReactions,
-  syncNonAcceptedSignupReactions
+  syncNonAcceptedSignupReactions,
+  SPONSORED_RELOAD_USER_ID
 } = require("../lib/signupTeamScan");
 
 // ================= CONSTANTS =================
@@ -124,6 +125,26 @@ const MODE_LABELS = {
   3: "Trios",
   4: "Squads"
 };
+
+const SPONSORED_RELOAD_MODE_LABEL = "Sponsored Reload (Duos)";
+
+function parseRoletaggedMode(modeValue) {
+  if (modeValue === "sponsored_reload") {
+    return {
+      requiredTeamSize: 2,
+      isSponsoredReload: true
+    };
+  }
+
+  return {
+    requiredTeamSize: parseInt(modeValue, 10),
+    isSponsoredReload: false
+  };
+}
+
+function teamIncludesSponsor(team) {
+  return team.users.some(user => user.id === SPONSORED_RELOAD_USER_ID);
+}
 
 const RELOAD_STOP_EMOJI = "✋";
 
@@ -654,6 +675,7 @@ async function finishRoletagged(
     isReload,
     requiredTeamSize,
     twoLobbies,
+    isSponsoredReload = false,
     channel,
     guild
   }
@@ -667,7 +689,8 @@ async function finishRoletagged(
   } = splitValidTeams(validTeams, {
     isReload,
     requiredTeamSize,
-    twoLobbies
+    twoLobbies,
+    sponsoredReload: isSponsoredReload
   });
 
   const roledUserIds =
@@ -801,9 +824,16 @@ async function finishRoletagged(
       "Lobby 2 Teams: " + lobby2Teams.length
     : "";
 
-  const modeLabel =
-    (MODE_LABELS[requiredTeamSize] || requiredTeamSize) +
-    (twoLobbies ? " (capacity per lobby)" : "");
+  const modeLabel = isSponsoredReload
+    ? SPONSORED_RELOAD_MODE_LABEL
+    : (MODE_LABELS[requiredTeamSize] || requiredTeamSize) +
+      (twoLobbies ? " (capacity per lobby)" : "");
+
+  const sponsoredNote = !isSponsoredReload
+    ? ""
+    : validTeams.some(teamIncludesSponsor)
+      ? "\nSponsored Reload: Chili's team reserved a playing slot"
+      : "\nSponsored Reload: Chili's team not found — processed first 24 teams";
 
   const detailedResult =
     (validTeams.length === 0
@@ -820,6 +850,7 @@ async function finishRoletagged(
     "Roled Teams: " + roledTeams.length + "\n" +
     "Overflow Teams: " + overflowTeams.length +
     lobbyNote +
+    sponsoredNote +
     banNote +
     genderNote +
     tierNote +
@@ -829,7 +860,7 @@ async function finishRoletagged(
   const publicResult =
     validTeams.length === 0
       ? (emptyResultLabel || "No teams selected for role assignment.")
-      : `${role.name} ${MODE_LABELS[requiredTeamSize] || requiredTeamSize}, ${validTeams.length} valid teams`;
+      : `${role.name} ${modeLabel}, ${validTeams.length} valid teams`;
 
   try {
 
@@ -856,7 +887,8 @@ async function finishRoletagged(
 
       context:
         `role=${role.id} mode=${requiredTeamSize} reload=${isReload} ` +
-        `two_lobbies=${twoLobbies} teams=${validTeams.length} ` +
+        `sponsored_reload=${isSponsoredReload} two_lobbies=${twoLobbies} ` +
+        `teams=${validTeams.length} ` +
         `included_banned=${includedDespiteBan} skipped_banned=${skippedBannedTeams.length}`
     });
 
@@ -885,13 +917,14 @@ module.exports = {
 
     .addStringOption(o =>
       o.setName("mode")
-        .setDescription("Team size")
+        .setDescription("Team size, or Sponsored Reload (24-team duos)")
         .setRequired(true)
         .addChoices(
           { name: "Solos (no tier check)", value: "1" },
           { name: "Duos", value: "2" },
           { name: "Trios", value: "3" },
-          { name: "Squads", value: "4" }
+          { name: "Squads", value: "4" },
+          { name: "Sponsored Reload", value: "sponsored_reload" }
         )
     )
 
@@ -928,16 +961,21 @@ module.exports = {
     const role =
       interaction.options.getRole("role");
 
+    const {
+      requiredTeamSize,
+      isSponsoredReload
+    } = parseRoletaggedMode(
+      interaction.options.getString("mode")
+    );
+
     const isReload =
-      interaction.options.getBoolean("reload") || false;
+      isSponsoredReload ||
+      interaction.options.getBoolean("reload") ||
+      false;
 
-    const twoLobbies =
-      interaction.options.getBoolean("two_lobbies") || false;
-
-    const requiredTeamSize =
-      parseInt(
-        interaction.options.getString("mode")
-      );
+    const twoLobbies = isSponsoredReload
+      ? false
+      : interaction.options.getBoolean("two_lobbies") || false;
 
     const channel = interaction.channel;
     const guild = interaction.guild;
@@ -1195,6 +1233,7 @@ module.exports = {
         isReload,
         requiredTeamSize,
         twoLobbies,
+        isSponsoredReload,
         channel,
         guild
       });
@@ -1289,6 +1328,7 @@ module.exports = {
       isReload,
       requiredTeamSize,
       twoLobbies,
+      isSponsoredReload,
       channel,
       guild
     });
