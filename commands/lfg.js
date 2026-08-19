@@ -28,7 +28,8 @@ const {
   getLfgRequest,
   getActiveRequestForUser,
   listActiveRequestsForUser,
-  getLfgMatch
+  getLfgMatch,
+  isLfgPostOpen
 } = require("../lib/lfgSheet");
 
 const {
@@ -49,6 +50,7 @@ const {
 const {
   listOpenLfgEvents,
   expireLfgEvent,
+  endLfgPost,
   shortWhenLabel
 } = require("../lib/lfgExpiry");
 
@@ -375,6 +377,70 @@ async function handleDisable(interaction) {
   );
 }
 
+function newestPost(events) {
+  return [...events].sort((a, b) =>
+    String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""))
+  )[0];
+}
+
+async function resolvePostToEnd(interaction) {
+  const eventId = interaction.options.getString("event");
+
+  if (eventId) {
+    return getLfgEvent(eventId);
+  }
+
+  const configs = await listLfgEvents({ guildId: interaction.guild.id });
+  const openPosts = configs.filter(isLfgPostOpen);
+  const inChannel = openPosts.filter(
+    event => event.lfgChannelId === interaction.channelId
+  );
+
+  if (inChannel.length) {
+    return newestPost(inChannel);
+  }
+
+  if (openPosts.length === 1) {
+    return openPosts[0];
+  }
+
+  return null;
+}
+
+async function handleEnd(interaction) {
+  if (!userIsStaff(interaction.member)) {
+    return interaction.editReply("This command is staff-only.");
+  }
+
+  const config = await resolvePostToEnd(interaction);
+
+  if (!config) {
+    return interaction.editReply(
+      "I couldn't find an active `/lfgpost` to end. Run this in the channel with the post, or pass the event."
+    );
+  }
+
+  if (!isLfgPostOpen(config)) {
+    return interaction.editReply(
+      `There is no active \`/lfgpost\` for **${config.eventName}**.`
+    );
+  }
+
+  const closed = await endLfgPost(interaction.client, config, "ended");
+
+  return interaction.editReply(
+    [
+      `✅ Ended the LFG post for **${config.eventName}**.`,
+      "Fill/need matching DMs have been stopped.",
+      closed.length
+        ? `Closed ${closed.length} open fill/need registration${closed.length === 1 ? "" : "s"}.`
+        : ""
+    ]
+      .filter(Boolean)
+      .join("\n")
+  );
+}
+
 async function handleAdmin(interaction) {
   if (!userIsStaff(interaction.member)) {
     return interaction.editReply("This command is staff-only.");
@@ -493,6 +559,18 @@ module.exports = {
         )
     )
     .addSubcommand(sub =>
+      sub
+        .setName("end")
+        .setDescription("Staff: end the current /lfgpost search and stop fill DMs")
+        .addStringOption(option =>
+          option
+            .setName("event")
+            .setDescription("LFG post to end (defaults to this channel)")
+            .setRequired(false)
+            .setAutocomplete(true)
+        )
+    )
+    .addSubcommand(sub =>
       sub.setName("admin").setDescription("Staff: LFG overview")
     ),
 
@@ -505,16 +583,23 @@ module.exports = {
       return;
     }
 
-    if (sub === "disable" && focused?.name === "event") {
+    if (
+      (sub === "disable" || sub === "end") &&
+      focused?.name === "event"
+    ) {
       const configs = await listLfgEvents({
         guildId: interaction.guildId,
-        enabledOnly: true
+        enabledOnly: sub === "disable"
       });
       const query = String(focused.value || "").toLowerCase();
       const choices = configs
-        .filter(event =>
-          !query || event.eventName.toLowerCase().includes(query)
-        )
+        .filter(event => {
+          if (sub === "end" && !isLfgPostOpen(event)) {
+            return false;
+          }
+
+          return !query || event.eventName.toLowerCase().includes(query);
+        })
         .slice(0, 25)
         .map(event => ({
           name: event.eventName.slice(0, 100),
@@ -555,6 +640,10 @@ module.exports = {
 
     if (sub === "disable") {
       return handleDisable(interaction);
+    }
+
+    if (sub === "end") {
+      return handleEnd(interaction);
     }
 
     if (sub === "admin") {

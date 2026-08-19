@@ -27,7 +27,8 @@ const {
   getActivePostRequest,
   closeLfgRequest,
   POST_FILL_TYPE,
-  POST_NEED_TYPE
+  POST_NEED_TYPE,
+  isLfgPostOpen
 } = require("../lib/lfgSheet");
 
 const {
@@ -58,6 +59,7 @@ const {
   needManageRows,
   needFlowRows,
   formatNeedSummary,
+  requiredGenderFromSelection,
   discordTimestamp
 } = require("../lib/lfgPostUi");
 
@@ -193,6 +195,7 @@ async function postPublicLfgMessage(guild, eventConfig, scheduled, channel) {
     lfgMessageId: posted.id,
     excludeRoleId: eventConfig.excludeRoleId,
     mentionEveryone: Boolean(eventConfig.mentionEveryone),
+    lfgPostEnabled: true,
     createdBy: eventConfig.createdBy
   });
 
@@ -230,7 +233,7 @@ async function registerFill(interaction, eventId) {
   const guild = interaction.guild;
   const eventConfig = await getLfgEvent(eventId);
 
-  if (!eventConfig?.lfgEnabled) {
+  if (!isLfgPostOpen(eventConfig)) {
     return interaction.editReply({
       content: "That LFG post is no longer open.",
       components: []
@@ -319,7 +322,7 @@ async function registerFill(interaction, eventId) {
 async function startNeedFlow(interaction, eventId) {
   const eventConfig = await getLfgEvent(eventId);
 
-  if (!eventConfig?.lfgEnabled) {
+  if (!isLfgPostOpen(eventConfig)) {
     return interaction.editReply({
       content: "That LFG post is no longer open.",
       components: []
@@ -339,6 +342,7 @@ async function startNeedFlow(interaction, eventId) {
     eventId,
     guildId: interaction.guild.id,
     acceptedTiers: [],
+    acceptedGenders: [],
     requiredGender: ""
   });
 
@@ -347,8 +351,9 @@ async function startNeedFlow(interaction, eventId) {
       `**${eventConfig.eventName}**`,
       `Mode: ${formatLabel(eventConfig.format)}`,
       "",
-      "Select the tier(s) and gender you need, then tap **Submit**.",
-      "You can choose more than one tier — for example A + B + C."
+      "Select the tier(s) and gender(s) you need, then tap **Submit**.",
+      "You can choose more than one tier — for example A + B + C.",
+      "You can also select both Girl and Boy."
     ].join("\n"),
     components: needFlowRows(eventId)
   });
@@ -358,7 +363,7 @@ async function submitNeed(interaction, eventId, flow) {
   const guild = interaction.guild;
   const eventConfig = await getLfgEvent(eventId);
 
-  if (!eventConfig?.lfgEnabled) {
+  if (!isLfgPostOpen(eventConfig)) {
     needFlows.delete(`${interaction.user.id}:${eventId}`);
     return interaction.editReply({
       content: "That LFG post is no longer open.",
@@ -367,16 +372,23 @@ async function submitNeed(interaction, eventId, flow) {
   }
 
   const acceptedTiers = [...new Set(flow.acceptedTiers || [])];
-  const requiredGender = String(flow.requiredGender || "").toLowerCase();
+  const requiredGender = requiredGenderFromSelection(
+    flow.acceptedGenders?.length ? flow.acceptedGenders : [flow.requiredGender]
+  );
 
   if (!acceptedTiers.length || !requiredGender) {
     return interaction.editReply({
       content: [
         `**${eventConfig.eventName}**`,
         "",
-        "Select at least one tier and a gender, then tap **Submit**."
+        "Select at least one tier and at least one gender, then tap **Submit**.",
+        "You can select both Girl and Boy."
       ].join("\n"),
-      components: needFlowRows(eventId, acceptedTiers, requiredGender)
+      components: needFlowRows(
+        eventId,
+        acceptedTiers,
+        flow.acceptedGenders || []
+      )
     });
   }
 
@@ -700,6 +712,7 @@ module.exports = {
         startTime: eventStartIso(scheduled),
         excludeRoleId,
         mentionEveryone,
+        lfgPostEnabled: true,
         createdBy: existing?.createdBy || interaction.user.id
       });
 
@@ -759,6 +772,7 @@ module.exports = {
       const flow = getMapFlow(needFlows, key) || {
         eventId,
         acceptedTiers: [],
+        acceptedGenders: [],
         requiredGender: ""
       };
 
@@ -781,13 +795,15 @@ module.exports = {
       const flow = getMapFlow(needFlows, key) || {
         eventId,
         acceptedTiers: [],
+        acceptedGenders: [],
         requiredGender: ""
       };
 
       setMapFlow(needFlows, key, {
         ...flow,
         eventId,
-        requiredGender: interaction.values[0]
+        acceptedGenders: interaction.values.map(value => value.toLowerCase()),
+        requiredGender: requiredGenderFromSelection(interaction.values)
       });
 
       await interaction.deferUpdate();
@@ -880,11 +896,30 @@ module.exports = {
         return true;
       }
 
-      await closeLfgRequest(request.id, "found_teammate");
+      if (request.active) {
+        await closeLfgRequest(request.id, "stop_notifying");
+      }
+
       const event = await getLfgEvent(request.eventId);
+      const eventName = event?.eventName || "that event";
+      const stopped =
+        `✅ Stopped notifying you for **${eventName}**. You won't get more fill DMs for this request.`;
+
+      if (interaction.channel?.isDMBased?.()) {
+        const previous = interaction.message?.content || "";
+        const content = previous.includes("Stopped notifying you")
+          ? previous
+          : [previous, "", stopped].filter(Boolean).join("\n");
+
+        await interaction.update({
+          content,
+          components: []
+        });
+        return true;
+      }
 
       await interaction.update({
-        content: `✅ You've stopped looking for a teammate for **${event?.eventName || "that event"}**.`,
+        content: `✅ You've stopped looking for a teammate for **${eventName}**.`,
         components: []
       });
       return true;
