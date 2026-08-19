@@ -247,12 +247,17 @@ try {
 // ================= LFG =================
 
 let startLfgExpiryScheduler = null;
+let handleLfgPostRoleGained = null;
 
 try {
 
   ({
     startLfgExpiryScheduler
   } = require("./lib/lfgExpiry"));
+
+  ({
+    handleLfgPostRoleGained
+  } = require("./lib/lfgPostMatching"));
 
   console.log("✅ LFG module loaded");
 
@@ -1744,6 +1749,10 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
 
     if (handleFemalePendingOnMemberUpdate) {
       await handleFemalePendingOnMemberUpdate(oldMember, newMember);
+    }
+
+    if (handleLfgPostRoleGained) {
+      await handleLfgPostRoleGained(oldMember, newMember);
     }
   } catch (err) {
     console.error("[MEMBER SYNC] guildMemberUpdate error:", err?.message || err);

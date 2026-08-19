@@ -40,7 +40,8 @@ const { shortWhenLabel } = require("../lib/lfgExpiry");
 const {
   matchFillAgainstOpenNeeds,
   matchNeedAgainstOpenFills,
-  sendPostDm
+  sendPostDm,
+  memberHasExcludeRole
 } = require("../lib/lfgPostMatching");
 
 const {
@@ -51,6 +52,8 @@ const {
   publicPostRows,
   staffEventSelectRow,
   staffModeSelectRow,
+  staffRoleSelectRow,
+  staffEveryoneSelectRow,
   fillManageRows,
   needManageRows,
   needFlowRows,
@@ -167,12 +170,14 @@ async function postPublicLfgMessage(guild, eventConfig, scheduled, channel) {
     }
   }
 
+  const mentionEveryone = Boolean(eventConfig.mentionEveryone);
+
   const posted = await channel.send({
-    content: publicPostContent(
-      scheduled.name,
-      scheduled.scheduledStartAt
-    ),
-    components: publicPostRows(scheduled.id)
+    content: publicPostContent(scheduled.name, scheduled.scheduledStartAt, {
+      mentionEveryone
+    }),
+    components: publicPostRows(scheduled.id),
+    allowedMentions: mentionEveryone ? { parse: ["everyone"] } : { parse: [] }
   });
 
   const saved = await upsertLfgEvent({
@@ -186,6 +191,8 @@ async function postPublicLfgMessage(guild, eventConfig, scheduled, channel) {
     startTime: eventStartIso(scheduled),
     lfgChannelId: channel.id,
     lfgMessageId: posted.id,
+    excludeRoleId: eventConfig.excludeRoleId,
+    mentionEveryone: Boolean(eventConfig.mentionEveryone),
     createdBy: eventConfig.createdBy
   });
 
@@ -226,6 +233,28 @@ async function registerFill(interaction, eventId) {
   if (!eventConfig?.lfgEnabled) {
     return interaction.editReply({
       content: "That LFG post is no longer open.",
+      components: []
+    });
+  }
+
+  const member =
+    interaction.member ||
+    (await guild.members.fetch(interaction.user.id).catch(() => null));
+
+  if (memberHasExcludeRole(member, eventConfig)) {
+    const existingExcluded = await getActivePostRequest(
+      eventId,
+      interaction.user.id,
+      POST_FILL_TYPE
+    );
+
+    if (existingExcluded) {
+      await closeLfgRequest(existingExcluded.id, "has_event_role");
+    }
+
+    return interaction.editReply({
+      content:
+        "You already have the event role, so you can't register as looking to join / fill.",
       components: []
     });
   }
@@ -545,6 +574,118 @@ module.exports = {
         return true;
       }
 
+      setMapFlow(staffFlows, interaction.user.id, {
+        ...flow,
+        format,
+        teamSize,
+        step: "role"
+      });
+
+      await interaction.update({
+        content: [
+          `**${scheduled.name}**`,
+          `Mode: ${formatLabel(format)}`,
+          `Starts: ${discordTimestamp(scheduled.scheduledStartAt)}`,
+          "",
+          "Choose the event signup role.",
+          "Players who already have this role cannot register as looking to join / fill, and will be removed from that list if they get the role later."
+        ].join("\n"),
+        components: [staffRoleSelectRow()]
+      });
+      return true;
+    }
+
+    if (interaction.customId === POST_CUSTOM.STAFF_ROLE) {
+      if (!userIsStaff(interaction.member)) {
+        await interaction.reply({
+          content: "This setup step is staff-only.",
+          ephemeral: true
+        });
+        return true;
+      }
+
+      const flow = getMapFlow(staffFlows, interaction.user.id);
+
+      if (!flow?.eventId || !flow.format) {
+        await interaction.update({
+          content: "That `/lfgpost` setup expired. Run `/lfgpost` again.",
+          components: []
+        });
+        return true;
+      }
+
+      const excludeRoleId = interaction.values[0];
+      const scheduled = await resolveScheduledEvent(
+        interaction.guild,
+        flow.eventId
+      );
+
+      if (!scheduled) {
+        staffFlows.delete(interaction.user.id);
+        await interaction.update({
+          content: "I couldn't find that Discord Scheduled Event.",
+          components: []
+        });
+        return true;
+      }
+
+      setMapFlow(staffFlows, interaction.user.id, {
+        ...flow,
+        excludeRoleId,
+        step: "everyone"
+      });
+
+      await interaction.update({
+        content: [
+          `**${scheduled.name}**`,
+          `Mode: ${formatLabel(flow.format)}`,
+          `Signup role: <@&${excludeRoleId}>`,
+          `Starts: ${discordTimestamp(scheduled.scheduledStartAt)}`,
+          "",
+          "Tag @everyone on this post?"
+        ].join("\n"),
+        components: [staffEveryoneSelectRow()]
+      });
+      return true;
+    }
+
+    if (interaction.customId === POST_CUSTOM.STAFF_EVERYONE) {
+      if (!userIsStaff(interaction.member)) {
+        await interaction.reply({
+          content: "This setup step is staff-only.",
+          ephemeral: true
+        });
+        return true;
+      }
+
+      const flow = getMapFlow(staffFlows, interaction.user.id);
+
+      if (!flow?.eventId || !flow.format || !flow.excludeRoleId) {
+        await interaction.update({
+          content: "That `/lfgpost` setup expired. Run `/lfgpost` again.",
+          components: []
+        });
+        return true;
+      }
+
+      const mentionEveryone = interaction.values[0] === "true";
+      const excludeRoleId = flow.excludeRoleId;
+      const format = flow.format;
+      const teamSize = flow.teamSize || teamSizeFromFormat(format);
+      const scheduled = await resolveScheduledEvent(
+        interaction.guild,
+        flow.eventId
+      );
+
+      if (!scheduled) {
+        staffFlows.delete(interaction.user.id);
+        await interaction.update({
+          content: "I couldn't find that Discord Scheduled Event.",
+          components: []
+        });
+        return true;
+      }
+
       await interaction.deferUpdate();
 
       const existing = await getLfgEvent(scheduled.id);
@@ -557,6 +698,8 @@ module.exports = {
         tierRuleId: existing?.tierRuleId || DEFAULT_TIER_RULESET_ID,
         lfgEnabled: true,
         startTime: eventStartIso(scheduled),
+        excludeRoleId,
+        mentionEveryone,
         createdBy: existing?.createdBy || interaction.user.id
       });
 
@@ -597,6 +740,8 @@ module.exports = {
         content: [
           `✅ LFG post created for **${scheduled.name}**.`,
           `Mode: ${formatLabel(format)} (${teamSize} players)`,
+          `Signup role: <@&${excludeRoleId}>`,
+          `Tag @everyone: ${mentionEveryone ? "True" : "False"}`,
           `Starts: ${discordTimestamp(scheduled.scheduledStartAt)}`,
           `Posted in <#${posted.channel.id}>`
         ].join("\n"),
