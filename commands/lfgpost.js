@@ -58,9 +58,6 @@ const {
   discordTimestamp
 } = require("../lib/lfgPostUi");
 
-const LFG_CHANNEL_ID =
-  process.env.LFG_CHANNEL_ID || "1371992858084773963";
-
 const FLOW_TTL_MS = 10 * 60 * 1000;
 const staffFlows = new Map();
 const needFlows = new Map();
@@ -121,13 +118,36 @@ async function loadUpcomingEvents(guild) {
     }));
 }
 
-async function postPublicLfgMessage(guild, eventConfig, scheduled) {
-  const channel =
-    guild.channels.cache.get(LFG_CHANNEL_ID) ||
-    (await guild.channels.fetch(LFG_CHANNEL_ID).catch(() => null));
+async function resolveCommandChannel(guild, interaction, channelId) {
+  const fromInteraction = interaction.channel;
 
-  if (!channel?.isTextBased?.()) {
-    return { ok: false, message: "I couldn't find the LFG channel." };
+  if (fromInteraction?.isTextBased?.() && !fromInteraction.isDMBased?.()) {
+    return fromInteraction;
+  }
+
+  const id = channelId || interaction.channelId;
+
+  if (!id) {
+    return null;
+  }
+
+  const fetched =
+    guild.channels.cache.get(id) ||
+    (await guild.channels.fetch(id).catch(() => null));
+
+  if (fetched?.isTextBased?.() && !fetched.isDMBased?.()) {
+    return fetched;
+  }
+
+  return null;
+}
+
+async function postPublicLfgMessage(guild, eventConfig, scheduled, channel) {
+  if (!channel?.isTextBased?.() || channel.isDMBased?.()) {
+    return {
+      ok: false,
+      message: "Use `/lfgpost` in the channel where you want the LFG post to appear."
+    };
   }
 
   if (eventConfig.lfgChannelId && eventConfig.lfgMessageId) {
@@ -189,6 +209,7 @@ async function handleStaffCommand(interaction) {
 
   setMapFlow(staffFlows, interaction.user.id, {
     guildId: interaction.guild.id,
+    channelId: interaction.channelId,
     step: "event"
   });
 
@@ -426,13 +447,13 @@ async function submitNeed(interaction, eventId, flow) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("lfgpost")
-    .setDescription("Staff: post public event LFG matchmaking")
+    .setDescription("Staff: post public event LFG in this channel")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
 
   async execute(interaction) {
     if (!interaction.guild) {
       return interaction.reply({
-        content: "Use this command in the ZBD server.",
+        content: "Use this command in the channel where you want the LFG post.",
         ephemeral: true
       });
     }
@@ -466,8 +487,11 @@ module.exports = {
         return true;
       }
 
+      const existingFlow = getMapFlow(staffFlows, interaction.user.id);
+
       setMapFlow(staffFlows, interaction.user.id, {
         guildId: interaction.guild.id,
+        channelId: existingFlow?.channelId || interaction.channelId,
         eventId: scheduled.id,
         eventName: scheduled.name,
         startTime: eventStartIso(scheduled),
@@ -539,10 +563,16 @@ module.exports = {
       let posted;
 
       try {
+        const channel = await resolveCommandChannel(
+          interaction.guild,
+          interaction,
+          flow.channelId
+        );
         posted = await postPublicLfgMessage(
           interaction.guild,
           eventConfig,
-          scheduled
+          scheduled,
+          channel
         );
       } catch (err) {
         staffFlows.delete(interaction.user.id);
