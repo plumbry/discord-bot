@@ -10,6 +10,41 @@ const ZBD_ERROR_ID = "1428748821160001617";
 
 const activeCalls = new Map();
 
+const YUNITE_LINE =
+  "Please try Yunite before using manual code. It should now allow you to queue without error!";
+const FIRST_GAME_REACT_LINE =
+  "React hand if not in queue. React error if not in game";
+
+function spoilerGameCode(code) {
+  const raw = String(code ?? "")
+    .trim()
+    .replace(/^\|{2}|\|{2}$/g, "")
+    .trim();
+
+  return `||${raw}||`;
+}
+
+function formatGameCallMessage({
+  game,
+  region,
+  code,
+  startLine,
+  roleMention
+}) {
+  const lines = [
+    `GAME ${game} ${region} CODE ${spoilerGameCode(code)}`,
+    startLine,
+    `WHO IS NOT IN ${roleMention}`,
+    YUNITE_LINE
+  ];
+
+  if (Number(game) === 1) {
+    lines.push(FIRST_GAME_REACT_LINE);
+  }
+
+  return lines.join("\n");
+}
+
 async function getNextGameNumber(channel){
 
   const messages = await channel.messages.fetch({limit:50});
@@ -47,9 +82,13 @@ async function startGameCall({
   const exact = `<t:${unix}:t>`;
 
   const msg = await channel.send(
-`GAME ${game} ${region} CODE ${code}
-GAME ${game} START ${relative} (${exact})
-WHO IS NOT IN ${role}`
+    formatGameCallMessage({
+      game,
+      region,
+      code,
+      startLine: `GAME ${game} START ${relative} (${exact})`,
+      roleMention: role
+    })
   );
 
   await msg.react(RAISE_HAND);
@@ -170,3 +209,5 @@ module.exports = {
 
 module.exports.activeCalls = activeCalls;
 module.exports.startGameCall = startGameCall;
+module.exports.spoilerGameCode = spoilerGameCode;
+module.exports.formatGameCallMessage = formatGameCallMessage;

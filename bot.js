@@ -1345,7 +1345,8 @@ client.on(
         ) {
 
           const {
-            activeCalls
+            activeCalls,
+            formatGameCallMessage
           } = require("./commands/gamecall");
 
           const call =
@@ -1376,9 +1377,13 @@ client.on(
             );
 
           await msg.edit(
-`GAME ${call.gameNumber} ${call.region} CODE ${newCode}
-GAME ${call.gameNumber} STARTING SOON
-WHO IS NOT IN <@&${call.roleId}>`
+            formatGameCallMessage({
+              game: call.gameNumber,
+              region: call.region,
+              code: newCode,
+              startLine: `GAME ${call.gameNumber} STARTING SOON`,
+              roleMention: `<@&${call.roleId}>`
+            })
           );
 
           return await interaction.reply({

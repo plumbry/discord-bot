@@ -4,7 +4,8 @@ const {
 } = require("discord.js");
 
 const {
-  activeCalls
+  activeCalls,
+  formatGameCallMessage
 } = require("./gamecall");
 
 module.exports = {
@@ -95,9 +96,13 @@ module.exports = {
         );
 
       await msg.edit(
-`GAME ${call.gameNumber} ${call.region} CODE ${newCode}
-GAME ${call.gameNumber} STARTING SOON
-WHO IS NOT IN <@&${call.roleId}>`
+        formatGameCallMessage({
+          game: call.gameNumber,
+          region: call.region,
+          code: newCode,
+          startLine: `GAME ${call.gameNumber} STARTING SOON`,
+          roleMention: `<@&${call.roleId}>`
+        })
       );
 
       return interaction.reply({
