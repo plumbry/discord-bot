@@ -31,16 +31,17 @@ function formatGameCallMessage({
   startLine,
   roleMention
 }) {
-  const lines = [
-    `GAME ${game} ${region} CODE ${spoilerGameCode(code)}`,
-    startLine,
-    `WHO IS NOT IN ${roleMention}`,
-    YUNITE_LINE
-  ];
+  const lines = [YUNITE_LINE];
 
   if (Number(game) === 1) {
     lines.push(FIRST_GAME_REACT_LINE);
   }
+
+  lines.push(
+    `GAME ${game} ${region} CODE ${spoilerGameCode(code)}`,
+    startLine,
+    `WHO IS NOT IN ${roleMention}`
+  );
 
   return lines.join("\n");
 }
