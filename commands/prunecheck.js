@@ -96,7 +96,7 @@ module.exports = {
           `Server age: ${record.ageDays == null ? "Unknown" : `${record.ageDays} days`}`,
           `Interaction found: ${record.interacted ? "Yes" : "No"}`,
           `Tournament status: ${tournamentStatusLabel(record.tournamentStatus)}`,
-          `Yunite/Epic match: ${yuniteMatchLabel(record.yuniteMatch)}`,
+          `Website Yunite match: ${yuniteMatchLabel(record.yuniteMatch)}`,
           `Protected role: ${record.protected ? "Yes" : "No"}`,
           record.tournamentStatus === "unknown"
             ? `Reason: ${record.tournamentReason}`

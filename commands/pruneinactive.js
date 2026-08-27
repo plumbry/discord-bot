@@ -59,15 +59,11 @@ function buildSummaryEmbed(scan) {
 
   if (!yunite.apiConfigured) {
     warnings.push(
-      "YUNITE_API_KEY is not set, so tournament status is unknown for everyone."
+      "DISCORD_SYNC_API_KEY is not set, so website Yunite status is unknown for everyone."
     );
   } else if (!yunite.loaded) {
     warnings.push(
-      `Yunite tournament data was not fully loaded (${yunite.reason || "unknown error"}).`
-    );
-  } else if (yunite.leaderboardFailures > 0) {
-    warnings.push(
-      `${yunite.leaderboardFailures} Yunite leaderboard(s) failed; unmatched members stay unknown.`
+      `Website Yunite data was not fully loaded (${yunite.reason || "unknown error"}).`
     );
   }
 
@@ -84,16 +80,16 @@ function buildSummaryEmbed(scan) {
       [
         `Members checked: **${counts.checked}**`,
         `Eligible to prune: **${counts.eligible}**`,
-        `Played an event: **${counts.played}**`,
+        `Played a scrim: **${counts.played}**`,
         `Have interacted: **${counts.interacted}**`,
         `Too new: **${counts.tooNew}** (under ${minAgeDays} days)`,
-        `Unknown tournament status: **${counts.unknown}**`,
+        `Unknown Yunite status: **${counts.unknown}**`,
         `Protected/excluded: **${counts.protected}**`
       ].join("\n")
     )
     .setFooter({
       text:
-        "Interaction uses stored bot records only (LFG, AnonQ, event bans, verification sheets). Discord does not provide historical message counts."
+        "Scrim play uses website Yunite data. Interaction uses stored bot records only (LFG, AnonQ, event bans, verification sheets)."
     });
 
   if (warnings.length) {
@@ -372,7 +368,7 @@ async function kickEligibleMembers(interaction, job) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("pruneinactive")
-    .setDescription("Preview members who appear inactive and have never played a ZBD event")
+    .setDescription("Preview members who appear inactive and have never played a Yunite scrim")
     .addIntegerOption(option =>
       option
         .setName("days")
@@ -399,7 +395,7 @@ module.exports = {
 
     await interaction.editReply({
       content:
-        "Scanning members, stored activity, and Yunite tournament results. This can take a minute…"
+        "Scanning members, stored activity, and website Yunite scrim data. This can take a minute…"
     });
 
     let scan;
@@ -484,7 +480,7 @@ module.exports = {
       const page = Number(parts[3] || 0) || 0;
       const records = kind === "eligible" ? job.scan.eligible : job.scan.unknown;
       const { embed, page: safePage, pageCount } = buildListEmbed(
-        kind === "eligible" ? "Eligible to prune" : "Unknown tournament status",
+        kind === "eligible" ? "Eligible to prune" : "Unknown Yunite status",
         records,
         page
       );
