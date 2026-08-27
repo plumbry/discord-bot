@@ -73,6 +73,16 @@ function buildSummaryEmbed(scan) {
     );
   }
 
+  if (scan.recentMessages && !scan.recentMessages.complete) {
+    warnings.push(
+      "Could not scan recent Discord messages, so nobody is marked eligible."
+    );
+  } else if (scan.recentMessages?.failedChannels > 0) {
+    warnings.push(
+      `${scan.recentMessages.failedChannels} channel(s) could not be scanned for recent messages.`
+    );
+  }
+
   const embed = new EmbedBuilder()
     .setTitle("Inactive Member Review")
     .setColor(EMBED_COLOR)
@@ -89,7 +99,7 @@ function buildSummaryEmbed(scan) {
     )
     .setFooter({
       text:
-        "Scrim play uses website Yunite data. Interaction uses stored bot records only (LFG, AnonQ, event bans, verification sheets)."
+        `Members who posted in the last ${minAgeDays} days are excluded. Scrim play uses website Yunite data. Other interaction uses stored bot records (LFG, AnonQ, event bans, verification sheets).`
     });
 
   if (warnings.length) {
@@ -372,7 +382,7 @@ module.exports = {
     .addIntegerOption(option =>
       option
         .setName("days")
-        .setDescription("Minimum days since joining (default 30)")
+        .setDescription("Inactive window in days for join age and last message (default 30)")
         .setMinValue(1)
         .setMaxValue(3650)
         .setRequired(false)
@@ -395,7 +405,7 @@ module.exports = {
 
     await interaction.editReply({
       content:
-        "Scanning members, stored activity, and website Yunite scrim data. This can take a minute…"
+        "Scanning members, stored activity, recent Discord messages, and website Yunite scrim data. This can take a few minutes…"
     });
 
     let scan;

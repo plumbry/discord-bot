@@ -35,7 +35,7 @@ module.exports = {
     .addIntegerOption(option =>
       option
         .setName("days")
-        .setDescription("Minimum days since joining (default 30)")
+        .setDescription("Inactive window in days for join age and last message (default 30)")
         .setMinValue(1)
         .setMaxValue(3650)
         .setRequired(false)
@@ -113,7 +113,7 @@ module.exports = {
       )
       .setFooter({
         text:
-          "Interaction uses stored bot records only, not Discord message history."
+          `Members who posted in the last ${minAgeDays} days are excluded, along with stored bot records and website Yunite data.`
       });
 
     await interaction.editReply({ embeds: [embed] });
