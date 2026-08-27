@@ -46,7 +46,7 @@ function formatGameCallMessage({
   return lines.join("\n");
 }
 
-async function getNextGameNumber(channel){
+async function getHighestGameNumber(channel){
 
   const messages = await channel.messages.fetch({limit:50});
 
@@ -64,7 +64,13 @@ async function getNextGameNumber(channel){
 
   }
 
-  return highest + 1;
+  return highest;
+}
+
+async function getNextGameNumber(channel){
+
+  return (await getHighestGameNumber(channel)) + 1;
+
 }
 
 async function startGameCall({
@@ -212,3 +218,5 @@ module.exports.activeCalls = activeCalls;
 module.exports.startGameCall = startGameCall;
 module.exports.spoilerGameCode = spoilerGameCode;
 module.exports.formatGameCallMessage = formatGameCallMessage;
+module.exports.getHighestGameNumber = getHighestGameNumber;
+module.exports.getNextGameNumber = getNextGameNumber;
