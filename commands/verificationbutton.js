@@ -17,8 +17,10 @@ const YUNITE_VERIFIED_ROLE_ID =
 const YUNITE_VERIFY_CHANNEL_ID =
   process.env.YUNITE_VERIFY_CHANNEL_ID || "1371647079935377418";
 
-const MEMBER_ROLE_ID =
-  process.env.MEMBER_ROLE_ID || process.env.SERVER_ACCESS_ROLE_ID || "";
+const DEFAULT_ONBOARDING_ADMIN_USER_IDS = [
+  "480513730455666717",
+  "684933831874183168"
+];
 
 /** @type {Set<string>} */
 const notifiedMembers = new Set();
@@ -31,11 +33,9 @@ function parseIdList(raw) {
 }
 
 function onboardingAdminIds() {
-  return parseIdList(process.env.ONBOARDING_ADMIN_USER_IDS);
-}
+  const fromEnv = parseIdList(process.env.ONBOARDING_ADMIN_USER_IDS);
 
-function memberRoleIds() {
-  return parseIdList(MEMBER_ROLE_ID);
+  return fromEnv.length ? fromEnv : DEFAULT_ONBOARDING_ADMIN_USER_IDS;
 }
 
 function notifyKey(guildId, userId) {
@@ -43,7 +43,7 @@ function notifyKey(guildId, userId) {
 }
 
 function hasServerAccess(member) {
-  return memberRoleIds().some(roleId => member.roles.cache.has(roleId));
+  return Boolean(getMemberTier(member));
 }
 
 function memberDisplayName(member, user) {
@@ -167,27 +167,8 @@ module.exports = {
       });
     }
 
-    const adminCount = onboardingAdminIds().length;
-    const accessConfigured = memberRoleIds().length > 0;
-
-    const notes = [];
-
-    if (!adminCount) {
-      notes.push(
-        "Set `ONBOARDING_ADMIN_USER_IDS` so button clicks can DM Plum and Billy."
-      );
-    }
-
-    if (!accessConfigured) {
-      notes.push(
-        "Set `MEMBER_ROLE_ID` so members who already have access are not re-notified."
-      );
-    }
-
     return interaction.editReply({
-      content:
-        "Posted the **I'm verified ✓** button in this channel." +
-        (notes.length ? `\n\n${notes.join("\n")}` : "")
+      content: "Posted the **I'm verified ✓** button in this channel."
     });
   },
 
