@@ -41,6 +41,45 @@ function parseMemberIds(input) {
   return [...ids];
 }
 
+function lookupGuildEmoji(guild, name) {
+  if (!guild || !name) {
+    return null;
+  }
+
+  const exact = guild.emojis.cache.find(emoji => emoji.name === name);
+
+  if (exact) {
+    return exact;
+  }
+
+  const lower = name.toLowerCase();
+
+  return guild.emojis.cache.find(
+    emoji => emoji.name.toLowerCase() === lower
+  );
+}
+
+async function resolveCustomEmojiShortcodes(text, guild) {
+  if (!text || !guild) {
+    return text || "";
+  }
+
+  await guild.emojis.fetch().catch(() => null);
+
+  return text.replace(
+    /<a?:[a-zA-Z0-9_]{2,32}:\d{17,20}>|:([a-zA-Z0-9_]{2,32}):/g,
+    (full, name) => {
+      if (!name) {
+        return full;
+      }
+
+      const emoji = lookupGuildEmoji(guild, name);
+
+      return emoji ? emoji.toString() : full;
+    }
+  );
+}
+
 function buildSayContent(message, memberIds) {
   const parts = [];
 
@@ -117,10 +156,18 @@ function takePendingMemberIds(token, channelId) {
 }
 
 async function postSayMessage(channel, { message, memberIds }) {
-  const content = buildSayContent(message, memberIds);
+  const resolved = await resolveCustomEmojiShortcodes(
+    message,
+    channel.guild
+  );
+  const content = buildSayContent(resolved, memberIds);
 
   if (!content) {
     throw new Error("EMPTY_SAY");
+  }
+
+  if (content.length > 2000) {
+    throw new Error("SAY_TOO_LONG");
   }
 
   return channel.send({
@@ -194,7 +241,10 @@ module.exports = {
         console.error("[SAY]", err);
 
         return interaction.editReply({
-          content: "❌ Failed to tag members."
+          content:
+            err?.message === "SAY_TOO_LONG"
+              ? "❌ That message is over Discord’s 2000-character limit."
+              : "❌ Failed to tag members."
         });
       }
     }
@@ -219,7 +269,7 @@ module.exports = {
             .setRequired(true)
             .setMaxLength(2000)
             .setPlaceholder(
-              "Write your full message here — line breaks are supported."
+              "Line breaks work. Server emojis: :emoji_name:"
             )
         ),
         new ActionRowBuilder().addComponents(
@@ -289,7 +339,10 @@ module.exports = {
       console.error("[SAY]", err);
 
       return interaction.editReply({
-        content: "❌ Failed to post that message."
+        content:
+          err?.message === "SAY_TOO_LONG"
+            ? "❌ That message is over Discord’s 2000-character limit after resolving emojis."
+            : "❌ Failed to post that message."
       });
     }
   }
