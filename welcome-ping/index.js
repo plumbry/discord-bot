@@ -12,19 +12,17 @@ const SPREADSHEET_ID = process.env.MAIN_SHEET_ID;
 const WELCOME_DM_RANGE = "Welcome DMs!A:E";
 
 // ================= AUTO DM MESSAGE (VERBATIM) =================
-const WELCOME_DM = `:wave: Welcome to ZBD!
+const WELCOME_DM = `Hey! Thanks for applying to ZBD. We've accepted your application!
 
-You cannot play tournaments or scrims until ALL steps below are done:
+Just a couple of things to do before you get full server access:
 
-:one: Verify in [#yunite-verify](https://discord.com/channels/1371615693392576580/1371647079935377418)
-:two: FEMALE players: open a ticket in [#create-ticket](https://discord.com/channels/1371615693392576580/1371651766407532654)
-:three: React to the welcome message once finished (roles are manual)
+* Please head to [#yunite-verify](https://discord.com/channels/1371615693392576580/1371647079935377418) and complete Yunite verification
+* If you're female, please [#create-ticket](https://discord.com/channels/1371615693392576580/1371651766407532654) to complete girl verification
+Once you're verified, we'll give you your tier + server access roles manually, so please be patient with us!
 
-⚠ REQUIRED SETUP
-Before playing, you MUST complete the in-game setup in [#frequently-asked](https://discord.com/channels/1371615693392576580/1436327300915531867)
-Skipping this = you cannot queue into customs!
+While you're waiting, have a read through our [#player-guide](https://discord.com/channels/1371615693392576580/1436327300915531867) to get an idea of how the server and our events work.
 
-Need help? Open a ticket after verification`;
+Thanks for joining us!`;
 
 // ================= VERIFY COMMAND =================
 const verifyCommand = new SlashCommandBuilder()
