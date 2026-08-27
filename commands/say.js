@@ -80,6 +80,83 @@ async function resolveCustomEmojiShortcodes(text, guild) {
   );
 }
 
+const MENTIONABLE_CHANNEL_TYPES = new Set([
+  ChannelType.GuildText,
+  ChannelType.GuildAnnouncement,
+  ChannelType.GuildForum,
+  ChannelType.GuildVoice,
+  ChannelType.GuildStageVoice,
+  ChannelType.PublicThread,
+  ChannelType.PrivateThread,
+  ChannelType.AnnouncementThread
+]);
+
+function lookupGuildChannel(guild, name) {
+  if (!guild || !name) {
+    return null;
+  }
+
+  if (/^\d{17,20}$/.test(name)) {
+    const byId = guild.channels.cache.get(name);
+    return byId && MENTIONABLE_CHANNEL_TYPES.has(byId.type) ? byId : null;
+  }
+
+  const lower = name.toLowerCase();
+  const matches = [...guild.channels.cache.values()].filter(
+    channel =>
+      MENTIONABLE_CHANNEL_TYPES.has(channel.type) &&
+      channel.name.toLowerCase() === lower
+  );
+
+  if (!matches.length) {
+    return null;
+  }
+
+  if (matches.length === 1) {
+    return matches[0];
+  }
+
+  const exact = matches.find(channel => channel.name === name);
+
+  if (exact) {
+    return exact;
+  }
+
+  return (
+    matches.find(
+      channel =>
+        channel.type === ChannelType.GuildText ||
+        channel.type === ChannelType.GuildAnnouncement
+    ) || matches[0]
+  );
+}
+
+async function resolveChannelMentions(text, guild) {
+  if (!text || !guild) {
+    return text || "";
+  }
+
+  await guild.channels.fetch().catch(() => null);
+
+  return text.replace(
+    /<#\d{17,20}>|#([a-zA-Z0-9_-]{1,100})/g,
+    (full, name) => {
+      if (!name) {
+        return full;
+      }
+
+      const channel = lookupGuildChannel(guild, name);
+
+      return channel ? `<#${channel.id}>` : full;
+    }
+  );
+}
+
+async function resolveSayMarkup(text, guild) {
+  const withEmojis = await resolveCustomEmojiShortcodes(text, guild);
+  return resolveChannelMentions(withEmojis, guild);
+}
+
 function buildSayContent(message, memberIds) {
   const parts = [];
 
@@ -156,10 +233,7 @@ function takePendingMemberIds(token, channelId) {
 }
 
 async function postSayMessage(channel, { message, memberIds }) {
-  const resolved = await resolveCustomEmojiShortcodes(
-    message,
-    channel.guild
-  );
+  const resolved = await resolveSayMarkup(message, channel.guild);
   const content = buildSayContent(resolved, memberIds);
 
   if (!content) {
@@ -269,7 +343,7 @@ module.exports = {
             .setRequired(true)
             .setMaxLength(2000)
             .setPlaceholder(
-              "Line breaks work. Server emojis: :emoji_name:"
+              "Line breaks work. Use :emoji_name: and #channel-name"
             )
         ),
         new ActionRowBuilder().addComponents(
@@ -341,7 +415,7 @@ module.exports = {
       return interaction.editReply({
         content:
           err?.message === "SAY_TOO_LONG"
-            ? "❌ That message is over Discord’s 2000-character limit after resolving emojis."
+            ? "❌ That message is over Discord’s 2000-character limit."
             : "❌ Failed to post that message."
       });
     }
