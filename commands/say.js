@@ -91,6 +91,10 @@ const MENTIONABLE_CHANNEL_TYPES = new Set([
   ChannelType.AnnouncementThread
 ]);
 
+const CHANNEL_NAME_ALIASES = {
+  "server-rules": "1406247411273306154"
+};
+
 function lookupGuildChannel(guild, name) {
   if (!guild || !name) {
     return null;
@@ -102,6 +106,16 @@ function lookupGuildChannel(guild, name) {
   }
 
   const lower = name.toLowerCase();
+  const aliasId = CHANNEL_NAME_ALIASES[lower];
+
+  if (aliasId) {
+    const aliased = guild.channels.cache.get(aliasId);
+
+    if (aliased) {
+      return aliased;
+    }
+  }
+
   const matches = [...guild.channels.cache.values()].filter(
     channel =>
       MENTIONABLE_CHANNEL_TYPES.has(channel.type) &&
@@ -137,6 +151,12 @@ async function resolveChannelMentions(text, guild) {
   }
 
   await guild.channels.fetch().catch(() => null);
+
+  for (const aliasId of Object.values(CHANNEL_NAME_ALIASES)) {
+    if (!guild.channels.cache.has(aliasId)) {
+      await guild.channels.fetch(aliasId).catch(() => null);
+    }
+  }
 
   return text.replace(
     /<#\d{17,20}>|#([a-zA-Z0-9_-]{1,100})/g,
