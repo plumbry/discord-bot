@@ -1098,6 +1098,7 @@ client.on(
     if (
       interaction.isChatInputCommand() &&
       (interaction.commandName === "roletagged" ||
+        interaction.commandName === "rolecaptain" ||
         interaction.commandName === "roleuntagged" ||
         interaction.commandName === "checkrules" ||
         interaction.commandName === "disqualify" ||
