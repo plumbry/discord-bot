@@ -22,8 +22,7 @@ const {
   setCaptains,
   upsertGame,
   setSelection,
-  finalizeAndLock,
-  findUnlockedGames
+  finalizeAndLock
 } = require("../lib/dareToGreedStore");
 const {
   sheetsConfigured,
@@ -115,22 +114,33 @@ function buildStaffRow(game, locked) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(customId("edit", game))
-      .setLabel("Edit Challenge")
+      .setLabel("Edit")
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(Boolean(locked)),
     new ButtonBuilder()
       .setCustomId(customId("lock", game))
-      .setLabel("Lock Answers")
+      .setLabel("Lock")
       .setStyle(ButtonStyle.Primary)
       .setDisabled(Boolean(locked))
   );
 }
 
-function buildPublicPayload(game, challengeText, locked) {
+function roleMention(roleId) {
+  return roleId ? `<@&${roleId}>` : "";
+}
+
+function buildPublicPayload(game, challengeText, locked, roleId, { ping = false } = {}) {
+  const mention = roleMention(roleId);
+  const content = mention ? `${mention}\n${DECISION_LINES}` : DECISION_LINES;
+
   return {
-    content: DECISION_LINES,
+    content,
     embeds: [buildPublicEmbed(game, challengeText, locked)],
-    components: [buildVoteRow(game, locked)]
+    components: [buildVoteRow(game, locked)],
+    allowedMentions: {
+      parse: [],
+      roles: ping && roleId ? [roleId] : []
+    }
   };
 }
 
@@ -141,15 +151,6 @@ function challengeOption(option) {
     .setRequired(true)
     .setMinLength(1)
     .setMaxLength(CHALLENGE_MAX_LENGTH);
-}
-
-function optionalGameOption(option) {
-  return option
-    .setName("game")
-    .setDescription("Game number (defaults to the current game)")
-    .setRequired(false)
-    .setMinValue(1)
-    .setMaxValue(4);
 }
 
 async function detectCurrentGame(channel) {
@@ -165,29 +166,6 @@ async function detectCurrentGame(channel) {
   }
 
   return game;
-}
-
-async function resolveTargetGame(interaction, { allowMissing = false } = {}) {
-  const requested = interaction.options?.getInteger?.("game");
-
-  if (requested) {
-    return requested;
-  }
-
-  const detected = await detectCurrentGame(interaction.channel);
-  const existing = getGameSnapshot(interaction.guild.id, detected);
-
-  if (existing || allowMissing) {
-    return detected;
-  }
-
-  const unlocked = findUnlockedGames(interaction.guild.id);
-
-  if (unlocked.length === 1) {
-    return unlocked[0];
-  }
-
-  return detected;
 }
 
 async function fetchCaptainMembers(guild) {
@@ -235,7 +213,11 @@ async function updatePublicMessage(client, gameState, game, challengeText, locke
   try {
     const channel = await client.channels.fetch(gameState.channelId);
     const message = await channel.messages.fetch(gameState.messageId);
-    await message.edit(buildPublicPayload(game, challengeText, locked));
+    await message.edit(
+      buildPublicPayload(game, challengeText, locked, gameState.roleId, {
+        ping: false
+      })
+    );
     return true;
   } catch (err) {
     console.warn(
@@ -314,7 +296,8 @@ async function postOrEditChallenge({
   game,
   challengeText,
   existing,
-  resetForNewEvent
+  resetForNewEvent,
+  roleId
 }) {
   const guildId = interaction.guild.id;
 
@@ -330,26 +313,34 @@ async function postOrEditChallenge({
   }
 
   const locked = Boolean(existing?.locked);
-  const payload = buildPublicPayload(game, challengeText, locked);
+  const resolvedRoleId = roleId || existing?.roleId || "";
   let messageId = existing?.messageId || "";
   let channelId = existing?.channelId || interaction.channel.id;
 
   if (existing?.messageId && existing?.channelId) {
     const updated = await updatePublicMessage(
       interaction.client,
-      existing,
+      { ...existing, roleId: resolvedRoleId },
       game,
       challengeText,
       locked
     );
 
     if (!updated) {
-      const posted = await interaction.channel.send(payload);
+      const posted = await interaction.channel.send(
+        buildPublicPayload(game, challengeText, locked, resolvedRoleId, {
+          ping: true
+        })
+      );
       messageId = posted.id;
       channelId = posted.channel.id;
     }
   } else {
-    const posted = await interaction.channel.send(payload);
+    const posted = await interaction.channel.send(
+      buildPublicPayload(game, challengeText, locked, resolvedRoleId, {
+        ping: true
+      })
+    );
     messageId = posted.id;
     channelId = posted.channel.id;
   }
@@ -358,6 +349,7 @@ async function postOrEditChallenge({
     challengeText,
     channelId,
     messageId,
+    roleId: resolvedRoleId,
     ...(existing ? {} : { locked: false })
   });
 
@@ -379,12 +371,6 @@ async function postOrEditChallenge({
     lines.push("Started a new event and replaced the previous captain list.");
   }
 
-  if (!locked) {
-    lines.push(
-      "Use **Lock Answers** below, or `/daretogreed lock`, when time is up."
-    );
-  }
-
   return interaction.editReply({
     content: lines.join("\n"),
     components: locked ? [] : [buildStaffRow(game, false)]
@@ -393,6 +379,7 @@ async function postOrEditChallenge({
 
 async function startChallenge(interaction) {
   const challengeText = interaction.options.getString("challenge", true).trim();
+  const role = interaction.options.getRole("role", true);
   const game = await detectCurrentGame(interaction.channel);
   const existing = getGameSnapshot(interaction.guild.id, game);
 
@@ -409,12 +396,13 @@ async function startChallenge(interaction) {
     game,
     challengeText,
     existing: resetForNewEvent ? null : existing,
-    resetForNewEvent
+    resetForNewEvent,
+    roleId: role.id
   });
 }
 
 async function editChallenge(interaction, challengeText, gameNumber) {
-  const game = gameNumber || (await resolveTargetGame(interaction));
+  const game = gameNumber;
   const existing = getGameSnapshot(interaction.guild.id, game);
 
   if (!existing) {
@@ -454,7 +442,7 @@ async function resolveCaptainNames(guild, captains) {
 }
 
 async function lockChallenge(interaction, gameNumber) {
-  const game = gameNumber || (await resolveTargetGame(interaction));
+  const game = gameNumber;
   const existing = getGameSnapshot(interaction.guild.id, game);
 
   if (!existing) {
@@ -543,26 +531,14 @@ function showEditModal(interaction, game, currentText) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("daretogreed")
-    .setDescription("Start or manage a Dare to Greed challenge")
+    .setDescription("Start a Dare to Greed challenge for the current game")
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
-    .addSubcommand(sub =>
-      sub
-        .setName("start")
-        .setDescription("Post a Dare to Greed challenge for the current game")
-        .addStringOption(challengeOption)
-    )
-    .addSubcommand(sub =>
-      sub
-        .setName("edit")
-        .setDescription("Update the challenge text for a game that is not locked")
-        .addStringOption(challengeOption)
-        .addIntegerOption(optionalGameOption)
-    )
-    .addSubcommand(sub =>
-      sub
-        .setName("lock")
-        .setDescription("Lock answers for a game and write the final results")
-        .addIntegerOption(optionalGameOption)
+    .addStringOption(challengeOption)
+    .addRoleOption(option =>
+      option
+        .setName("role")
+        .setDescription("Role to ping")
+        .setRequired(true)
     ),
 
   async execute(interaction) {
@@ -583,26 +559,7 @@ module.exports = {
     await interaction.deferReply({ ephemeral: true });
 
     try {
-      const sub = interaction.options.getSubcommand();
-
-      if (sub === "start") {
-        return await startChallenge(interaction);
-      }
-
-      if (sub === "edit") {
-        return await editChallenge(
-          interaction,
-          interaction.options.getString("challenge", true).trim()
-        );
-      }
-
-      if (sub === "lock") {
-        return await lockChallenge(interaction);
-      }
-
-      return interaction.editReply({
-        content: "Unknown Dare to Greed action."
-      });
+      return await startChallenge(interaction);
     } catch (err) {
       console.error("[DARE TO GREED] command failed:", err);
 
@@ -708,14 +665,15 @@ module.exports = {
         return true;
       }
 
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferUpdate();
 
       try {
         await lockChallenge(interaction, parsed.game);
       } catch (err) {
         console.error("[DARE TO GREED] lock failed:", err);
         await interaction.editReply({
-          content: err?.message || "Failed to lock answers."
+          content: err?.message || "Failed to lock answers.",
+          components: [buildStaffRow(parsed.game, false)]
         });
       }
 
