@@ -835,6 +835,10 @@ async function finishRoletagged(
       ? "\nSponsored Reload: Chili's team reserved a playing slot"
       : "\nSponsored Reload: Chili's team not found — processed first 24 teams";
 
+  const peopleWithRole = guild.members.cache.filter(
+    member => !member.user.bot && member.roles.cache.has(role.id)
+  ).size;
+
   const detailedResult =
     (validTeams.length === 0
       ? (emptyResultLabel || "No teams selected for role assignment.") + "\n"
@@ -846,6 +850,7 @@ async function finishRoletagged(
     "Skipped: " + skipped + "\n" +
     "Removed: " + removed + "\n" +
     "Remove skipped: " + removeSkipped + "\n" +
+    "People with role: " + peopleWithRole + "\n" +
     "Valid Teams: " + validTeams.length + "\n" +
     "Roled Teams: " + roledTeams.length + "\n" +
     "Overflow Teams: " + overflowTeams.length +
@@ -860,7 +865,7 @@ async function finishRoletagged(
   const publicResult =
     validTeams.length === 0
       ? (emptyResultLabel || "No teams selected for role assignment.")
-      : `${role.name} ${modeLabel}, ${validTeams.length} valid teams`;
+      : `${role.name} ${modeLabel}, ${validTeams.length} valid teams, ${peopleWithRole} people with role`;
 
   try {
 
